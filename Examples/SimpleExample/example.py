@@ -30,7 +30,7 @@ ens.load(DATADIR, POPULATION, NRANDOM, verbose = True) # This was a second popul
 
 # Setup the minimizer
 minim = sscha.SchaMinimizer.SSCHA_Minimizer(ens)
-minim.min_step_struc = 0.7
+minim.min_step_struc = 0
 minim.min_step_dyn = 0.7
 minim.meaningful_factor = 1e-7
 minim.eq_energy = -144.40680397

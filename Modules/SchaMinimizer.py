@@ -286,6 +286,9 @@ class SSCHA_Minimizer:
         if "precond_wyck" in keys:
             self.precond_wyck = bool(namelist["precond_wyck"])
             
+        if "preconditioning" in keys:
+            self.precond_dyn = bool(namelist["preconditioning"])
+            
         if "n_random_eff" in keys:
             if not "n_random" in keys:
                 raise IOError("Error, if you want to impose the minimum KL\n"
