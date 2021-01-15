@@ -24,7 +24,7 @@ import sscha.Ensemble as Ensemble
 import sscha_HP_odd
 
 # Override the print function to print in parallel only from the master
-import sscha.Parallel as Parallel
+import cellconstructor.Settings as Parallel
 from sscha.Parallel import pprint as print
 
 # Define a generic type for the double precision.
@@ -1085,8 +1085,8 @@ This may be caused by the Lanczos initialized at the wrong temperature.
                                           f_pert_av, d2v_pert_av)
         #print("Out get pert")
 
-        print("<f> pert = {}".format(f_pert_av))
-        print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
+        #print("<f> pert = {}".format(f_pert_av))
+        #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
         #print()
 
         # Compute the average with the old version
@@ -1450,6 +1450,9 @@ This may be caused by the Lanczos initialized at the wrong temperature.
                                 a_coeffs = self.a_coeffs,
                                 b_coeffs = self.b_coeffs,
                                 c_coeffs = self.c_coeffs,
+                                basis_Q = self.basis_Q,
+                                basis_P = self.basis_P,
+                                s_norm = self.s_norm,
                                 krilov_basis = self.krilov_basis,
                                 arnoldi_matrix = self.arnoldi_matrix,
                                 reverse = self.reverse_L,
@@ -1472,12 +1475,18 @@ This may be caused by the Lanczos initialized at the wrong temperature.
             print ("Error while loading %s file.\n" % file)
             raise IOError("Error while loading %s" % file)
 
-        
-        # Fix the allow pickle error in numpy >= 1.14.4
-        try:
-            data = np.load(file, allow_pickle = True)
-        except:
-            data = np.load(file) 
+        data = None
+        # Read the data only with the master
+        if Parallel.am_i_the_master:
+            
+            # Fix the allow pickle error in numpy >= 1.14.4
+            try:
+                data = np.load(file, allow_pickle = True)
+            except:
+                data = np.load(file) 
+
+        # Now bcast to everyone
+        data = Parallel.broadcast(dict(data))
 
         self.T = data["T"]
         self.nat = data["nat"]
@@ -1499,6 +1508,10 @@ This may be caused by the Lanczos initialized at the wrong temperature.
         self.krilov_basis = data["krilov_basis"]
         self.arnoldi_matrix = data["arnoldi_matrix"]
 
+        self.basis_Q = data["basis_Q"]
+        self.basis_P = data["basis_P"]
+        self.s_norm = data["s_norm"]
+
         if "reverse" in data.keys():
             self.reverse_L = data["reverse"]
             self.shift_value = data["shift"]
@@ -1513,8 +1526,15 @@ This may be caused by the Lanczos initialized at the wrong temperature.
             self.perturbation_modulus = data["perturbation_modulus"]
             self.q_vectors = data["q_vectors"]
 
-        # Rebuild the Linear operator
-        self.L_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = self.apply_full_L, dtype = TYPE_DP)
+        # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
+        def L_transp(psi):
+            return self.apply_full_L(psi, transpose= True)
+        self.L_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = self.apply_full_L, rmatvec = L_transp, dtype = TYPE_DP)
+
+        # Define the preconditioner
+        def M_transp(psi):
+            return self.apply_L1_inverse_FT(psi, transpose = True)
+        self.M_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = self.apply_L1_inverse_FT, rmatvec = M_transp, dtype = TYPE_DP)
 
 
     def run_biconjugate_gradient(self, verbose = True, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "bicgstab"):
@@ -2764,7 +2784,7 @@ Max number of iterations: {}
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", verbose = True, n_rep_orth = 1, flush_output = True):
+    def run_FT(self, n_iter, save_dir = ".", verbose = True, n_rep_orth = 1, flush_output = True, debug = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -2790,6 +2810,10 @@ Max number of iterations: {}
                 If true it flushes the output at each step. 
                 This is usefull to avoid ending without any output if a calculation is killed before it ends normally.
                 However, it could slow down things a bit on clusters.
+            debug : bool
+                If true prints a lot of more info about the Lanczos
+                as the gram-shmidth procdeure and checks on the coefficients. 
+                This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
         """
 
         # Check if the symmetries has been initialized
@@ -2854,7 +2878,7 @@ Max number of iterations: {}
             self.arnoldi_matrix = list(self.arnoldi_matrix)
 
             if len(self.basis_Q) != i_step + 1:
-                print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.krilov_basis), i_step))
+                print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
                 print("Error, the krilov basis dimension should be 1 more than the number of steps")
                 raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
 
@@ -2867,10 +2891,11 @@ Max number of iterations: {}
         psi_q = self.basis_Q[-1]
         psi_p = self.basis_P[-1]
 
-        print("Q basis:", self.basis_Q)
-        print("P basis:", self.basis_P)
-        print("S norm:", self.s_norm)
-        print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
+        if debug:
+            print("Q basis:", self.basis_Q)
+            print("P basis:", self.basis_P)
+            print("S norm:", self.s_norm)
+            print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
 
         next_converged = False
         for i in range(i_step, i_step+n_iter):
@@ -2893,7 +2918,7 @@ Max number of iterations: {}
             p_L = self.L_linop.rmatvec(psi_p) # psi_p is normalized (this must be considered when computing c coeff) 
             t2 = time.time()
 
-            if verbose:
+            if debug:
                 print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q))))
                 print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L))))
 
@@ -2906,7 +2931,8 @@ Max number of iterations: {}
             if len(self.c_coeffs) > 0:
                 c_old = self.c_coeffs[-1]
             p_norm = self.s_norm[-1] / c_old
-            print("p_norm: {}".format(p_norm))
+            if debug:
+                print("p_norm: {}".format(p_norm))
 
             # Get the a coefficient
             a_coeff = psi_p.dot(L_q) * p_norm
@@ -2924,7 +2950,6 @@ or if the acoustic sum rule is not satisfied.
             # Get the two residual vectors
             rk = L_q - a_coeff * psi_q 
             if len(self.basis_Q) > 1:
-                print("Removing q")
                 rk -= self.c_coeffs[-1] * self.basis_Q[-2]
 
             sk = p_L - a_coeff * psi_p 
@@ -2933,12 +2958,10 @@ or if the acoustic sum rule is not satisfied.
                 if len(self.c_coeffs) < 2:
                     old_p_norm = self.s_norm[-2]
                 else:
-                    print("also c")
                     old_p_norm = self.s_norm[-2] / self.c_coeffs[-2] 
                     # C is smaller than s_norm as it does not contain the first vector
                     # But this does not matter as we are counting from the end of the array
 
-                print("Removing p: current norm {} | old norm {}".format(p_norm, old_p_norm))
 
                 # TODO: Check whether it better to use this or the default norms to update sk
                 sk -= self.b_coeffs[-1] * self.basis_P[-2] * (old_p_norm / p_norm)
@@ -2951,16 +2974,17 @@ or if the acoustic sum rule is not satisfied.
             b_coeff = np.sqrt( rk.dot(rk) )
             c_coeff = (sk_tilde.dot(rk / b_coeff)) * s_norm 
 
-            print("new p norm: {}".format(s_norm / c_coeff))
+            if debug:
+                print("new p norm: {}".format(s_norm / c_coeff))
 
-            print("Modulus of rk: {}".format(b_coeff))
-            print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
+                print("Modulus of rk: {}".format(b_coeff))
+                print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
 
-            if verbose:
-                print("Direct computation resulted in:")
-                print("     |  a = {}".format(a_coeff))
-                print("     |  b = {}".format(b_coeff))
-                print("     |  c = {}".format(c_coeff))
+                if verbose:
+                    print("Direct computation resulted in:")
+                    print("     |  a = {}".format(a_coeff))
+                    print("     |  b = {}".format(b_coeff))
+                    print("     |  c = {}".format(c_coeff))
 
             # Check the convergence
             self.a_coeffs.append(a_coeff)
@@ -2985,13 +3009,13 @@ or if the acoustic sum rule is not satisfied.
 
             # AFTER THIS p_norm refers to the norm of P in the previous step as psi_p has been updated
 
+            if debug:
+                print("1) Check c = ", psi_q.dot(p_L) * p_norm)
+                print("2) Check b = ", psi_p.dot(L_q) * s_norm / c_coeff)
 
-            print("1) Check c = ", psi_q.dot(p_L) * p_norm)
-            print("2) Check b = ", psi_p.dot(L_q) * s_norm / c_coeff)
 
 
-
-            if verbose:
+            if debug:
                 # Check the tridiagonality
                 print("Tridiagonal matrix: (lenp: {}, lens: {})".format(len(self.basis_P), len(self.s_norm)))
                 for k in range(len(self.basis_P)):
@@ -3021,7 +3045,7 @@ or if the acoustic sum rule is not satisfied.
             new_q = psi_q.copy()
             new_p = psi_p.copy()
 
-            if verbose:
+            if debug:
                 norm_q = np.sqrt(new_q.dot(new_q))
                 norm_p = np.sqrt(new_p.dot(new_p))
                 print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))

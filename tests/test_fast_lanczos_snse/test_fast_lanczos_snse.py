@@ -140,8 +140,18 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # exit()
 
     lanczos.prepare_mode(10)
-    lanczos.run_FT(30, save_dir= dirname, verbose=  True, n_rep_orth = 1)
-    gf = lanczos.get_green_function_continued_fraction(np.array([0]), smearing = 0, use_terminator= False)
+    lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 1)
+
+    # Pause and restart (to test restarting)
+    print("Stop and saving...")
+    lanczos.save_status("tmp.npz")
+    new_lanczos = sscha.DynamicalLanczos.Lanczos()
+
+    print("Resuming...")
+    new_lanczos.load_status("tmp.npz")
+    new_lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 1)
+
+    gf = new_lanczos.get_green_function_continued_fraction(np.array([0]), smearing = 0, use_terminator= False)
     w2 = np.real(1 / gf[0])
 
     # Get frequency:
