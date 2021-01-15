@@ -68,8 +68,8 @@ MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
 
 
-class Lanczos:
-    def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = True):
+class Lanczos(object):
+    def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = True, select_modes = None):
         """
         INITIALIZE THE LANCZOS
         ======================
@@ -90,6 +90,9 @@ class Lanczos:
             unwrap_symmetries : bool
                 If true (default), the ensemble is unwrapped to respect the symmetries.
                 This requires SPGLIB installed.
+            select_modes : ndarray(size = n_modes, dtype = bool)
+                A mask for each mode, if False, the mode is neglected. Use this to exclude some modes that you know are not
+                involved in the calculation. If not specified, all modes are considered by default.
 
         """
 
@@ -122,8 +125,9 @@ class Lanczos:
         self.b_coeffs = [] # Coefficients close to the diagonal
         self.c_coeffs = [] # Coefficients in the case of the biconjugate Lanczos
         self.krilov_basis = [] # The basis of the krilov subspace
-        self.basis_P = [] # The basis of the P vectors for the biconjugate Lanczos
+        self.basis_P = [] # The basis of the P vectors for the biconjugate Lanczos (normalized)
         self.basis_Q = [] # The basis of the Q vectors for the biconjugate Lanczos
+        self.s_norm = [] # Store the normalization of the s vector, this allows to rebuild the correct p when needed. 
         self.arnoldi_matrix = [] # If requested, the upper triangular arnoldi matrix
         self.reverse_L = False
         self.shift_value = 0
@@ -140,6 +144,7 @@ class Lanczos:
         self.qe_sym = None
         self.L_linop = None
         self.M_linop = None
+        self.unwrapped = False
 
         # Perform a bare initialization if the ensemble is not provided
         if ensemble is None:
@@ -169,9 +174,24 @@ class Lanczos:
         # Remove the translations
         trans_mask = CC.Methods.get_translations(pols, m)
 
+        # If requested, isolate only the specified modes.
+        good_mask = ~trans_mask
+        if select_modes is not None:
+            if len(select_modes) != len(trans_mask):
+                raise ValueError("""
+Error, 'select_modes' should be an array of the same lenght of the number of modes.
+ n_modes = {} | len(select_modes) = {}
+""".format(len(ws), len(select_modes)))
+
+            good_mask = (~trans_mask) & select_modes
+
         # Get the polarization vectors
-        self.w = ws[~trans_mask]
-        self.pols = pols[:, ~trans_mask]
+        self.w = ws[good_mask]
+        self.pols = pols[:, good_mask]
+
+        # Correctly reshape the polarization in case only one mode is selected
+        if len(self.w) == 1:
+            self.pols = self.pols.reshape((len(self.m), 1))
 
         self.n_modes = len(self.w)
 
@@ -199,12 +219,17 @@ class Lanczos:
 
         # Get the average force
         f_mean = ensemble.get_average_forces(get_error = False)
+
+        # Perform the symmetrization of the average force
+        qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
+        qe_sym.SetupQPoint()
+        qe_sym.SymmetrizeVector(f_mean)
+
+        # Reproduce the average force on the full supercell
         f_mean = np.tile(f_mean, (np.prod(ensemble.current_dyn.GetSupercell()), 1)).ravel()
 
-        # Subtract the SSCHA gradient on nuclei
-        # This allows the correct calculation also if the average force is not zero
-        print(np.shape(f), np.shape(f_mean))
-        f[:, :] -= np.tile(f_mean, (self.N, 1))
+        # Transpform in Bohr
+        f_mean *= Ensemble.Bohr
         
         # Subtract also the average force to clean more the stochastic noise
         #av_force = ensemble.get_average_forces(get_error = False).ravel()
@@ -216,9 +241,15 @@ class Lanczos:
         if unwrap_symmetries:
             u, f, rho = ensemble.get_unwrapped_ensemble()
             self.N = len(rho)
+            self.unwrapped = True
 
             u /= Ensemble.Bohr
             f *= Ensemble.Bohr
+
+        # Subtract the SSCHA GRADIENT on average position
+        # In this way the calculation works even if the system is not in equilibrium
+        print(np.shape(f), np.shape(f_mean))
+        f[:, :] -= np.tile(f_mean, (self.N, 1))
 
 
         # Perform the mass rescale to get the tilde variables
@@ -333,11 +364,12 @@ class Lanczos:
         # The krilov basis for the symmetric and unsymmetric Lanczos
         self.basis_P = []
         self.basis_Q = []
+        self.s_norm = []
         self.krilov_basis = [] # The basis of the krilov subspace
         self.arnoldi_matrix = [] # If requested, the upper triangular arnoldi matrix
 
 
-    def init(self, use_symmetries = False):
+    def init(self, use_symmetries = True):
         """
         INITIALIZE THE CALCULATION
         ==========================
@@ -347,20 +379,22 @@ class Lanczos:
         Parameters
         ----------
             use_symmetries : bool
-                if False (default True) symmetries are neglected.
+                if False (default True) symmetries are neglected (unless the ensemble has been unwrapped).
     
         """
         self.prepare_symmetrization(no_sym = not use_symmetries)
         self.initialized = True
 
 
-    def prepare_symmetrization(self, no_sym = True):
+    def prepare_symmetrization(self, no_sym = False):
         """
         PREPARE THE SYMMETRIZATION
         ==========================
 
         This function analyzes the character of the symmetry operations for each polarization vectors.
         This will allow the method do know how many modes are degenerate.
+
+        If the ensemble has been unwrapped, then the symmetries are not initialized.
 
         Parameters
         ----------
@@ -373,58 +407,58 @@ class Lanczos:
         # All the rest is deprecated in the Fast Lanczos implementation
         # As the symmetrization is performed by unwrapping the ensemble
 
-        # # Generate the dynamical matrix in the supercell
-        # super_structure = self.dyn.structure.generate_supercell(self.dyn.GetSupercell())
-        # w, pols = self.dyn.DiagonalizeSupercell()
+        # Generate the dynamical matrix in the supercell
+        super_structure = self.dyn.structure.generate_supercell(self.dyn.GetSupercell())
+        w, pols = self.dyn.DiagonalizeSupercell()
 
-        # # Get the symmetries of the super structure
-        # if not __SPGLIB__ and not no_sym:
-        #     raise ImportError("Error, spglib module required to perform symmetrization in a supercell. Otherwise, use no_sym")
+        # Get the symmetries of the super structure
+        if not __SPGLIB__ and not no_sym:
+            raise ImportError("Error, spglib module required to perform symmetrization in a supercell. Otherwise, use no_sym")
         
-        # # Neglect the symmetries
-        # if no_sym:
-        #     self.symmetries = np.zeros( (1, self.n_modes, self.n_modes), dtype = TYPE_DP)
-        #     self.symmetries[0, :, :] = np.eye(self.n_modes)
-        #     self.N_degeneracy = np.ones(self.n_modes, dtype = np.intc)
-        #     self.degenerate_space = [[i] for i in range(self.n_modes)]
-        #     return
+        # Neglect the symmetries
+        if no_sym or self.unwrapped:
+            self.symmetries = np.zeros( (1, self.n_modes, self.n_modes), dtype = TYPE_DP)
+            self.symmetries[0, :, :] = np.eye(self.n_modes)
+            self.N_degeneracy = np.ones(self.n_modes, dtype = np.intc)
+            self.degenerate_space = [[i] for i in range(self.n_modes)]
+            return
 
-        # super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+        super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
 
-        # # Get the symmetry matrix in the polarization space
-        # # Translations are needed, as this method needs a complete basis.
-        # pol_symmetries = CC.symmetries.GetSymmetriesOnModes(super_symmetries, super_structure, pols)
+        # Get the symmetry matrix in the polarization space
+        # Translations are needed, as this method needs a complete basis.
+        pol_symmetries = CC.symmetries.GetSymmetriesOnModes(super_symmetries, super_structure, pols)
 
-        # Ns, dumb, dump = np.shape(pol_symmetries)
+        Ns, dumb, dump = np.shape(pol_symmetries)
         
-        # # Now we can pull out the translations
-        # trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
-        # self.symmetries = np.zeros( (Ns, self.n_modes, self.n_modes), dtype = TYPE_DP)
-        # ptmp = pol_symmetries[:, :,  ~trans_mask] 
-        # self.symmetries[:,:,:] = ptmp[:, ~trans_mask, :]
+        # Now we can pull out the translations
+        trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
+        self.symmetries = np.zeros( (Ns, self.n_modes, self.n_modes), dtype = TYPE_DP)
+        ptmp = pol_symmetries[:, :,  ~trans_mask] 
+        self.symmetries[:,:,:] = ptmp[:, ~trans_mask, :]
 
-        # # Get the degeneracy
-        # w = w[~trans_mask]
-        # N_deg = np.ones(len(w), dtype = np.intc)
-        # start_deg = -1
-        # deg_space = [ [x] for x in range(self.n_modes)]
-        # for i in range(1, len(w)):
-        #     if np.abs(w[i-1] - w[i]) < __EPSILON__ :
-        #         N_deg[i] = N_deg[i-1] + 1
+        # Get the degeneracy
+        w = w[~trans_mask]
+        N_deg = np.ones(len(w), dtype = np.intc)
+        start_deg = -1
+        deg_space = [ [x] for x in range(self.n_modes)]
+        for i in range(1, len(w)):
+            if np.abs(w[i-1] - w[i]) < __EPSILON__ :
+                N_deg[i] = N_deg[i-1] + 1
 
-        #         if start_deg == -1:
-        #             start_deg = i - 1
+                if start_deg == -1:
+                    start_deg = i - 1
 
-        #         for j in range(start_deg, i):
-        #             N_deg[j] = N_deg[i]
-        #             deg_space[j].append(i)
-        #             deg_space[i].append(j)
-        #     else:
-        #         start_deg = -1
+                for j in range(start_deg, i):
+                    N_deg[j] = N_deg[i]
+                    deg_space[j].append(i)
+                    deg_space[i].append(j)
+            else:
+                start_deg = -1
 
 
-        # self.N_degeneracy = N_deg
-        # self.degenerate_space = deg_space
+        self.N_degeneracy = N_deg
+        self.degenerate_space = deg_space
 
     def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
         """
@@ -449,7 +483,7 @@ class Lanczos:
         # Get the raman vector
         raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
 
-        # Get the raman vector in the supercell
+        # Get the raman vector in the supercelld
         n_supercell = np.prod(self.dyn.GetSupercell())
         new_raman_v = np.tile(raman_v.ravel(), n_supercell)
 
@@ -895,7 +929,7 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         return out_vect
 
-    def get_Y1(self):
+    def get_Y1(self, half_off_diagonal = False):
         """
         Get the perturbation on the Y matrix from the psi vector
         """
@@ -915,12 +949,22 @@ This may be caused by the Lanczos initialized at the wrong temperature.
             # Fill symmetric
             Y1[i, :i] = Y1[:i, i]
 
+        # Normalize each term outside the diagonal
+        if half_off_diagonal:
+            norm_mask = np.ones((self.n_modes, self.n_modes), dtype = np.double) / 2
+            np.fill_diagonal(norm_mask, 1)
+
+            Y1 *= norm_mask
+
+
         return  Y1
 
 
-    def get_ReA1(self):
+    def get_ReA1(self, half_off_diagonal = False):
         """
-        Get the perturbation on the ReA matrix from the psi vector
+        Get the perturbation on the ReA matrix from the psi vector.
+
+        If half_the_off_diagonal is true, divide by 2 the off-diagonal elements
         """
         start_A = self.n_modes +  (self.n_modes * (self.n_modes + 1)) // 2
 
@@ -936,6 +980,13 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
             # Fill symmetric
             ReA1[i, :i] = ReA1[:i, i]
+
+        # Normalize each term outside the diagonal
+        if half_off_diagonal:
+            norm_mask = np.ones((self.n_modes, self.n_modes), dtype = np.double) / 2
+            np.fill_diagonal(norm_mask, 1)
+
+            ReA1 *= norm_mask
 
         return  ReA1
 
@@ -962,7 +1013,7 @@ This may be caused by the Lanczos initialized at the wrong temperature.
         """
         #print("Starting with psi:", self.psi)
 
-        Y1 = self.get_Y1()
+        Y1 = self.get_Y1(half_off_diagonal = transpose)
         R1 = self.psi[: self.n_modes]
 
         weights = np.zeros(self.N, dtype = np.double)
@@ -977,7 +1028,7 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         # Check if we must compute the transpose
         if transpose:
-            ReA1 = self.get_ReA1()
+            ReA1 = self.get_ReA1(half_off_diagonal = transpose)
 
             # The equation is
             # Y^(1)_new = 2 Ya Yb^2 Y^(1) + 2 Yb Ya^2 Y^(1)
@@ -987,7 +1038,7 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
             coeff_RA = np.einsum("a, b, b -> ab", Y_w, ReA_w, Y_w)
             coeff_RA += np.einsum("a, a, b -> ab", Y_w, ReA_w, Y_w)
-            coeff_RA += 2
+            coeff_RA *= 2
 
             # Get the new perturbation
             Y1_new = Y1 * coeff_Y + ReA1 * coeff_RA
@@ -1011,13 +1062,31 @@ This may be caused by the Lanczos initialized at the wrong temperature.
         if self.ignore_v4:
             apply_d4 = 0
 
+        # Prepare the symmetry variables for the C code
+        deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
+        i = 0
+        i_mode = 0
+        j_mode = 0
+        #print("Mapping degeneracies:", np.sum(n_degeneracies))
+        while i_mode < self.n_modes:
+            #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
+            deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
+            j_mode += 1
+            i += 1
+            if j_mode == self.N_degeneracy[i_mode]:
+                i_mode += 1
+                j_mode = 0
+
+
         # Compute the perturbed averages (the time consuming part is HERE)
         #print("Entering in get pert...")
-        sscha_HP_odd.GetPerturbAverage(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, f_pert_av, d2v_pert_av)
+        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, 
+                                          self.symmetries, self.N_degeneracy, deg_space_new, 
+                                          f_pert_av, d2v_pert_av)
         #print("Out get pert")
 
-        #print("<f> pert = {}".format(f_pert_av))
-        #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
+        print("<f> pert = {}".format(f_pert_av))
+        print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
         #print()
 
         # Compute the average with the old version
@@ -1108,6 +1177,14 @@ This may be caused by the Lanczos initialized at the wrong temperature.
             Y_inv = 1 / Y_w
             pert_Y = 0.5 * np.einsum("a, ab, b -> ab", Y_inv, d2v_pert_av, Y_inv)
             pert_RA = np.zeros(pert_Y.shape, dtype = np.double)
+
+            # Now double the off diagonal values of pert_Y and pert_RA
+            # This is to take into account the symmetric storage of psi
+            sym_mask = np.ones(pert_Y.shape) * 2 
+            np.fill_diagonal(sym_mask, 1) 
+            pert_Y *= sym_mask 
+            pert_RA *= sym_mask
+
 
         # Now get the perturbation on the vector
         current = self.n_modes
@@ -1533,10 +1610,10 @@ This may be caused by the Lanczos initialized at the wrong temperature.
                 
             # Prepare the preconditioning
             M_prec = None
-            x0 = self.psi.copy()
+            x0 = self.M_linop.matvec(self.psi)
             if use_preconditioning:
                 M_prec = self.M_linop
-                x0 = M_prec.matvec(self.psi)
+                #x0 = M_prec.matvec(self.psi)
 
             # Run the biconjugate gradient
             t1 = time.time()
@@ -1611,7 +1688,7 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
                 print()
 
             # Check if the minimization converged
-            assert info >= 0, "Error on input for the biconjugate gradient algorithm (info = {})".format(info)
+            assert info >= 0, "Error on input or breakdown of biconjugate gradient algorithm (info = {})".format(info)
 
             if info > 0:
                 print("The biconjugate gradient (step {}) algorithm did not converge after {} iterations.".format(i+1, maxiter))
@@ -1836,6 +1913,8 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
             verbose : bool
                 If true all the info during the minimization will be printed on output.
         """
+
+        raise ValueError("Error, this run funciton has been deprecated, use run_FT instead.")
 
         # Check if the symmetries has been initialized
         if not self.initialized:
@@ -2684,9 +2763,8 @@ Max number of iterations: {}
         return L_operator
 
 
-
             
-    def run_FT(self, n_iter, save_dir = ".", verbose = True, n_rep_orth = 1):
+    def run_FT(self, n_iter, save_dir = ".", verbose = True, n_rep_orth = 1, flush_output = True):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -2708,6 +2786,10 @@ Max number of iterations: {}
                 The number of times in which the GS orthonormalization is repeated.
                 The higher, the lower the precision of the Lanczos step, the lower, the higher
                 the probability of finding ghost states
+            flush_output : bool
+                If true it flushes the output at each step. 
+                This is usefull to avoid ending without any output if a calculation is killed before it ends normally.
+                However, it could slow down things a bit on clusters.
         """
 
         # Check if the symmetries has been initialized
@@ -2756,13 +2838,16 @@ Max number of iterations: {}
         if i_step == 0:
             self.basis_Q = []
             self.basis_P = []
+            self.s_norm = []
             first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
             self.basis_Q.append(first_vector)
             self.basis_P.append(first_vector)
+            self.s_norm.append(1)
         else:
             # Convert everything in a list
             self.basis_Q = list(self.basis_Q)
             self.basis_P = list(self.basis_P)
+            self.s_norm = list(self.s_norm)
             self.a_coeffs = list(self.a_coeffs)
             self.b_coeffs = list(self.b_coeffs)
             self.c_coeffs = list(self.c_coeffs)
@@ -2774,6 +2859,7 @@ Max number of iterations: {}
                 raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
 
         assert len(self.basis_Q) == len(self.basis_P), "Something wrong when restoring the Lanczos."
+        assert len(self.s_norm) == len(self.basis_P), "Something wrong when restarting the Lanczos."
         assert len(self.b_coeffs) == len(self.c_coeffs), "Something wrong when restoring the Lanczos. {} {}".format(len(self.b_coeffs), len(self.c_coeffs))
 
 
@@ -2783,6 +2869,7 @@ Max number of iterations: {}
 
         print("Q basis:", self.basis_Q)
         print("P basis:", self.basis_P)
+        print("S norm:", self.s_norm)
         print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
 
         next_converged = False
@@ -2796,11 +2883,14 @@ Max number of iterations: {}
                 print("Length of the coefficiets: a = {}, b = {}".format(len(self.a_coeffs), len(self.b_coeffs)))
                 print()
 
+                if flush_output:
+                    sys.stdout.flush()
+
             # Apply the matrix L
             t1 = time.time()
 
             L_q = self.L_linop.matvec(psi_q)
-            p_L = self.L_linop.rmatvec(psi_p)
+            p_L = self.L_linop.rmatvec(psi_p) # psi_p is normalized (this must be considered when computing c coeff) 
             t2 = time.time()
 
             if verbose:
@@ -2811,8 +2901,15 @@ Max number of iterations: {}
             #if verbose:
             #    print("Time to apply the full L: %d s" % (t2 -t1))
 
+            # Get the normalization of p_k (with respect to s_k)
+            c_old = 1
+            if len(self.c_coeffs) > 0:
+                c_old = self.c_coeffs[-1]
+            p_norm = self.s_norm[-1] / c_old
+            print("p_norm: {}".format(p_norm))
+
             # Get the a coefficient
-            a_coeff = psi_p.dot(L_q)
+            a_coeff = psi_p.dot(L_q) * p_norm
 
             # Check if something whent wrong
             if np.isnan(a_coeff):
@@ -2832,11 +2929,29 @@ or if the acoustic sum rule is not satisfied.
 
             sk = p_L - a_coeff * psi_p 
             if len(self.basis_P) > 1:
-                print("Removing p")
-                sk -= self.b_coeffs[-1] * self.basis_P[-2]
+                # Get the multiplication factor to rescale the old p to the normalization of the new one.
+                if len(self.c_coeffs) < 2:
+                    old_p_norm = self.s_norm[-2]
+                else:
+                    print("also c")
+                    old_p_norm = self.s_norm[-2] / self.c_coeffs[-2] 
+                    # C is smaller than s_norm as it does not contain the first vector
+                    # But this does not matter as we are counting from the end of the array
+
+                print("Removing p: current norm {} | old norm {}".format(p_norm, old_p_norm))
+
+                # TODO: Check whether it better to use this or the default norms to update sk
+                sk -= self.b_coeffs[-1] * self.basis_P[-2] * (old_p_norm / p_norm)
+
+            # Get the normalization of sk 
+            s_norm = np.sqrt(sk.dot(sk))
+            sk_tilde = sk / s_norm # This normalization regularizes the lanczos
+            s_norm *= p_norm # Add the p normalization of L^t p that was divided from the s_k
             
             b_coeff = np.sqrt( rk.dot(rk) )
-            c_coeff = sk.dot(rk) / b_coeff
+            c_coeff = (sk_tilde.dot(rk / b_coeff)) * s_norm 
+
+            print("new p norm: {}".format(s_norm / c_coeff))
 
             print("Modulus of rk: {}".format(b_coeff))
             print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
@@ -2863,18 +2978,40 @@ or if the acoustic sum rule is not satisfied.
 
             # Get the vectors for the next iteration
             psi_q = rk / b_coeff
-            psi_p = sk / c_coeff  
+
+            # psi_p is the normalized p vector, the sk_tilde one
+            psi_p = sk_tilde.copy()
 
 
-            print("Check c = ", psi_q.dot(p_L))
+            # AFTER THIS p_norm refers to the norm of P in the previous step as psi_p has been updated
+
+
+            print("1) Check c = ", psi_q.dot(p_L) * p_norm)
+            print("2) Check b = ", psi_p.dot(L_q) * s_norm / c_coeff)
+
 
 
             if verbose:
                 # Check the tridiagonality
-                print("Tridiagonal matrix:")
+                print("Tridiagonal matrix: (lenp: {}, lens: {})".format(len(self.basis_P), len(self.s_norm)))
                 for k in range(len(self.basis_P)):
-                    print("p_{:d} L q_{:d} = {}".format(k, len(self.basis_P)-1, self.basis_P[k].dot(L_q)))
-                print("p_{:d} L q_{:d} = {}".format(len(self.basis_P), len(self.basis_P)-1, psi_p.dot(L_q)))
+                    if k >= 1:
+                        pp_norm = self.s_norm[k] / self.c_coeffs[k-1]
+                    else:
+                        pp_norm = self.s_norm[k]
+
+                    print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, pp_norm* self.basis_P[k].dot(L_q), k, pp_norm))
+                pp_norm = s_norm / c_coeff
+                print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, pp_norm* psi_p.dot(L_q), k+1, pp_norm))
+
+
+                # Check the tridiagonality
+                print()
+                print("Transposed:".format(len(self.basis_P), len(self.s_norm)))
+                for k in range(len(self.basis_Q)):
+                    print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, p_norm* self.basis_Q[k].dot(p_L), k, p_norm))
+                print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, p_norm* psi_q.dot(p_L), k+1, p_norm))
+
 
             t1 = time.time()
 
@@ -2888,14 +3025,19 @@ or if the acoustic sum rule is not satisfied.
                 norm_q = np.sqrt(new_q.dot(new_q))
                 norm_p = np.sqrt(new_p.dot(new_p))
                 print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))
-                print("current p dot q = {} (should be 1)".format(new_q.dot(new_p)))
+                print("current p dot q = {} (should be 1)".format(new_q.dot(new_p) * s_norm / c_coeff))
 
                 # Check the Gram-Schmidt
                 print("GS orthogonality check: (should all be zeros)")
                 print("step) Q dot old Ps  | P dot old Qs")
                 for k in range(len(self.basis_P)):
-                    q_dot_pold = self.basis_P[k].dot(new_q)
-                    p_dot_qold = self.basis_Q[k].dot(new_p)
+                    if k >= 1:
+                        pp_norm = self.s_norm[k] / self.c_coeffs[k-1]
+                    else:
+                        pp_norm = self.s_norm[k]
+                        
+                    q_dot_pold = self.basis_P[k].dot(new_q) * pp_norm
+                    p_dot_qold = self.basis_Q[k].dot(new_p) * pp_norm
                     print("{:4d}) {:16.8e} | {:16.8e}".format(k, q_dot_pold, p_dot_qold))
 
 
@@ -2903,7 +3045,7 @@ or if the acoustic sum rule is not satisfied.
                 ortho_q = 0
                 ortho_p = 0
                 for j in range(len(self.basis_P)):
-                    coeff1 = self.basis_P[j].dot(new_q) / np.sqrt(self.basis_P[j].dot(self.basis_P[j]))
+                    coeff1 = self.basis_P[j].dot(new_q)
                     coeff2 = self.basis_Q[j].dot(new_p)
 
                     # Gram Schmidt
@@ -2931,8 +3073,8 @@ or if the acoustic sum rule is not satisfied.
                 
                 new_q /= normq
 
-                # Normalize the p with respect to the scalar product with q
-                normp = new_p.dot(new_q)
+                # Normalize the p vector
+                normp = new_p.dot(new_p)
                 if verbose:
                     print("Vector norm (p biconjugate) after GS number {}: {:16.8e}".format(k_orth, normp))
 
@@ -2944,6 +3086,10 @@ or if the acoustic sum rule is not satisfied.
                         print("The algorithm converged.")
             
                 new_p /= normp
+
+                # Now we need to update s_norm to enforce p dot q = 1
+                s_norm = c_coeff / new_p.dot(new_q)
+
 
                 # We have a correctly satisfied orthogonality condition
                 if ortho_p < __EPSILON__ and ortho_q < __EPSILON__:
@@ -2959,6 +3105,7 @@ or if the acoustic sum rule is not satisfied.
                 # Add the new coefficients to the Arnoldi matrix
                 self.b_coeffs.append(b_coeff)
                 self.c_coeffs.append(c_coeff)
+                self.s_norm.append(s_norm)
 
             t2 = time.time()
 
@@ -3812,7 +3959,7 @@ def get_weights_finite_differences(u_tilde, w, T, R1, Y1):
     return weights
 
 
-def get_full_L_matrix(lanczos):
+def get_full_L_matrix(lanczos, transpose = False):
     """
     Return the full L matrix from the Lanczos utilities, by exploiting the linear operator.
     This is very usefull for testing purpouses.
@@ -3831,9 +3978,14 @@ def get_full_L_matrix(lanczos):
 
         v[:] = 0.0
         v[i] = 1.0
-        L_matrix[:, i] = lanczos.L_linop.matvec(v)
+
+        if transpose:
+            L_matrix[:, i] = lanczos.L_linop.rmatvec(v)
+        else:
+            L_matrix[:, i] = lanczos.L_linop.matvec(v)
 
     return L_matrix
+
 
 
 def min_stdes(func, args, x0, step = 1e-2, n_iters = 100):
