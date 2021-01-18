@@ -55,11 +55,13 @@ w_array = np.linspace(W_START, W_END, NW)
 
 a_coeffs = np.copy(data.a_coeffs)
 b_coeffs = np.copy(data.b_coeffs)
+c_coeffs = np.copy(data.c_coeffs)
 
 for i in range(N_iters):
     data.a_coeffs = a_coeffs[:i+1]
     data.b_coeffs = b_coeffs[:i]
-
+    data.c_coeffs = c_coeffs[:i]
+    
     #fc_odd = data.get_static_odd_fc(False)
     #fc_odd /= np.sqrt(np.outer(data.m, data.m))
     #w, p = np.linalg.eigh(fc_odd)
