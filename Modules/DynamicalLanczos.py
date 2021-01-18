@@ -1425,7 +1425,8 @@ This may be caused by the Lanczos initialized at the wrong temperature.
                 Path to where you want to save the data. It must be an npz binary format. The extension
                 will be added if it does not match the npz one
         """
-
+        # Force all the processes to be here
+        Parallel.barrier()
 
         # Add the correct extension
         if not ".npz" in file.lower():
@@ -1470,6 +1471,9 @@ This may be caused by the Lanczos initialized at the wrong temperature.
         The file must be saved with save_status.
         """
 
+        # Force all the process to be here
+        Parallel.barrier()
+
         # Check if the provided file exists
         if not os.path.exists(file):
             print ("Error while loading %s file.\n" % file)
@@ -1477,12 +1481,18 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         data = None
         # Read the data only with the master
-        if Parallel.am_i_the_master:
+        if Parallel.am_i_the_master():
             
             # Fix the allow pickle error in numpy >= 1.14.4
             try:
                 data = np.load(file, allow_pickle = True)
+            except ValueError:
+                print("Error in pickling the data")
+                raise
             except:
+                print("Error, while loading with allow_pickle (numpy version < 1.14.4?)")
+                print("       numpy version = {}".format(np.__version__))
+                print("Trying without pickling...")
                 data = np.load(file) 
 
         # Now bcast to everyone
@@ -2784,7 +2794,7 @@ Max number of iterations: {}
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 1, flush_output = True, debug = False):
+    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 1, n_ortho = 10, flush_output = True, debug = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -2808,6 +2818,8 @@ Max number of iterations: {}
                 The number of times in which the GS orthonormalization is repeated.
                 The higher, the lower the precision of the Lanczos step, the lower, the higher
                 the probability of finding ghost states
+            n_ortho : int
+                The number of vectors to be considered for the GS biorthogonalization. (if None, all are considered)
             flush_output : bool
                 If true it flushes the output at each step. 
                 This is usefull to avoid ending without any output if a calculation is killed before it ends normally.
@@ -3070,7 +3082,15 @@ or if the acoustic sum rule is not satisfied.
             for k_orth in range(n_rep_orth):
                 ortho_q = 0
                 ortho_p = 0
-                for j in range(len(self.basis_P)):
+
+                # The starting vector
+                start = 0
+                if n_ortho is not None:
+                    start = len(self.basis_P) - n_ortho
+                    if start < 0:
+                        start = 0
+
+                for j in range(start, len(self.basis_P)):
                     coeff1 = self.basis_P[j].dot(new_q)
                     coeff2 = self.basis_Q[j].dot(new_p)
 

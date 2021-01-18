@@ -101,10 +101,10 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     first_1000_configs[:200] = True
     new_ens = ens.split(first_1000_configs)
 
-    # Get the hessian in the standard way
-    hessian = new_ens.get_free_energy_hessian(include_v4 = True, use_symmetries = True)
-    hessian.save_qe(os.path.join(dirname, "hessian_v4_"))
-    dyn.save_qe(os.path.join(dirname, "sscha"))
+    # # Get the hessian in the standard way
+    # hessian = new_ens.get_free_energy_hessian(include_v4 = True, use_symmetries = True)
+    # hessian.save_qe(os.path.join(dirname, "hessian_v4_"))
+    # dyn.save_qe(os.path.join(dirname, "sscha"))
     
 
     # Prepare the Lanczos
@@ -140,7 +140,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # exit()
 
     lanczos.prepare_mode(10)
-    lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 1)
+    lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
 
     # Pause and restart (to test restarting)
     print("Stop and saving...")
@@ -149,7 +149,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
 
     print("Resuming...")
     new_lanczos.load_status("tmp.npz")
-    new_lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 1)
+    new_lanczos.run_FT(20, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
 
     gf = new_lanczos.get_green_function_continued_fraction(np.array([0]), smearing = 0, use_terminator= False)
     w2 = np.real(1 / gf[0])
