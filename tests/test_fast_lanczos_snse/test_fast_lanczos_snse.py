@@ -105,7 +105,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # hessian = new_ens.get_free_energy_hessian(include_v4 = True, use_symmetries = True)
     # hessian.save_qe(os.path.join(dirname, "hessian_v4_"))
     # dyn.save_qe(os.path.join(dirname, "sscha"))
-    
+    hessian = CC.Phonons.Phonons(os.path.join(dirname, "hessian_v4_"), 3)
 
     # Prepare the Lanczos
     lanczos = sscha.DynamicalLanczos.Lanczos(new_ens, unwrap_symmetries=False)

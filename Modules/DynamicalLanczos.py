@@ -1479,7 +1479,7 @@ This may be caused by the Lanczos initialized at the wrong temperature.
             print ("Error while loading %s file.\n" % file)
             raise IOError("Error while loading %s" % file)
 
-        data = None
+        data = {}
         # Read the data only with the master
         if Parallel.am_i_the_master():
             
@@ -2794,7 +2794,7 @@ Max number of iterations: {}
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 1, n_ortho = 10, flush_output = True, debug = False):
+    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -2917,7 +2917,7 @@ Max number of iterations: {}
                 step_txt = """
  ===== NEW STEP %d =====
 
- """ % i
+ """ % (i + 1)
                 print(step_txt)
                 print("Length of the coefficiets: a = {}, b = {}".format(len(self.a_coeffs), len(self.b_coeffs)))
                 print()
@@ -3167,14 +3167,14 @@ or if the acoustic sum rule is not satisfied.
             
             # Save the step
             if not save_dir is None:
-                if i % save_each == 0:
-                    self.save_status("%s/LANCZOS_STEP%d" % (save_dir, i))
+                if (i + 1) % save_each == 0:
+                    self.save_status("%s/LANCZOS_STEP%d" % (save_dir, i+1))
         
                     if verbose:
-                        print("Status saved into '%s/LANCZOS_STEP%d'" % (save_dir, i))
+                        print("Status saved into '%s/LANCZOS_STEP%d'" % (save_dir, i+1))
                 
             if verbose:
-                print("Lanczos step %d ultimated." % i)
+                print("Lanczos step %d ultimated." % (i +1))
             
 
             if converged:
