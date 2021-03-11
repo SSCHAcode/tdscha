@@ -929,6 +929,67 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         return out_vect
 
+    def apply_L1_static(self, psi):
+        """
+        Apply the harmonic part of the L matrix for computing the static case (at any temperature).
+
+        """
+
+        expected_dim = self.n_modes +  (self.n_modes * (self.n_modes + 1)) // 2
+        ERRMSG = """
+Error, for the static calculation the vector must be of dimension {}, got {}
+""".format(expected_dim, len(psi))
+
+        assert len(psi) == expected_dim, ERRMSG
+
+        out_vect = np.zeros(psi.shape, dtype = TYPE_DP)
+        
+        # Here we apply the D2
+        out_vect[:self.n_modes] = (psi[:self.n_modes] * self.w) * self.w 
+
+        # Now we apply the inverse of the W matrix
+        # The elements where w_a and w_b are exchanged are dependent
+        # So we must avoid including them
+        i_a = np.tile(np.arange(self.n_modes), (self.n_modes,1)).ravel()
+        i_b = np.tile(np.arange(self.n_modes), (self.n_modes,1)).T.ravel()
+
+        new_i_a = np.array([i_a[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        
+        w_a = self.w[new_i_a]
+        w_b = self.w[new_i_b]
+
+
+        n_a = np.zeros(np.shape(w_a), dtype = TYPE_DP)
+        n_b = np.zeros(np.shape(w_a), dtype = TYPE_DP)
+
+        not_populated_mask_a = 0.01 * w_a *__RyToK__ > self.T
+        not_populated_mask_b = 0.01 * w_a *__RyToK__ > self.T
+
+        diff_n_ab = np.zeros( np.shape(w_a), dtype = TYPE_DP)
+        w_ab_equal = np.abs(w_a - w_b) < 1e-8
+        w_equal = w_a[w_ab_equal]
+        n_equal = n_a[w_ab_equal]
+
+        if self.T > 0:
+            beta = np.double(__RyToK__ / self.T)
+            n_a = 1 / (np.exp( w_a * beta) - 1)
+            n_b = 1 / (np.exp( w_b * beta) - 1)
+            n_a[not_populated_mask_a] = 0
+            n_b[not_populated_mask_b] = 0
+
+            diff_n_ab[:] = (n_a - n_b) / (w_a - w_b)
+            diff_n_ab[w_ab_equal] = - beta * np.exp(w_equal * beta) * n_equal**2
+            
+        Lambda =  (n_a + n_b + 1) / (w_a + w_b) - diff_n_ab
+        Lambda /= 4 * w_a * w_b
+
+        out_vect[self.n_modes:] = - psi[self.n_modes:] / Lambda
+
+        return out_vect
+
+
+
     def get_Y1(self, half_off_diagonal = False):
         """
         Get the perturbation on the Y matrix from the psi vector
@@ -1201,6 +1262,67 @@ This may be caused by the Lanczos initialized at the wrong temperature.
         #print("Output:", final_psi)
         return -final_psi
 
+    def apply_anharmonic_static(self):
+        """
+        Compute the anharmonic part of the L matrix for the static Hessian calculation.
+        """ 
+
+        Y1 = self.get_Y1()
+        R1 = self.psi[: self.n_modes]
+
+
+        # Create the Y matrix
+        n_mu = 0
+        if self.T > __EPSILON__:
+            n_mu = 1.0 / ( np.exp(self.w * np.double(157887.32400374097) / self.T) - 1.0)
+        Y_w = 2 * self.w / (2 * n_mu + 1)
+
+        # prepare the modified of Y1
+        Y1 = 2 * np.einsum("ab, a, b -> ab", Y1, Y_w, Y_w)
+
+        # Compute the average SSCHA force and potential
+        f_pert_av = np.zeros(self.n_modes, dtype = np.double)
+        d2v_pert_av = np.zeros((self.n_modes, self.n_modes), dtype = np.double, order = "C")
+
+        # Check if you need to compute the fourth order
+        apply_d4 = 1
+        if self.ignore_v4:
+            apply_d4 = 0
+
+        # Prepare the symmetry variables for the C code
+        deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
+        i = 0
+        i_mode = 0
+        j_mode = 0
+        #print("Mapping degeneracies:", np.sum(n_degeneracies))
+        while i_mode < self.n_modes:
+            #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
+            deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
+            j_mode += 1
+            i += 1
+            if j_mode == self.N_degeneracy[i_mode]:
+                i_mode += 1
+                j_mode = 0
+
+
+        # Compute the perturbed averages (the time consuming part is HERE)
+        #print("Entering in get pert...")
+        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, 
+                                          self.symmetries, self.N_degeneracy, deg_space_new, 
+                                          f_pert_av, d2v_pert_av)
+
+        # Get the final vector
+        final_psi = np.zeros(self.psi.shape, dtype = np.double)
+        final_psi[:self.n_modes] =  f_pert_av
+
+        # Now get the perturbation on the vector
+        current = self.n_modes
+        for i in range(self.n_modes):
+            final_psi[current : current + self.n_modes - i] = d2v_pert_av[i, i:]
+            current = current + self.n_modes - i
+        
+
+        return final_psi
 
 
     def apply_L2(self):
