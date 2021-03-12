@@ -350,6 +350,11 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         with the same ensemble and the same settings.
         """
 
+        # Prepare the variable used for the working
+        len_psi = self.n_modes
+        len_psi += self.n_modes * (self.n_modes + 1)
+        self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+
 
         # Prepare the solution of the Lanczos algorithm
         self.eigvals = None
@@ -382,6 +387,11 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 if False (default True) symmetries are neglected (unless the ensemble has been unwrapped).
     
         """
+        # Prepare the variable used for the working
+        len_psi = self.n_modes
+        len_psi += self.n_modes * (self.n_modes + 1)
+        self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        
         self.prepare_symmetrization(no_sym = not use_symmetries)
         self.initialized = True
 
@@ -984,7 +994,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         Lambda =  (n_a + n_b + 1) / (w_a + w_b) - diff_n_ab
         Lambda /= 4 * w_a * w_b
 
-        out_vect[self.n_modes:] = - psi[self.n_modes:] / Lambda
+        out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda
 
         return out_vect
 
@@ -1278,7 +1288,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         Y_w = 2 * self.w / (2 * n_mu + 1)
 
         # prepare the modified of Y1
-        Y1 = 2 * np.einsum("ab, a, b -> ab", Y1, Y_w, Y_w)
+        Y1 = -2 * np.einsum("ab, a, b -> ab", Y1, Y_w, Y_w)
 
         # Compute the average SSCHA force and potential
         f_pert_av = np.zeros(self.n_modes, dtype = np.double)
@@ -1313,7 +1323,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         # Get the final vector
         final_psi = np.zeros(self.psi.shape, dtype = np.double)
-        final_psi[:self.n_modes] =  f_pert_av
+        final_psi[:self.n_modes] =  - f_pert_av
 
         # Now get the perturbation on the vector
         current = self.n_modes
@@ -1881,7 +1891,276 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
         return G_inv
 
 
-    def _run_conjugate_gradient(self, eigval = 0, n_iters = 100, thr = 1e-5, verbose = True, guess_x = None):
+    def run_hessian_calculation(self, verbose = True, eigen_shift = 1, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "cg"):
+        r"""
+        STATIC RESPONSE
+        ===============
+
+        Get the static suscieptibility with the conjugate gradient algorithm. 
+        Then the hessian matrix is obtained inverting the static suscieptibility.
+
+        Parameters
+        ----------
+            verbose : bool
+                If true, print the status of the algorithm in standard output
+            eigen_shift : float
+                The eigenvalue problem is shifted by :math:`\lambda` as
+
+                .. math ::
+
+                    L' \rightarrow L\left[ P + (1 - P) \lambda\right]
+
+                This does not change the final solution as we are interested in
+
+                .. math ::
+
+                    P L^{-1} P = P {L'}^{-1}P
+
+                So, if the matrix is not positive definite, we can exploit this force int positive definite.
+
+            tol : float
+                Tollerance of the biconjugate gradient algorithm 
+            maxiter: int
+                The maximum number of iterations for the biconjugate gradient.
+            save_g: string
+                Path to the file on which save the green function. 
+                It is saved after a number of steps specified by save_each.
+            save_each: int
+                Determines after how many steps to save the green function.
+            use_preconditioning: bool
+                If true, uses the preconditioning to solve the gradient.
+                The precondition is obtained by inverting analytically only the Harmonic propagation of the
+                L matrix
+            algorithm: string
+                The algorithm used to invert the L matrix. One between:
+                   - cg : Conjugate Gradient (Default)
+                It will invoke the corresponding scipy subroutine
+
+        Results
+        -------
+            G_inv: ndarray(size = (n_modes, n_modes))
+                This is the mass-rescaled free energy Hessian.
+                Its eigenvalues are the static frequencies, that determine the structure stability.
+        """
+
+        G_one_phonon = np.zeros( (self.n_modes, self.n_modes), dtype = np.double)
+
+        if verbose:
+            print()
+            print("=====================")
+            print(" HESSIAN CALCULATION ")
+            print("=====================")
+            print()
+            print("We compute the static response with the")
+            print("Conjugate gradient algorithm.")
+            print()
+
+        
+        # Check if the symmetries has been initialized
+        if not self.initialized:
+            self.prepare_symmetrization()
+
+        # Prepare the psi vector
+        # And the L operator for the efficient calculation of the static response
+        self.psi = np.zeros( self.n_modes + self.n_modes*(self.n_modes + 1) // 2, dtype = TYPE_DP)
+
+        def apply_static_L(psi):
+            self.psi[:] = psi
+
+            # Apply the shift
+            self.psi[self.n_modes :] *= eigen_shift
+
+            ret = self.apply_L1_static(self.psi)
+            ret += self.apply_anharmonic_static()
+
+            ret[self.n_modes :] *= eigen_shift
+            return ret
+
+        L_operator = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = apply_static_L, dtype = TYPE_DP)
+
+        j = np.zeros(1, dtype = np.intc)
+        x_old = self.psi.copy()
+        for i in range(self.n_modes):
+            if verbose:
+                # Print the status
+                print()
+                print()
+                print("NEW STEP")
+                print("--------")
+                print()
+                print("i = {} / {}".format(i + 1, self.n_modes))
+                print()
+            
+            # Setup the known vector
+            self.psi = np.zeros(self.psi.shape, dtype = type(self.psi[0]))
+            self.psi[i] = 1
+
+            x_old[:] = self.psi
+            j[0] = 0
+            def callback(xk, x_old = x_old, j = j):
+                if np.isnan(np.sum(xk)):
+                    raise ValueError("Error, NaN value found during the Conjugate Gradient.") 
+                if verbose:
+                    disp = sum( (xk - x_old)**2)
+                    print("CG STEP {} | solution changed by {} (tol = {})".format(j[0], disp, tol))
+                    j[0] += 1
+                    x_old[:] = xk
+                
+            # Prepare the preconditioning
+            M_prec = None
+            #x0 = self.M_linop.matvec(self.psi)
+            #if use_preconditioning:
+            #    M_prec = self.M_linop
+            #    #x0 = M_prec.matvec(self.psi)
+            x0 =  self.psi.copy()# / self.w[i] / self.w[i]
+
+            # Run the biconjugate gradient
+            t1 = time.time()
+            if algorithm.lower() == "cg":
+                res, info = scipy.sparse.linalg.cg(L_operator, self.psi, x0 = x0)#, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
+            #elif algorithm.lower() == "bicg":
+            #    res, info = scipy.sparse.linalg.bicg(self.L_linop, self.psi, x0 = x0, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
+            elif algorithm.lower() == "minimize" or "minimize-quad":
+                # This algorithm minimizes f(x) = 1/2  (Lx - b) H^-1 (Lx - b)
+                # where H is the matrix H = L^T L (so it is positive definite). 
+                # We pick the H inverse as the inverse of the SSCHA harmonic solution.  
+                # To find x and compute x = A^-1 b
+
+                # Here we define the function that returns f(x) and its gradient
+                def func_quad(x, b):
+                    # Apply
+                    Lx = L_operator.matvec(x) 
+
+                    # Apply the precondition H^-1 = (L^t L)^-1 => M M^t
+                    # if use_preconditioning:
+                    #     Hinv_r = self.M_linop.rmatvec(r)
+                    #     Hinv_r = self.M_linop.matvec(Hinv_r)
+                    # else:
+                    #     Hinv_r = r
+
+                    # Now we get the gradient
+                    r = Lx - b
+
+                    gradient = L_operator.matvec(r)
+                    
+                    # We get the function
+                    f = 0.5 * np.sum(r**2)
+
+                    if verbose:
+                        print("Evaluated function: value = {} | norm gradient = {}".format(f, np.sum(gradient**2)))
+                        print()
+
+                    return f, gradient
+
+                def func_standard(x, b):
+                    # Apply
+                    Lx = L_operator.matvec(x) 
+
+                    # Apply the precondition H^-1 = (L^t L)^-1 => M M^t
+                    # if use_preconditioning:
+                    #     Hinv_r = self.M_linop.rmatvec(r)
+                    #     Hinv_r = self.M_linop.matvec(Hinv_r)
+                    # else:
+                    #     Hinv_r = r
+
+                    # Now we get the gradient
+                    r = Lx - b
+
+                    gradient = r
+                    
+                    # We get the function
+                    f = 0.5 * x.dot(Lx) - b.dot(x) 
+
+                    if verbose:
+                        print("Evaluated function: value = {} | norm gradient = {}".format(f, np.sum(gradient**2)))
+                        print()
+
+                    return f, gradient
+                
+                psi_vector = self.psi.copy() 
+
+                # Setup the minimization parameters
+                options = {"gtol" : tol, "maxiter" : maxiter, "disp" : verbose, "norm" : 2}
+                
+                if algorithm.lower() == "minimize":
+                    results = scipy.optimize.minimize(func_standard, x0, args = (psi_vector), method = "bfgs", jac = True, options=options)
+                elif algorithm.lower() == "minimize-quad":
+                    results = scipy.optimize.minimize(func_quad, x0, args = (psi_vector), method = "bfgs", jac = True, options=options)
+                    
+
+                # Start the minimization
+
+                # Get the number of iterations
+                j[0] = results.nit
+
+                # Check the success
+                if results.success:
+                    info = 0
+                else:
+                    info = 1
+
+                if verbose:
+                    print("Minimization terminated after {} evaluations.".format(results.nfev))
+
+                # Get the result
+                res = results.x.copy()
+            else:
+                raise ValueError("""
+Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemented.
+       the only supported algorithms are ['bicgstab', 'bicg']
+""".format(algorithm))
+            t2 = time.time()
+
+            if  verbose:
+                print()
+                print("Time to solve the linear system: {} s".format(t2 - t1))
+                print()
+
+            # Check if the minimization converged
+            assert info >= 0, "Error on input or breakdown of biconjugate gradient algorithm (info = {})".format(info)
+
+            if info > 0:
+                print("The biconjugate gradient (step {}) algorithm did not converge after {} iterations.".format(i+1, maxiter))
+                print("Try to either reduce the tollerance or increase the number of iteriations")
+                print()
+            else:
+                print("The biconjugate gradient converged after {} iterations.".format(j[0]))
+                print("res = {}".format(res))
+            
+
+            G_one_phonon[i, :] = res[:self.n_modes]
+            if i % save_each == 0:
+                if save_g is not None:
+                    np.save(save_g, G_one_phonon)
+            
+        
+        if verbose:
+            print()
+            print(" ================================ ")
+            print(" THE CONJUGATE GRADIENT CONVERGED ")
+            print(" ================================ ")
+            print()
+            print()
+
+            
+        if save_g is not None:
+            np.save(save_g, G_one_phonon)
+
+        # Check the hermitianeity
+        disp = np.max(np.abs(G_one_phonon - G_one_phonon.T))
+        assert disp < 1e-4, "Error, the resulting one-phonon Green function is not Hermitian."
+
+        # Force hermitianity
+        G = 0.5 * (G_one_phonon + G_one_phonon.T)
+        
+        # Invert the green function to get the Hessian Matrix (mass-rescaled)
+        G_inv = np.linalg.inv(G) 
+
+        return G_inv
+
+
+
+    def run_conjugate_gradient(self, eigval = 0, n_iters = 100, thr = 1e-5, verbose = True, guess_x = None):
         r"""
         RUN THE CONJUGATE GRADIENT (WORK METHOD)
         ========================================
@@ -4128,13 +4407,31 @@ def get_weights_finite_differences(u_tilde, w, T, R1, Y1):
     return weights
 
 
-def get_full_L_matrix(lanczos, transpose = False):
+def get_full_L_matrix(lanczos, transpose = False, static = False, only_anharm = False):
     """
     Return the full L matrix from the Lanczos utilities, by exploiting the linear operator.
     This is very usefull for testing purpouses.
 
     NOTE: The memory required to store the full matrix may diverge.
+
+    If static is true, instead of the Lanczos matrix, the symmetric one ad-hoc for the static case is employed.
     """
+
+    L_op = lanczos.L_linop
+    if static == True:
+        lanczos.psi = np.zeros(lanczos.n_modes + lanczos.n_modes * (lanczos.n_modes + 1) // 2, dtype = TYPE_DP)
+
+        def apply_static(v):
+            lanczos.psi = v
+            out = np.zeros(v.shape, dtype = TYPE_DP) 
+            if not only_anharm:
+                out[:] = lanczos.apply_L1_static(v) 
+            out += lanczos.apply_anharmonic_static()
+            return out 
+
+        npsi = len(lanczos.psi)
+
+        L_op =  scipy.sparse.linalg.LinearOperator( shape = (npsi, npsi), dtype = TYPE_DP, matvec = apply_static, rmatvec = apply_static)
 
     n_iters = len(lanczos.psi)
 
@@ -4149,9 +4446,9 @@ def get_full_L_matrix(lanczos, transpose = False):
         v[i] = 1.0
 
         if transpose:
-            L_matrix[:, i] = lanczos.L_linop.rmatvec(v)
+            L_matrix[:, i] = L_op.rmatvec(v)
         else:
-            L_matrix[:, i] = lanczos.L_linop.matvec(v)
+            L_matrix[:, i] = L_op.matvec(v)
 
     return L_matrix
 

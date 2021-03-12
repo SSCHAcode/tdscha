@@ -1,6 +1,10 @@
 from __future__ import print_function
 from __future__ import division
 
+import cellconstructor as CC
+import cellconstructor.Phonons
+import cellconstructor.Structure
+
 import sscha, sscha.DynamicalLanczos
 import numpy as np
 
@@ -319,6 +323,13 @@ def test_lanczos_1d(plot = False):
     # Get the frequency
     w = sscha_w(m = 1, phi0 = phi)
 
+    # Create a fake dynamical matrix
+    struct = CC.Structure.Structure(1)
+    struct.set_masses({"H": 1})
+    struct.unit_cell = np.eye(3)
+    struct.has_unit_cell = True
+    dyn = CC.Phonons.Phonons(struct)
+
     # Initialize the lanczos algorithm
     lanc = sscha.DynamicalLanczos.Lanczos()
 
@@ -328,6 +339,8 @@ def test_lanczos_1d(plot = False):
     lanc.n_modes = 1
     lanc.pols = np.ones((1,1), dtype = np.double)
     lanc.m = np.array([np.double(1)])
+    lanc.dyn = dyn
+    
 
     # get the N random configuration
     # for the Lanczos application
@@ -345,11 +358,11 @@ def test_lanczos_1d(plot = False):
     # Set the temperature
     lanc.T = 0
 
-    # Prepare the 1D phonon green function
-    lanc.prepare_perturbation(np.ones(1, dtype = np.double), masses_exp = 0)
-
     # Fake the algorithm with a false initialization
-    lanc.initialized = True
+    lanc.init(use_symmetries = False)
+
+
+
 
      # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
     def L_transp(psi):
@@ -409,7 +422,7 @@ def test_lanczos_1d(plot = False):
 
     # Get the L and Lt to test hermitianity
     L = sscha.DynamicalLanczos.get_full_L_matrix(lanc)
-    Lt = sscha.DynamicalLanczos.get_full_L_matrix(lanc)
+    Lt = sscha.DynamicalLanczos.get_full_L_matrix(lanc, transpose = True)
 
     disp = np.max(np.abs(L - Lt.T)) / np.max(np.abs(L))
     print("Discrepance between L and Lt: {}".format(disp))
@@ -417,8 +430,15 @@ def test_lanczos_1d(plot = False):
     np.savetxt("L.dat", L)
     np.savetxt("Lt.dat", Lt)
 
-    assert disp < 1e-6, "Error, L application is not correctly transposed."
+    L_static = sscha.DynamicalLanczos.get_full_L_matrix(lanc, static = True, only_anharm = False)
+    np.savetxt("Lstatic.dat", L_static)
 
+    assert disp < 1e-6, "Error, L application is not cinitorrectly transposed."
+
+
+    # Prepare the 1D phonon green function
+    lanc.reset()
+    lanc.prepare_perturbation(np.ones(1, dtype = np.double), masses_exp = 0)
 
     lanc.run_FT(10)
 
@@ -430,15 +450,24 @@ def test_lanczos_1d(plot = False):
 
 
     # Check the static with the biconjugate gradient
-    static_hessian = lanc.run_biconjugate_gradient()
+    static_hessian = lanc.run_hessian_calculation(save_g = "g.npy", algorithm = "minimize")
 
-    print("Hessian frequency: {}".format(static_hessian))
-    print("Inverse dynamical green function: {}".format(np.real(1 / gf[0])))
+    res = np.array([0.07694938, 0.        ])
+    print("Psi on {} := {}".format(res, lanc.apply_L1_static(res)))
+
+
+    print("Hessian frequency: {}".format(np.sqrt(static_hessian)))
+    print("Inverse dynamical green function: {}".format(np.sqrt(np.real(1 / gf[0]))))
+
+    psi = np.zeros(2, dtype = np.double)
+    psi[0] = 1
+    print("Apply psi result: {}".format(lanc.apply_L1_static(psi)))
 
     if plot:
         plt.plot(w_array, -np.imag(gf))
         ax = plt.gca()
         ax.vlines( sscha_w(1, phi), 0, np.max(-np.imag(gf)), ls = "--", color = "k")
+        ax.vlines(np.sqrt(np.real(1 / gf[0])) , 0, np.max(-np.imag(gf)), ls = "--", color = "r")
         plt.tight_layout()
         plt.show()
 
