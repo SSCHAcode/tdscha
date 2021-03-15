@@ -463,6 +463,8 @@ def test_lanczos_1d(plot = False):
     psi[0] = 1
     print("Apply psi result: {}".format(lanc.apply_L1_static(psi)))
 
+    assert np.abs(np.sqrt(static_hessian) - np.sqrt(np.real(1 / gf[0]))) < 1e-6
+
     if plot:
         plt.plot(w_array, -np.imag(gf))
         ax = plt.gca()

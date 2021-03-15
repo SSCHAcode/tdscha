@@ -24,9 +24,150 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 This module contains usefull subroutines to work with
 """
 import cellconstructor as CC
+import sscha.Parallel
+from sscha.Parallel import pprint as print
 import scipy, scipy.linalg
 import numpy as np
 import os
+
+
+def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6):
+    """
+    Minimum residual algorithm
+    --------------------------
+
+    This implement an algorithm to solve the linear system
+    
+    .. math::
+
+        Ax = b
+
+    You must provide the function that performs the matrix multiplication :math:`Ax`, the
+    starting vector :math:`x_0`, and the known vector :math:`b`.
+
+    Parameters
+    ----------
+        A : scipy.sparse.linalg.LinearOperator
+            The A matrix that takes the vector (numpy array as x0) as input and returns
+            the :math:`Ax` operation.
+        b : ndarray
+            The known term of the system
+        x0 : ndarray
+            The starting guess.
+        precond : scipy.sparse.linalg.LinearOperator or None
+            If it is a LinearOperator, it is used to precondition the minimization.
+            This is a raw estimate of :math:`A^{-1}`
+        verbose : bool
+            If true, print the residual after each iteration
+        max_iters : int
+            The maximum number of iterations.
+    """
+
+    # Setup the starting condition
+    # Compute the residual
+    if verbose:
+        print()
+        print("Minimal residual algorithm")
+        print("--------------------------")
+        print()
+        print("Initialization...")
+    r1 = b - A.matvec(x0) 
+    if precond:
+        r1[:] = precond.matvec(r1)
+
+    b_prec = b.copy()
+    if precond:
+        b_prec = precond.matvec(b)
+    
+    if verbose:
+        print("Starting residual: {}".format(np.sqrt(r1.dot(r1))))
+
+    r1_bar = A.matvec(r1)
+    if precond:
+        r1_bar = precond.matvec(r1_bar)
+
+    # Get the zbar
+    z1 = r1.copy()
+    z1_bar = r1_bar.copy()
+
+    if False:# precond:
+        z1[:] = precond.matvec(r1)
+        z1_bar[:] = precond.matvec(r1_bar)
+
+    p1 = r1.copy()
+    p1_bar = r1_bar.copy()
+    x = x0.copy()
+
+    iters = 1
+    converged = False
+    while iters < max_iters and not converged:
+        if verbose:
+            print("Iteration: {}".format(iters))
+        
+        Ap = p1_bar #A.matvec(p1)
+        Ap_bar = A.matvec(p1_bar)
+        if precond:
+            Ap_bar[:] = precond.dot(Ap_bar)
+
+        alpha = r1_bar.dot(z1) / (p1_bar.dot(Ap))
+        x[:] += alpha * p1 # Update the solution
+
+        r = r1 - alpha * Ap
+        rbar = r1_bar -alpha * Ap_bar
+
+
+        r_norm = np.sqrt(r.dot(r)) / np.sqrt(b_prec.dot(b_prec))
+        # if not precond:
+        #     pass
+        # else:
+        #     num = precond.matvec(r)
+        #     den = precond.matvec(b)
+        #     r_norm = np.sqrt(num.dot(num)) / np.sqrt(den.dot(den))
+
+        if verbose:
+            print("    residual = {}".format(r_norm))
+
+            # print("Check:")
+            # print("r mine = {}".format(r))
+            # print("r with x = {}".format(A.matvec(x) - b))
+
+        z = r.copy()
+        zbar = rbar.copy()
+        
+        if False:
+            z[:] = precond.matvec(r)
+            zbar[:] = precond.matvec(rbar)
+
+        # if verbose:
+        #     print("Check:")
+        #     print("r = {}".format(r))
+        #     print("z = {}".format(z))
+
+
+        beta = rbar.dot(z) / (r1_bar.dot(z1))
+
+        p1[:] = z + beta * p1
+        p1_bar[:] = zbar + beta* p1_bar
+
+        r1[:] = r
+        r1_bar[:] = rbar
+        z1[:] = z 
+        z1_bar[:] = zbar
+
+        # check convergency
+        converged = r_norm < conv_thr
+        iters += 1
+
+    if not converged:
+        print("WARNING: cg did not converge after {} iterations.".format(max_iters))
+        print("         residual = {}".format(r_norm))
+
+    return x
+
+
+
+
+
 
 
 # Here some usefull functions to solve linear systems

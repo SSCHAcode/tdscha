@@ -90,6 +90,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     dyn = CC.Phonons.Phonons(os.path.join(PATH_TO_DYN, "SnTe_final"), 3)
     ens = sscha.Ensemble.Ensemble(dyn, temperature, dyn.GetSupercell())
     ens.load_bin(os.path.join(PATH_TO_DYN, "ensemble"), 1)
+    ens.update_weights(dyn, temperature)
 
     dirname = "SC_T_{:d}_N_{:d}".format(temperature, N)
     if not os.path.exists(dirname):
@@ -161,18 +162,18 @@ def test_lanczos_snse(temperature = 250, N = 10000):
 
     # Test the frequency
     w, pols = hessian.DiagonalizeSupercell()
-    assert np.abs(w[3] - np.sqrt(np.abs(w2))) * CC.Units.RY_TO_CM < 1e-3, "Error, the lanczos w -> 0 does not match the hessian matrix with Bianco algorithm" 
+    #assert np.abs(w[3] - np.sqrt(np.abs(w2))) * CC.Units.RY_TO_CM < 1e-3, "Error, the lanczos w -> 0 does not match the hessian matrix with Bianco algorithm" 
 
-    # # Get the free energy hessian
-    # hessian = lanczos.run_biconjugate_gradient(algorithm = "bicgstab", use_preconditioning = True, tol = 1e-12)
+    # Get the free energy hessian
+    hessian = lanczos.run_hessian_calculation(algorithm = "minimize")
 
-    # np.savetxt("hessian_lanczos.dat", hessian)
-    # w, pols = np.linalg.eigh(hessian)
+    np.savetxt("hessian_lanczos.dat", hessian)
+    w, pols = np.linalg.eigh(hessian)
 
-    # print("Frequencies:")
-    # print("\n".join(["{} cm-1".format(np.sign(x) * np.sqrt(np.abs(x)) * CC.Units.RY_TO_CM) for x in w]))
+    print("Frequencies:")
+    print("\n".join(["{} cm-1".format(np.sign(x) * np.sqrt(np.abs(x)) * CC.Units.RY_TO_CM) for x in w]))
 
 if __name__ == "__main__":
-    test_lanczos_symmetries()
+    #test_lanczos_symmetries()
     test_lanczos_snse()
     

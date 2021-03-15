@@ -939,9 +939,11 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         return out_vect
 
-    def apply_L1_static(self, psi):
+    def apply_L1_static(self, psi, inverse = False):
         """
         Apply the harmonic part of the L matrix for computing the static case (at any temperature).
+
+        The inverse keyword, if True, compute the L^-1.
 
         """
 
@@ -955,7 +957,11 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         out_vect = np.zeros(psi.shape, dtype = TYPE_DP)
         
         # Here we apply the D2
-        out_vect[:self.n_modes] = (psi[:self.n_modes] * self.w) * self.w 
+        if not inverse:
+            out_vect[:self.n_modes] = (psi[:self.n_modes] * self.w) * self.w 
+        else:
+            out_vect[:self.n_modes] = (psi[:self.n_modes] / self.w) / self.w 
+
 
         # Now we apply the inverse of the W matrix
         # The elements where w_a and w_b are exchanged are dependent
@@ -994,7 +1000,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         Lambda =  (n_a + n_b + 1) / (w_a + w_b) - diff_n_ab
         Lambda /= 4 * w_a * w_b
 
-        out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda
+        if not inverse:
+            out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda
+        else:
+            out_vect[self.n_modes:] =  psi[self.n_modes:] * Lambda
 
         return out_vect
 
@@ -4467,5 +4476,6 @@ def min_stdes(func, args, x0, step = 1e-2, n_iters = 100):
 
         print("F: {} | G: {}".format( f, np.sqrt(np.sum(grad**2))))
     return x
+
 
 

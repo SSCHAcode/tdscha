@@ -28,14 +28,14 @@ ff_calculator.p3 = 0.036475
 ff_calculator.p4 = -0.022
 ff_calculator.p4x = -0.014
 
-T = 0
+T = 250
 #TMIN = 150
 #TMAX = 250
 #DT = 10
 
-NMIN = 40000
-NMAX = 40000
-DN = 40000
+NMIN =10000
+NMAX = 10000
+DN = 10000
 
 
 def simulate(T, n_confs):
