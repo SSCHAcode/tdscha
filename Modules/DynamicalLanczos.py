@@ -21,6 +21,7 @@ import cellconstructor.Phonons
 import cellconstructor.symmetries
 
 import sscha.Ensemble as Ensemble
+import sscha.Tools
 import sscha_HP_odd
 
 # Override the print function to print in parallel only from the master
@@ -2016,17 +2017,24 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
                     x_old[:] = xk
                 
             # Prepare the preconditioning
+
             M_prec = None
-            #x0 = self.M_linop.matvec(self.psi)
-            #if use_preconditioning:
-            #    M_prec = self.M_linop
-            #    #x0 = M_prec.matvec(self.psi)
-            x0 =  self.psi.copy()# / self.w[i] / self.w[i]
+
+            def prec_mult(x):
+                return self.apply_L1_static(x, inverse = True)
+
+            if use_preconditioning:
+                M_prec = scipy.sparse.linalg.LinearOperator(L_operator.shape, matvec = prec_mult)
+                x0 = M_prec.matvec(self.psi)
+            else:
+                x0 = self.psi.copy()# / self.w[i] / self.w[i]
 
             # Run the biconjugate gradient
             t1 = time.time()
             if algorithm.lower() == "cg":
-                res, info = scipy.sparse.linalg.cg(L_operator, self.psi, x0 = x0)#, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
+                res = sscha.Tools.minimum_residual_algorithm(L_operator, self.psi.copy(), x0 = x0, precond = M_prec)
+                info = 0
+                #res, info = scipy.sparse.linalg.cg(L_operator, self.psi, x0 = x0)#, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
             #elif algorithm.lower() == "bicg":
             #    res, info = scipy.sparse.linalg.bicg(self.L_linop, self.psi, x0 = x0, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
             elif algorithm.lower() == "minimize" or "minimize-quad":

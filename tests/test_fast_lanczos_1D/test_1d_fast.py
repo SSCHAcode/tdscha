@@ -450,7 +450,7 @@ def test_lanczos_1d(plot = False):
 
 
     # Check the static with the biconjugate gradient
-    static_hessian = lanc.run_hessian_calculation(save_g = "g.npy", algorithm = "minimize")
+    static_hessian = lanc.run_hessian_calculation(save_g = "g.npy", algorithm = "cg", use_preconditioning = False)
 
     res = np.array([0.07694938, 0.        ])
     print("Psi on {} := {}".format(res, lanc.apply_L1_static(res)))
