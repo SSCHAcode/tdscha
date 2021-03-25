@@ -165,7 +165,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     #assert np.abs(w[3] - np.sqrt(np.abs(w2))) * CC.Units.RY_TO_CM < 1e-3, "Error, the lanczos w -> 0 does not match the hessian matrix with Bianco algorithm" 
 
     # Get the free energy hessian
-    hessian = lanczos.run_hessian_calculation(algorithm = "minimize")
+    hessian = lanczos.run_hessian_calculation(algorithm = "cg", use_preconditioning = True, max_iters = 1000)
 
     np.savetxt("hessian_lanczos.dat", hessian)
     w, pols = np.linalg.eigh(hessian)

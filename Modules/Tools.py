@@ -28,7 +28,8 @@ import sscha.Parallel
 from sscha.Parallel import pprint as print
 import scipy, scipy.linalg
 import numpy as np
-import os
+import sys, os
+import time
 
 
 def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6):
@@ -101,6 +102,7 @@ def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_ite
     iters = 1
     converged = False
     while iters < max_iters and not converged:
+        t1 = time.time()
         if verbose:
             print("Iteration: {}".format(iters))
         
@@ -124,8 +126,12 @@ def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_ite
         #     den = precond.matvec(b)
         #     r_norm = np.sqrt(num.dot(num)) / np.sqrt(den.dot(den))
 
+        t2 = time.time()
         if verbose:
             print("    residual = {}".format(r_norm))
+            print("    time to perform the step: {} s".format(t2-t1))
+            if sscha.Parallel.am_i_the_master():
+                sys.stdout.flush()
 
             # print("Check:")
             # print("r mine = {}".format(r))
@@ -161,6 +167,66 @@ def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_ite
     if not converged:
         print("WARNING: cg did not converge after {} iterations.".format(max_iters))
         print("         residual = {}".format(r_norm))
+
+    return x
+
+
+
+
+def minimum_residual_algorithm_precond(A, b, precond_half, **kwargs):
+    """
+    Minimum residual algorithm
+    --------------------------
+
+    This implement an algorithm to solve the linear system
+    
+    .. math::
+
+        Ax = b
+
+    You must provide the function that performs the matrix multiplication :math:`Ax`, the
+    starting vector :math:`x_0`, and the known vector :math:`b`.
+
+    Parameters
+    ----------
+        A : scipy.sparse.linalg.LinearOperator
+            The A matrix that takes the vector (numpy array as x0) as input and returns
+            the :math:`Ax` operation.
+        b : ndarray
+            The known term of the system
+        x0 : ndarray
+            The starting guess.
+        precond_half : scipy.sparse.linalg.LinearOperator or None
+            If it is a LinearOperator, it is used to precondition the minimization.
+            This is a raw estimate of :math:`A^{-1/2}`
+        **kwargs : The same arguments as minimum_residual_algorithm
+    """
+
+    # Setup the starting condition
+
+    # This is the standard gradient, but now we rescale all the quantities.
+    def apply_new_A(x):
+        # M^-1/2 A M^-1/2
+        x1 = precond_half.matvec(x)
+        x2 = A.matvec(x1)
+        return precond_half.matvec(x2)
+
+    if precond_half is not None:
+        A_tilde = scipy.sparse.linalg.LinearOperator(A.shape, matvec = apply_new_A)
+
+        b_tilde = precond_half.matvec(b)
+
+        x0_tilde = b_tilde.copy()
+
+        x_tilde = minimum_residual_algorithm(A_tilde, b_tilde, x0_tilde, precond = None, **kwargs)
+
+        # Convert back in the real system
+        x = precond_half.matvec(x_tilde)
+    else:
+        x = minimum_residual_algorithm(A, b, b.copy(), precond = None, **kwargs)
+
+    return x
+
 
     return x
 

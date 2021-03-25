@@ -940,11 +940,11 @@ This may be caused by the Lanczos initialized at the wrong temperature.
 
         return out_vect
 
-    def apply_L1_static(self, psi, inverse = False):
+    def apply_L1_static(self, psi, inverse = False, power = 1):
         """
         Apply the harmonic part of the L matrix for computing the static case (at any temperature).
 
-        The inverse keyword, if True, compute the L^-1.
+        The inverse keyword, if True, compute the L^-1. If power is different from one, then multiply it to a specific power.
 
         """
 
@@ -956,12 +956,13 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         assert len(psi) == expected_dim, ERRMSG
 
         out_vect = np.zeros(psi.shape, dtype = TYPE_DP)
+
+        if inverse:
+            power *= -1
         
         # Here we apply the D2
-        if not inverse:
-            out_vect[:self.n_modes] = (psi[:self.n_modes] * self.w) * self.w 
-        else:
-            out_vect[:self.n_modes] = (psi[:self.n_modes] / self.w) / self.w 
+        out_vect[:self.n_modes] = psi[:self.n_modes] * (self.w **(2 * power))
+        #out_vect[:self.n_modes] = (psi[:self.n_modes] / self.w) / self.w 
 
 
         # Now we apply the inverse of the W matrix
@@ -1001,10 +1002,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         Lambda =  (n_a + n_b + 1) / (w_a + w_b) - diff_n_ab
         Lambda /= 4 * w_a * w_b
 
-        if not inverse:
-            out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda
-        else:
-            out_vect[self.n_modes:] =  psi[self.n_modes:] * Lambda
+        out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda**power
 
         return out_vect
 
@@ -1901,7 +1899,7 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
         return G_inv
 
 
-    def run_hessian_calculation(self, verbose = True, eigen_shift = 1, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "cg"):
+    def run_hessian_calculation(self, verbose = True, eigen_shift = 1, tol = 5e-4, max_iters = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "cg"):
         r"""
         STATIC RESPONSE
         ===============
@@ -1975,7 +1973,7 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
         self.psi = np.zeros( self.n_modes + self.n_modes*(self.n_modes + 1) // 2, dtype = TYPE_DP)
 
         def apply_static_L(psi):
-            self.psi[:] = psi
+            self.psi[:] = psi.copy()
 
             # Apply the shift
             self.psi[self.n_modes :] *= eigen_shift
@@ -2020,19 +2018,21 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
 
             M_prec = None
 
-            def prec_mult(x):
-                return self.apply_L1_static(x, inverse = True)
+            def prec_half(x):
+                return self.apply_L1_static(x, inverse = True, power = 0.5)
 
             if use_preconditioning:
-                M_prec = scipy.sparse.linalg.LinearOperator(L_operator.shape, matvec = prec_mult)
-                x0 = M_prec.matvec(self.psi)
-            else:
-                x0 = self.psi.copy()# / self.w[i] / self.w[i]
+                M_prec = scipy.sparse.linalg.LinearOperator(L_operator.shape, matvec = prec_half)
+            
+            x0 = self.psi.copy()# / self.w[i] / self.w[i]
 
             # Run the biconjugate gradient
             t1 = time.time()
             if algorithm.lower() == "cg":
-                res = sscha.Tools.minimum_residual_algorithm(L_operator, self.psi.copy(), x0 = x0, precond = M_prec)
+                if not use_preconditioning:
+                    res = sscha.Tools.minimum_residual_algorithm(L_operator, self.psi.copy(), x0 = x0, precond = None, max_iters = max_iters)
+                else:
+                    res = sscha.Tools.minimum_residual_algorithm_precond(L_operator, self.psi.copy(), M_prec, max_iters = max_iters)
                 info = 0
                 #res, info = scipy.sparse.linalg.cg(L_operator, self.psi, x0 = x0)#, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
             #elif algorithm.lower() == "bicg":
@@ -2097,7 +2097,7 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
                 psi_vector = self.psi.copy() 
 
                 # Setup the minimization parameters
-                options = {"gtol" : tol, "maxiter" : maxiter, "disp" : verbose, "norm" : 2}
+                options = {"gtol" : tol, "maxiter" : max_iters, "disp" : verbose, "norm" : 2}
                 
                 if algorithm.lower() == "minimize":
                     results = scipy.optimize.minimize(func_standard, x0, args = (psi_vector), method = "bfgs", jac = True, options=options)
@@ -4424,7 +4424,6 @@ def get_weights_finite_differences(u_tilde, w, T, R1, Y1):
     return weights
 
 
-def get_full_L_matrix(lanczos, transpose = False, static = False, only_anharm = False):
     """
     Return the full L matrix from the Lanczos utilities, by exploiting the linear operator.
     This is very usefull for testing purpouses.
@@ -4439,11 +4438,12 @@ def get_full_L_matrix(lanczos, transpose = False, static = False, only_anharm = 
         lanczos.psi = np.zeros(lanczos.n_modes + lanczos.n_modes * (lanczos.n_modes + 1) // 2, dtype = TYPE_DP)
 
         def apply_static(v):
-            lanczos.psi = v
+            lanczos.psi[:] = v
             out = np.zeros(v.shape, dtype = TYPE_DP) 
-            if not only_anharm:
+            if compute_harm:
                 out[:] = lanczos.apply_L1_static(v) 
-            out += lanczos.apply_anharmonic_static()
+            if compute_anharm:
+                out += lanczos.apply_anharmonic_static()
             return out 
 
         npsi = len(lanczos.psi)
@@ -4468,6 +4468,52 @@ def get_full_L_matrix(lanczos, transpose = False, static = False, only_anharm = 
             L_matrix[:, i] = L_op.matvec(v)
 
     return L_matrix
+
+
+def get_full_L_matrix(lanczos, transpose = False, static = False, compute_anharm = True, compute_harm = True):
+    """
+    Return the full L matrix from the Lanczos utilities, by exploiting the linear operator.
+    This is very usefull for testing purpouses.
+    NOTE: The memory required to store the full matrix may diverge.
+    If static is true, instead of the Lanczos matrix, the symmetric one ad-hoc for the static case is employed.
+    """
+
+    L_op = lanczos.L_linop
+    if static == True:
+        lanczos.psi = np.zeros(lanczos.n_modes + lanczos.n_modes * (lanczos.n_modes + 1) // 2, dtype = TYPE_DP)
+
+        def apply_static(v):
+            lanczos.psi = v
+            out = np.zeros(v.shape, dtype = TYPE_DP) 
+            if compute_harm:
+                out[:] = lanczos.apply_L1_static(v) 
+            if compute_anharm:
+                out += lanczos.apply_anharmonic_static()
+            return out 
+
+        npsi = len(lanczos.psi)
+
+        L_op =  scipy.sparse.linalg.LinearOperator( shape = (npsi, npsi), dtype = TYPE_DP, matvec = apply_static, rmatvec = apply_static)
+
+    n_iters = len(lanczos.psi)
+
+    v = np.zeros(lanczos.psi.shape, dtype = np.double)
+
+    L_matrix = np.zeros((n_iters, n_iters), dtype = np.double)
+
+    for i in range(n_iters):
+        print("Step {} out of {}".format(i+1, n_iters))
+
+        v[:] = 0.0
+        v[i] = 1.0
+
+        if transpose:
+            L_matrix[:, i] = L_op.rmatvec(v)
+        else:
+            L_matrix[:, i] = L_op.matvec(v)
+
+    return L_matrix
+
 
 
 

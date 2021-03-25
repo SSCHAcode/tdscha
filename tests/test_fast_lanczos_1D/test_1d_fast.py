@@ -430,8 +430,11 @@ def test_lanczos_1d(plot = False):
     np.savetxt("L.dat", L)
     np.savetxt("Lt.dat", Lt)
 
-    L_static = sscha.DynamicalLanczos.get_full_L_matrix(lanc, static = True, only_anharm = False)
+    L_static = sscha.DynamicalLanczos.get_full_L_matrix(lanc, static = True)
     np.savetxt("Lstatic.dat", L_static)
+    
+    L_harm = sscha.DynamicalLanczos.get_full_L_matrix(lanc, static = True, compute_anharm = False)
+    np.savetxt("Lstatic_harm.dat", L_harm)
 
     assert disp < 1e-6, "Error, L application is not cinitorrectly transposed."
 
@@ -450,7 +453,7 @@ def test_lanczos_1d(plot = False):
 
 
     # Check the static with the biconjugate gradient
-    static_hessian = lanc.run_hessian_calculation(save_g = "g.npy", algorithm = "cg", use_preconditioning = False)
+    static_hessian = lanc.run_hessian_calculation(save_g = "g.npy", algorithm = "cg", use_preconditioning = True)
 
     res = np.array([0.07694938, 0.        ])
     print("Psi on {} := {}".format(res, lanc.apply_L1_static(res)))
