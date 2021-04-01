@@ -296,7 +296,7 @@ class StaticHessian(object):
         Gout, Wout = self.apply_L(Ginv, W)
         Gout[:,:] -= np.eye(self.lanczos.n_modes)
             
-        return Gout, Wout
+        return -Gout, -Wout
 
 
 
