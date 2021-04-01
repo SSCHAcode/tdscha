@@ -29,7 +29,7 @@ from sscha.Parallel import pprint as print
 
 
 class StaticHessian(object):
-    def __init__(self):
+    def __init__(self, ensemble = None, verbose = False):
         """
         STATIC HESSIAN
         ==============
@@ -37,7 +37,19 @@ class StaticHessian(object):
         This class is for the advanced computation of the static hessian matrix.
         This exploit the inversion of the auxiliary systems, which allows for including the
         fourth order contribution exploiting sparse linear algebra to speedup the calculation.
+
+        You can either initialize directly the object passing the ensemble with the configurations,
+        or call the init function after the object has been defined.
         """
+
+
+        # The minimization variables
+        self.Ginv = None 
+        self.W = None
+        self.lanczos = None
+
+        if ensemble is not None:
+            self.init(ensemble, verbose)
 
         # Setup the attribute control
         # Every attribute introduce after this line will raise an exception
@@ -64,4 +76,28 @@ class StaticHessian(object):
                 raise AttributeError(ERROR_MSG)
         else:
             super(StaticHessian, self).__setattr__(name, value)
+
+
+    def init(self, ensemble, verbose = True):
+        """
+        Initialize the StaticHessian with a given ensemble
+
+        Parameters
+        ----------
+            ensemble : sscha.Ensemble.Ensemble
+                The object that contains the configurations
+            verbose : bool
+                If true prints the memory occupied for the calculation
+        """
+
+        self.lanczos = sscha.DynamicalLanczos.Lanczos(ensemble)
+
+        self.Ginv = np.zeros( (self.lanczos.n_modes, self.lanczos.n_modes), dtype = sscha.DynamicalLanczos.TYPE_DP)
+        self.W = np.zeros( (self.lanczos.n_modes, self.lanczos.n_modes, self.lanczos.n_modes), dtype = sscha.DynamicalLanczos.TYPE_DP)
+
+        if verbose:
+            print("Memory of StaticHessian initialized.")
+            print("     memory requested: {} Gb of RAM per process".format((self.Ginv.nbytes + self.W.nbytes) / 1024**3))
+            print("     (excluding memory occupied to store the ensemble)")
+            print("     (during the Hessian optimization, three times this memory is required.)")
         
