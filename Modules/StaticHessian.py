@@ -129,7 +129,7 @@ class StaticHessian(object):
         if verbose:
             print("Memory of StaticHessian initialized.")
             # The seven comes from all the auxiliary varialbes necessary in the gradient computation and the CG
-            print("     memory requested: {} Gb of RAM per process".format((self.vector.nbytes) * 7 / 1024**3))
+            print("     memory requested: {} Gb of RAM per process".format((self.vector.nbytes) * 3 / 1024**3))
             print("     (excluding memory occupied to store the ensemble)")
         
 
@@ -394,7 +394,7 @@ class StaticHessian(object):
                 tnew = time.time()
                 deltat = tnew - ti
                 etatime = deltat * (self.lanczos.n_modes -i -1)
-                print("Vector {} / {} done (time = {:.2} s | ETA = {:.1} s)".format(i +1, self.lanczos.n_modes, deltat, etatime))
+                print("Vector {} / {} done (time = {:.2} s | ETA = {:.2f} s)".format(i +1, self.lanczos.n_modes, deltat, etatime))
                 ti = tnew
 
         if self.verbose:
@@ -408,6 +408,7 @@ class StaticHessian(object):
         if self.verbose:
             t4 = time.time()
             print("Total time to convert to 1D vector: {} s".format(t4-t3))
+            sys.stdout.flush()
 
         return vect
 
