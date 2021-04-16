@@ -32,7 +32,7 @@ import sys, os
 import time
 
 
-def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6):
+def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6, callback = None):
     """
     Minimum residual algorithm
     --------------------------
@@ -62,6 +62,14 @@ def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_ite
             If true, print the residual after each iteration
         max_iters : int
             The maximum number of iterations.
+        callback : pointer to function 
+            This is a callback function that is called each time passing the curret solution
+            The function must accept two arguments: the current solution x and the number of iterations
+
+    Results
+    -------
+        x : ndarray
+            The solution of the inversion A^-1 b = x obtained in the last step
     """
 
     # Setup the starting condition
@@ -113,6 +121,9 @@ def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_ite
 
         alpha = r1_bar.dot(z1) / (p1_bar.dot(Ap))
         x[:] += alpha * p1 # Update the solution
+
+        if callback is not None:
+            callback(x, iters)
 
         r = r1 - alpha * Ap
         rbar = r1_bar -alpha * Ap_bar
