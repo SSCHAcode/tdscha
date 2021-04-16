@@ -45,7 +45,7 @@ class StaticHessian(object):
 
         # The minimization variables
         self.vector = None
-        self.lanczos = None
+        self.lanczos = sscha.DynamicalLanczos.Lanczos()
         self.step = 0
         self.verbose = False
         self.prefix = "hessian_calculation"
@@ -84,12 +84,14 @@ class StaticHessian(object):
         Load the current vector from a previous calculation
         """
         self.vector[:] = np.loadtxt(fname)
+        self.lanczos.load_status(fname + ".npz")
 
     def save_status(self, fname):
         """
         Save the current vector to a file.
         """
         np.savetxt(fname, self.vector)
+        self.lanczos.save_status(fname)
 
 
     def init(self, ensemble, verbose = True):
@@ -118,7 +120,7 @@ class StaticHessian(object):
         # Initialize vector with the initial guess (the SSCHA matrix)
         counter = 0
         for i in range(n_modes):
-            self.vector[counter] = 1 / self.lanczos.w**2
+            self.vector[counter] = 1 / self.lanczos.w[i]**2
             counter += n_modes - i
 
         self.verbose = verbose
@@ -131,7 +133,7 @@ class StaticHessian(object):
             print("     (excluding memory occupied to store the ensemble)")
         
 
-    def run(self, n_steps, save_dir = None, max_iters = 100, threshold = 1e-6):
+    def run(self, n_steps, save_dir = None, threshold = 1e-6):
         """
         RUN THE HESSIAN MATRIX CALCULATION
         ==================================
@@ -160,6 +162,7 @@ class StaticHessian(object):
         def callback(x, iters):
             if save_dir is not None:
                 np.savetxt(os.path.join(save_dir, "{}_step{:05d}.dat".format(self.prefix, iters)), x)
+            sys.stdout.flush()
         
 
         x0 = self.vector.copy()
@@ -173,14 +176,13 @@ class StaticHessian(object):
         
 
         t1 = time.time()
-        res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = max_iters, conv_thr = threshold, callback = callback)
+        res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
         t2 = time.time()
 
         self.vector[:] = res
 
         if save_dir is not None:
-            fname = os.path.join(save_dir, "{}.dat".format(self.prefix))
-            np.savetxt(fname, self.vector)
+            self.save_status( os.path.join(save_dir, self.prefix))
 
 
         if self.verbose:
@@ -330,30 +332,9 @@ class StaticHessian(object):
 
         G = np.linalg.inv(Ginv)
         dyn = self.lanczos.pols.dot(G.dot(self.lanczos.pols.T))
-        print("G:")
-        print(G)
-        print("G inv:")
-        print(Ginv)
-
-        # Build a translation vector
-        v = np.ones(dyn.shape[-1], dtype = np.double)
-        print("D * |v_trasl> = ", dyn.dot(v))
-        print("All pols <e | v_trasl> = ", self.lanczos.pols.T.dot(v))
-        print("Pols (shape = {}):".format(self.lanczos.pols.shape))
-        print(self.lanczos.pols)
-        print("SSCHA freqs:", self.lanczos.w * CC.Units.RY_TO_CM)
-
-        # Get the frequences
-        w0 = np.sqrt(np.abs(np.linalg.eigvals(G))) * np.sign(np.linalg.eigvalsh(G))
-        w1, p1 = np.linalg.eig(dyn)
-        w1 = np.sqrt(np.abs(w1)) * np.sign(w1)
-        print("Freqs original:", w0 * CC.Units.RY_TO_CM )
-        print("Freqs after conversion:", w1 * CC.Units.RY_TO_CM)
-        print("New polarization vectors:")
-        print(p1)
 
         dyn[:,:] *= np.outer(np.sqrt(self.lanczos.m), np.sqrt(self.lanczos.m))
-        CC.symmetries.CustomASR(dyn)
+        #CC.symmetries.CustomASR(dyn)
 
         # We copy the q points from the SSCHA dyn
         nq_tot = len(self.lanczos.dyn.q_tot)

@@ -6,7 +6,7 @@ import cellconstructor as CC
 import cellconstructor.Phonons
 
 import sscha, sscha.DynamicalLanczos
-import sscha.Ensemble
+import sscha.Ensemble, sscha.StaticHessian
 
 import scipy, scipy.sparse
 
@@ -165,13 +165,14 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     #assert np.abs(w[3] - np.sqrt(np.abs(w2))) * CC.Units.RY_TO_CM < 1e-3, "Error, the lanczos w -> 0 does not match the hessian matrix with Bianco algorithm" 
 
     # Get the free energy hessian
-    hessian = lanczos.run_hessian_calculation(algorithm = "cg", use_preconditioning = True, max_iters = 1000)
+    hessian_calculator = sscha.StaticHessian.StaticHessian()
+    hessian_calculator.init(new_ens)
+    hessian_calculator.run(100, save_dir = "hessian_calculation_new", threshold = 1e-7)
 
-    np.savetxt("hessian_lanczos.dat", hessian)
-    w, pols = np.linalg.eigh(hessian)
+    hmat = hessian_calculator.retrive_hessian()
+    hmat.save_qe("final_hessian_new")
+    
 
-    print("Frequencies:")
-    print("\n".join(["{} cm-1".format(np.sign(x) * np.sqrt(np.abs(x)) * CC.Units.RY_TO_CM) for x in w]))
 
 if __name__ == "__main__":
     #test_lanczos_symmetries()
