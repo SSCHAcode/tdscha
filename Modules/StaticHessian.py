@@ -133,20 +133,37 @@ class StaticHessian(object):
             print("     (excluding memory occupied to store the ensemble)")
         
 
-    def run(self, n_steps, save_dir = None, threshold = 1e-6):
+    def run(self, n_steps, save_dir = None, threshold = 1e-6, algorithm = "cg", extra_options = {}):
         """
         RUN THE HESSIAN MATRIX CALCULATION
         ==================================
 
         This subroutine runs the algorithm that computes the hessian matrix.
 
-        After this subroutine finished, the result are stored in the
+        After this subroutine finished, the results are stored in the
         self.Ginv and selfW.W variables.
-        You can retrive the Hessian matrix as a CC.Phonons.Phonons object
-        with the retrive_hessian() subroutine.
+        You can retrieve the Hessian matrix as a CC.Phonons.Phonons object
+        with the retrieve_hessian() subroutine.
 
-        The algorithm is a generalized conjugate gradient minimization
-        as the minimum residual algorithm, to optimize also non positive definite hessians.
+
+        Parameters
+        ----------
+            n_steps : int
+                The maximum number of steps after which the calculation is stopped.
+            save_dir : string
+                Path to the directory on which, after each step, the file are saved.
+            threshold : float
+                The threshold below which the residual are converged.
+            algorithm : string
+                The algorithm used for the inversion. 
+                The algorithms are implemented in the sscha.Tools method, look at them for a more specific guide.
+                    - cg : Conjugate Gradient
+                        This is the 'minimal residual method'. Look at sscha.Tools.minimal_residual_method
+                    - fom : Full orthogonalization Method
+                        This is a method based on krilov subspace as Lanczos. It requires the dimension of the Krilov subspace
+                        to be specified in extra_options (Krylov_dimension)
+            extra_options : dict
+                The extra arguments to be passed to the minimizer function, they depend on the algorithm.
         """
         # Prepare the saving directory
         if save_dir is not None:
@@ -176,7 +193,10 @@ class StaticHessian(object):
         
 
         t1 = time.time()
-        res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
+        if algorithm.lower() == "cg":
+            res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
+        else:
+            raise NotImplementedError("Error, algorithm '{}' not implemented.".format(algorithm))
         t2 = time.time()
 
         self.vector[:] = res
@@ -320,7 +340,7 @@ class StaticHessian(object):
     #                 print("CONVERGED!")
     #             break
 
-    def retrive_hessian(self):
+    def retrieve_hessian(self):
         """
         Return the Hessian matrix as a CC.Phonons.Phonons object.
 

@@ -32,6 +32,153 @@ import sys, os
 import time
 
 
+
+
+def restarted_full_orthogonalization_method(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6, callback = None, krylov_dimension = 10):
+    """
+    Restarted Full Orthogonalization Method
+    ---------------------------------------
+
+    This is a projection method on the Krylov subspace to solve a linear symmetric system.
+
+    .. math::
+
+        Ax = b
+
+    
+    You must provide the function that performs the matrix multiplication :math:`Ax`, the
+    starting vector :math:`x_0`, and the known vector :math:`b`.
+
+    Parameters
+    ----------
+        A : scipy.sparse.linalg.LinearOperator
+            The A matrix that takes the vector (numpy array as x0) as input and returns
+            the :math:`Ax` operation.
+        b : ndarray
+            The known term of the system
+        x0 : ndarray
+            The starting guess.
+        precond : scipy.sparse.linalg.LinearOperator or None
+            If it is a LinearOperator, it is used to precondition the minimization.
+            This is a raw estimate of :math:`A^{-1}`
+        verbose : bool
+            If true, print the residual after each iteration
+        max_iters : int
+            The maximum number of iterations.
+        callback : pointer to function 
+            This is a callback function that is called each time passing the curret solution
+            The function must accept two arguments: the current solution x and the number of iterations
+        krylov_dimension : int
+            The dimension of the krylov subspace before the algorithm is restarted.
+            Big values reduce the number of iterations, but you can run in the lack of orthogonality issue.
+    """
+
+    if verbose:
+        print()
+        print("Restarted full orthogonalization method")
+        print("--------------------------")
+        print()
+        print("Initialization...")
+    x_new = x0.copy()
+
+    iters = 0
+    converged = False
+    while iters < max_iters and converged:
+        # Compute the residual
+        r1 = b - A.matvec(x_new) 
+        residual = np.sqrt(r1.dot(r1))
+
+        if verbose:
+            print(" FOM algorithm, iteration {}, residual = {:.16f}".format(iters, residual))
+        
+        if residual < conv_thr:
+            converged = True
+            break
+
+        # Compute the krilov subspace
+        A_proj, basis = krylov_subspace(A, r1, krylov_dimension, verbose)
+
+        # Invert A in the krilov subspace and update the solution
+        y_proj = np.linalg.inv(A_proj)[0, :]
+        y = y_proj.dot(basis)
+        x_new += y
+
+        if callback is not None:
+            callback(x_new, iters)
+        
+        iters += 1
+
+
+
+    if verbose:
+        print("Starting residual: {}".format(np.sqrt(r1.dot(r1))))
+
+def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
+    """
+    Get the Krilov subspace and the A matrix inside the space.
+
+    Parameters
+    ----------
+        A : scipy.sparse.linalg.LinearOperator
+            The sparse linear operator on which you want to compute the operation
+        vector : ndarray
+            The starting vector to initialize the Krylov subspace
+        dimension : int
+            The total dimension of the Krylov subspace.
+        verbose : bool
+            If true prints the status of the iteration
+        threshold : float
+            If the new vector is contained in the previous old vectors, terminate the iteration.
+
+    Results
+    -------
+        A_projected : ndarray size = (dimension, dimension)
+            The A matrix projected in the krylov subspace.
+        basis : ndarray size = (dimension, vector.shape)
+            The basis of the Krylov subspace
+    """
+
+    basis = np.zeros( (dimension, len(vector)), dtype = vector.dtype)
+    A_projected = np.zeros( (dimension, dimension), dtype = vector.dtype)
+
+    basis[0, :] = vector / np.sqrt(vector.dot(vector))
+
+    old_v = vector.copy()
+
+    for i in range(dimension):
+        new_v = A.matvec(old_v)
+
+        for k in range(i + 1):
+            A_projected[i,k] = new_v.dot(basis[k, :])
+
+        # Gram-Shmidt
+        for double in range(2):
+            for k in range(i):
+                new_v -= new_v.dot(basis[k, :]) * basis[k, :]
+
+        norm = np.sqrt(new_v.dot(new_v))
+        
+        # check primitive convergence
+        if norm < threshold:
+            A_projected = A_projected[:i, :i]
+            basis = basis[:i, :]
+            break
+
+        new_v /= norm 
+        basis[i, :] = new_v 
+        old_v[:] = new_v
+
+    # Symmetrize A
+    A_projected += A_projected.T
+    A_projected /= 2
+    
+    return A_projected, basis
+
+
+
+
+
+
 def minimum_residual_algorithm(A, b, x0, precond = None, verbose = True, max_iters = 100, conv_thr = 1e-6, callback = None):
     """
     Minimum residual algorithm
