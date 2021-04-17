@@ -83,7 +83,7 @@ def restarted_full_orthogonalization_method(A, b, x0, precond = None, verbose = 
 
     iters = 0
     converged = False
-    while iters < max_iters and converged:
+    while iters < max_iters:
         # Compute the residual
         r1 = b - A.matvec(x_new) 
         residual = np.sqrt(r1.dot(r1))
@@ -99,7 +99,8 @@ def restarted_full_orthogonalization_method(A, b, x0, precond = None, verbose = 
         A_proj, basis = krylov_subspace(A, r1, krylov_dimension, verbose)
 
         # Invert A in the krilov subspace and update the solution
-        y_proj = np.linalg.inv(A_proj)[0, :]
+        r1_proj = basis.dot(r1)
+        y_proj = np.linalg.inv(A_proj).dot(r1_proj)
         y = y_proj.dot(basis)
         x_new += y
 
@@ -143,34 +144,70 @@ def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
 
     basis[0, :] = vector / np.sqrt(vector.dot(vector))
 
-    old_v = vector.copy()
+    old_v = basis[0, :].copy()
 
     for i in range(dimension):
-        new_v = A.matvec(old_v)
+        new_v = A.matvec(basis[i, :])
+        print("Element:", new_v.dot(basis[i, :]))
+        print("A dot |e_{:d}> = {}".format(i, new_v))
+        print("|e_{:d}> = {}".format(i, basis[i, :]))
 
         for k in range(i + 1):
-            A_projected[i,k] = new_v.dot(basis[k, :])
+            element = new_v.dot(basis[k, :])
+            print("Filling elements {} {} with : {}".format(i, k, element))
+            A_projected[i,k] = element
+            A_projected[k,i] = A_projected[i, k]
 
-        # Gram-Shmidt
-        for double in range(2):
-            for k in range(i):
-                new_v -= new_v.dot(basis[k, :]) * basis[k, :]
-
+        # Normalize the vector
         norm = np.sqrt(new_v.dot(new_v))
-        
-        # check primitive convergence
-        if norm < threshold:
-            A_projected = A_projected[:i, :i]
-            basis = basis[:i, :]
-            break
+        new_v /= norm
 
-        new_v /= norm 
-        basis[i, :] = new_v 
-        old_v[:] = new_v
+        if i + 1 < dimension:
+            # Gram-Shmidt
+            for double in range(2):
+                for k in range(i+1):
+                    component =  new_v.dot(basis[k, :])
+                    new_v -= component * basis[k, :]
+
+                    print("ORHTO {} | V_{} component along {}: {}".format(double, i, k, component))
+
+                print("Scalar products after {} orthogonalization:".format(double))
+                print(new_v.dot(basis.T))
+
+                norm = np.sqrt(new_v.dot(new_v))
+                print("Residual norm: {}".format(norm))
+                
+                # check primitive convergence
+                if norm < threshold:
+                    print("Linear dependency: NORM:", norm)
+
+                    A_projected = A_projected[:i, :i]
+                    basis = basis[:i, :]
+                    break
+            
+                new_v /= norm 
+
+            basis[i+1, :] = new_v 
+            old_v[:] = new_v
+
+    print("A matrix:")
+    print(A_projected)
+    print("Scalar product:")
+    print(basis.dot(basis.T))
+    print("Basis:")
+    print(basis)
+
+    # print()
+    # print("A new:")
+    # M = np.zeros(A_projected.shape, dtype = np.double)
+    # for i in range(dimension):
+    #     for j in range(dimension):
+    #         M[i, j] = basis[i, :].dot(A.matvec(basis[j, :]))
+    # print(M)
 
     # Symmetrize A
-    A_projected += A_projected.T
-    A_projected /= 2
+    #A_projected += A_projected.T
+    #A_projected /= 2
     
     return A_projected, basis
 
