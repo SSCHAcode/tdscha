@@ -26,7 +26,7 @@ This module contains usefull subroutines to work with
 import cellconstructor as CC
 import sscha.Parallel
 from sscha.Parallel import pprint as print
-import scipy, scipy.linalg
+import scipy, scipy.linalg, scipy.optimize
 import numpy as np
 import sys, os
 import time
@@ -79,30 +79,66 @@ def restarted_full_orthogonalization_method(A, b, x0, precond = None, verbose = 
         print("--------------------------")
         print()
         print("Initialization...")
-    x_new = x0.copy()
+    x_start = x0.copy()
+    x_new = x_start.copy()
 
-    iters = 0
+    iters = 1
     converged = False
+
+    basis = np.zeros( (krylov_dimension + 1, len(x0)), dtype = x0.dtype)
+    A_proj = np.zeros( (krylov_dimension + 1, krylov_dimension), dtype = x0.dtype)
+
+    residual = -1
     while iters < max_iters:
         # Compute the residual
-        r1 = b - A.matvec(x_new) 
-        residual = np.sqrt(r1.dot(r1))
 
         if verbose:
             print(" FOM algorithm, iteration {}, residual = {:.16f}".format(iters, residual))
         
-        if residual < conv_thr:
+
+        i_new = iters % krylov_dimension
+
+        # Restarting procedure
+        if i_new == 1:
+            r1 = b - A.matvec(x_new) 
+            residual = np.sqrt(r1.dot(r1))
+
+            # Restart 
+            basis[:,:] = 0.0
+            A_proj[:,:] = 0.0
+
+            # Fill the first vector
+            basis[0, :] = r1 / residual
+
+        # Compute the krilov subspace (next iteration)
+        krylov_subspace(A, A_proj, basis, i_new - 1, verbose)
+
+        # GMRES
+        def cost_function(yv):
+            vect = np.zeros((i_new +1), dtype = x0.dtype)
+            print("Y: {} | vect: {} | I: {}".format(yv.shape, vect.shape, i_new))
+            vect[0] = residual 
+            vect -= A_proj[:i_new + 1, :i_new].dot(yv)
+            return np.sqrt(vect.dot(vect))
+
+        # Optimizing the residual
+        min_res = scipy.optimize.minimize(cost_function, np.zeros((i_new) , dtype = np.double))
+        y_out = min_res.x
+        res = np.sqrt(y_out.dot(y_out))
+
+        if res < conv_thr:
             converged = True
             break
+        y = y_out.dot(basis[:i_new, :])
 
-        # Compute the krilov subspace
-        A_proj, basis = krylov_subspace(A, r1, krylov_dimension, verbose)
+
+
 
         # Invert A in the krilov subspace and update the solution
-        r1_proj = basis.dot(r1)
-        y_proj = np.linalg.inv(A_proj).dot(r1_proj)
-        y = y_proj.dot(basis)
-        x_new += y
+        #r1_proj = basis.dot(r1)
+        #y_proj = np.linalg.inv(A_proj).dot(r1_proj)
+        #y = y_proj.dot(basis)
+        x_new = x_start + y
 
         if callback is not None:
             callback(x_new, iters)
@@ -110,12 +146,12 @@ def restarted_full_orthogonalization_method(A, b, x0, precond = None, verbose = 
         iters += 1
 
 
+    return x_new
 
-    if verbose:
-        print("Starting residual: {}".format(np.sqrt(r1.dot(r1))))
 
-def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
+def krylov_subspace(A, A_projected, basis, iteration, verbose = True, threshold = 1e-12):
     """
+    Perform an iteration to get the Krylov subspace
     Get the Krilov subspace and the A matrix inside the space.
 
     Parameters
@@ -124,8 +160,15 @@ def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
             The sparse linear operator on which you want to compute the operation
         vector : ndarray
             The starting vector to initialize the Krylov subspace
-        dimension : int
-            The total dimension of the Krylov subspace.
+        A_projection : ndarray
+            The A matrix projected in the Krylov subspace.
+            This method will fill the next row (specified by iteration + 1)
+        basis: ndarray
+            The basis of the Krylov subspace. 
+            This method will fill the next row (specified by iteration + 1)
+        iteration : int
+            The iteration of the Krylov subspace. 
+            Specify which vector is the next one in the basis.
         verbose : bool
             If true prints the status of the iteration
         threshold : float
@@ -138,64 +181,69 @@ def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
         basis : ndarray size = (dimension, vector.shape)
             The basis of the Krylov subspace
     """
+    i = iteration
+    dimension = A_projected.shape[0]
+    old_v = basis[i, :].copy()
 
-    basis = np.zeros( (dimension, len(vector)), dtype = vector.dtype)
-    A_projected = np.zeros( (dimension, dimension), dtype = vector.dtype)
+    if i >= dimension:
+        raise ValueError("Error, the iteration must be lower than the dimension of the projected basis and matrix.")
 
-    basis[0, :] = vector / np.sqrt(vector.dot(vector))
 
-    old_v = basis[0, :].copy()
+    new_v = A.matvec(basis[i, :])
+    print("Element:", new_v.dot(basis[i, :]))
+    print("A dot |e_{:d}> = {}".format(i, new_v))
+    print("|e_{:d}> = {}".format(i, basis[i, :]))
 
-    for i in range(dimension):
-        new_v = A.matvec(basis[i, :])
-        print("Element:", new_v.dot(basis[i, :]))
-        print("A dot |e_{:d}> = {}".format(i, new_v))
-        print("|e_{:d}> = {}".format(i, basis[i, :]))
+    for k in range(i + 1):
+        element = new_v.dot(basis[k, :])
+        print("Filling elements {} {} with : {}".format(i, k, element))
+        A_projected[i,k] = element
+        A_projected[k,i] = A_projected[i, k]
 
-        for k in range(i + 1):
-            element = new_v.dot(basis[k, :])
-            print("Filling elements {} {} with : {}".format(i, k, element))
-            A_projected[i,k] = element
-            A_projected[k,i] = A_projected[i, k]
+    # Normalize the vector
+    norm = np.sqrt(new_v.dot(new_v))
+    new_v /= norm
 
-        # Normalize the vector
+    # Gram-Shmidt
+    converged = False
+    for double in range(2):
+        for k in range(i+1):
+            component =  new_v.dot(basis[k, :])
+            new_v -= component * basis[k, :]
+
+            print("ORHTO {} | V_{} component along {}: {}".format(double, i, k, component))
+
+        print("Scalar products after {} orthogonalization:".format(double))
+        print(new_v.dot(basis.T))
+
         norm = np.sqrt(new_v.dot(new_v))
-        new_v /= norm
+        print("Residual norm: {}".format(norm))
 
-        if i + 1 < dimension:
-            # Gram-Shmidt
-            for double in range(2):
-                for k in range(i+1):
-                    component =  new_v.dot(basis[k, :])
-                    new_v -= component * basis[k, :]
-
-                    print("ORHTO {} | V_{} component along {}: {}".format(double, i, k, component))
-
-                print("Scalar products after {} orthogonalization:".format(double))
-                print(new_v.dot(basis.T))
-
-                norm = np.sqrt(new_v.dot(new_v))
-                print("Residual norm: {}".format(norm))
-                
-                # check primitive convergence
-                if norm < threshold:
-                    print("Linear dependency: NORM:", norm)
-
-                    A_projected = A_projected[:i, :i]
-                    basis = basis[:i, :]
-                    break
+        if double == 0:
+            A_projected[i+1, i] = norm
+        
+        # check primitive convergence
+        if norm < threshold:
+            print("Linear dependency: NORM:", norm)
+            converged = True
+            break
+    
             
-                new_v /= norm 
+    
+        new_v /= norm 
 
-            basis[i+1, :] = new_v 
-            old_v[:] = new_v
+    if converged:
+        return
+
+    basis[i+1, :] = new_v 
+    old_v[:] = new_v
 
     print("A matrix:")
     print(A_projected)
     print("Scalar product:")
     print(basis.dot(basis.T))
-    print("Basis:")
-    print(basis)
+    print("Eigenvalues:")
+    print(np.linalg.eigvalsh(A_projected[:i, :i]))
 
     # print()
     # print("A new:")
@@ -209,8 +257,6 @@ def krylov_subspace(A, vector, dimension, verbose = True, threshold = 1e-12):
     #A_projected += A_projected.T
     #A_projected /= 2
     
-    return A_projected, basis
-
 
 
 
@@ -411,9 +457,11 @@ def minimum_residual_algorithm_precond(A, b, precond_half, **kwargs):
 
         b_tilde = precond_half.matvec(b)
 
-        x0_tilde = b_tilde.copy()
+        if not "x0" in kwargs:
+            kwargs["x0"] = b_tilde.copy()
+            
 
-        x_tilde = minimum_residual_algorithm(A_tilde, b_tilde, x0_tilde, precond = None, **kwargs)
+        x_tilde = minimum_residual_algorithm(A_tilde, b_tilde, precond = None, **kwargs)
 
         # Convert back in the real system
         x = precond_half.matvec(x_tilde)
@@ -426,7 +474,20 @@ def minimum_residual_algorithm_precond(A, b, precond_half, **kwargs):
     return x
 
 
+def get_matrix_from_sparse_linop(A):
+    """
+    Transform the linear operator A into a numpy matrix.
+    This is used for debugging purpouses.
+    """
 
+    n, m = A.shape
+    L = np.zeros((n,m), dtype=A.dtype)
+    for i in range(m):
+        v1 = np.zeros(m, dtype = A.dtype)
+        v1[i] = 1
+        L[:, i] = A.dot(v1) 
+
+    return L
 
 
 

@@ -42,12 +42,20 @@ def test_fom(plot = False):
         r = x_real - x
         distance.append(np.sqrt(r.dot(r)))
 
-    krylov_dim = 4
+    krylov_dim = 3
 
-    x_mine = sscha.Tools.restarted_full_orthogonalization_method(A_new, b, x, max_iters = 3, krylov_dimension = krylov_dim, callback = store)
+    x_mine = sscha.Tools.restarted_full_orthogonalization_method(A_new, b, x, max_iters = 5, krylov_dimension = krylov_dim, callback = store)
     
-
+    
     if plot:
+        print("Real eigvals:")
+        print(np.linalg.eigvalsh(A))
+        print()
+        print("x_mine:", x_mine)
+        print("x_real:", x_real)
+
+
+
         plt.plot(distance, marker  = "o")
         plt.show()
 

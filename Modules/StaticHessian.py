@@ -133,7 +133,7 @@ class StaticHessian(object):
             print("     (excluding memory occupied to store the ensemble)")
         
 
-    def run(self, n_steps, save_dir = None, threshold = 1e-6, algorithm = "cg", extra_options = {}):
+    def run(self, n_steps, save_dir = None, threshold = 1e-6, algorithm = "cg-prec", extra_options = {}):
         """
         RUN THE HESSIAN MATRIX CALCULATION
         ==================================
@@ -174,11 +174,24 @@ class StaticHessian(object):
         lenv = len(self.vector)
         n_modes = self.lanczos.n_modes
         A = scipy.sparse.linalg.LinearOperator((lenv, lenv), matvec = self.apply_L)
+        
+        def prec_mult(x):
+            return self.apply_L(x, preconditioner = True)
+        A_precond_half = scipy.sparse.linalg.LinearOperator((lenv, lenv), matvec = prec_mult)
+
+        A_real = sscha.Tools.get_matrix_from_sparse_linop(A)
+        A_prec = sscha.Tools.get_matrix_from_sparse_linop(A_precond_half)
+        np.savetxt("A.dat", A_real)
+        np.savetxt("A_precond.dat", A_prec)
 
         # Define the function to save the results
         def callback(x, iters):
             if save_dir is not None:
-                np.savetxt(os.path.join(save_dir, "{}_step{:05d}.dat".format(self.prefix, iters)), x)
+                if "prec" in algorithm:
+                    xtilde = prec_mult(x)
+                else:
+                    xtilde = x
+                np.savetxt(os.path.join(save_dir, "{}_step{:05d}.dat".format(self.prefix, iters)), xtilde)
             sys.stdout.flush()
         
 
@@ -195,6 +208,8 @@ class StaticHessian(object):
         t1 = time.time()
         if algorithm.lower() == "cg":
             res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
+        elif algorithm.lower() == "cg-prec":
+            res = sscha.Tools.minimum_residual_algorithm_precond(A, b, A_precond_half, x0 = x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
         else:
             raise NotImplementedError("Error, algorithm '{}' not implemented.".format(algorithm))
         t2 = time.time()
@@ -379,7 +394,7 @@ class StaticHessian(object):
         return hessian_matrix
 
 
-    def apply_L(self, vect):
+    def apply_L(self, vect, preconditioner = False):
         """
         Apply the system matrix to the full array.
         """
@@ -404,8 +419,12 @@ class StaticHessian(object):
 
             # Here the L application (TODO: Here eventual preconditioning)
             self.lanczos.psi = vector
-            outv = self.lanczos.apply_L1_static(vector)
-            outv += self.lanczos.apply_anharmonic_static()
+
+            if not preconditioner:
+                outv = self.lanczos.apply_L1_static(vector)
+                outv += self.lanczos.apply_anharmonic_static()
+            else:
+                outv = self.lanczos.apply_L1_static(vector, inverse = True, power = 0.5)
 
             Ginv[i, :] = outv[:self.lanczos.n_modes]
             W[i, :, :] = _from_symmetric_to_matrix(outv[self.lanczos.n_modes:], self.lanczos.n_modes)
