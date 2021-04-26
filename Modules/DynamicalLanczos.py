@@ -3212,7 +3212,7 @@ Max number of iterations: {}
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False):
+    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS"):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -3586,10 +3586,10 @@ or if the acoustic sum rule is not satisfied.
             # Save the step
             if not save_dir is None:
                 if (i + 1) % save_each == 0:
-                    self.save_status("%s/LANCZOS_STEP%d" % (save_dir, i+1))
+                    self.save_status("%s/%s_STEP%d" % (save_dir, prefix, i+1))
         
                     if verbose:
-                        print("Status saved into '%s/LANCZOS_STEP%d'" % (save_dir, i+1))
+                        print("Status saved into '%s/%s_STEP%d'" % (save_dir, prefix, i+1))
                 
             if verbose:
                 print("Lanczos step %d ultimated." % (i +1))

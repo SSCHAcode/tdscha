@@ -140,25 +140,25 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     
     # exit()
 
-    lanczos.prepare_mode(10)
-    lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
+    # lanczos.prepare_mode(10)
+    # lanczos.run_FT(5, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
 
-    # Pause and restart (to test restarting)
-    print("Stop and saving...")
-    lanczos.save_status("tmp.npz")
-    new_lanczos = sscha.DynamicalLanczos.Lanczos()
+    # # Pause and restart (to test restarting)
+    # print("Stop and saving...")
+    # lanczos.save_status("tmp.npz")
+    # new_lanczos = sscha.DynamicalLanczos.Lanczos()
 
-    print("Resuming...")
-    new_lanczos.load_status("tmp.npz")
-    new_lanczos.run_FT(20, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
+    # print("Resuming...")
+    # new_lanczos.load_status("tmp.npz")
+    # new_lanczos.run_FT(20, save_dir= dirname, verbose=  True, n_rep_orth = 2, n_ortho = 3)
 
-    gf = new_lanczos.get_green_function_continued_fraction(np.array([0]), smearing = 0, use_terminator= False)
-    w2 = np.real(1 / gf[0])
+    # gf = new_lanczos.get_green_function_continued_fraction(np.array([0]), smearing = 0, use_terminator= False)
+    # w2 = np.real(1 / gf[0])
 
-    # Get frequency:
-    print("Frequency: {}".format(np.sign(w2) * np.sqrt(np.abs(w2)) * CC.Units.RY_TO_CM))
+    # # Get frequency:
+    # print("Frequency: {}".format(np.sign(w2) * np.sqrt(np.abs(w2)) * CC.Units.RY_TO_CM))
 
-    lanczos.save_status("LanczosSnTe_v4.npz")
+    # lanczos.save_status("LanczosSnTe_v4.npz")
 
     # Test the frequency
     w, pols = hessian.DiagonalizeSupercell()
@@ -167,9 +167,9 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # Get the free energy hessian
     hessian_calculator = sscha.StaticHessian.StaticHessian()
     hessian_calculator.init(new_ens)
-    hessian_calculator.run(100, save_dir = "hessian_calculation_new", threshold = 1e-7)
+    hessian_calculator.run(1000, save_dir = "hessian_calculation_precall", threshold = 1e-7)
 
-    hmat = hessian_calculator.retrive_hessian()
+    hmat = hessian_calculator.retreive_hessian()
     hmat.save_qe("final_hessian_new")
     
 

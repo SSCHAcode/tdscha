@@ -94,7 +94,7 @@ class StaticHessian(object):
         self.lanczos.save_status(fname)
 
 
-    def init(self, ensemble, verbose = True):
+    def init(self, ensemble, preconditioner = True, verbose = True):
         """
         Initialize the StaticHessian with a given ensemble
 
@@ -102,6 +102,10 @@ class StaticHessian(object):
         ----------
             ensemble : sscha.Ensemble.Ensemble
                 The object that contains the configurations
+            preconditioner : bool
+                If true, the initial vector is set up for the preconditioned minimization.
+                Be carefull to use it together with a preconditioned algorithm in the run method,
+                otherwise you will start from a very far point from convergence.
             verbose : bool
                 If true prints the memory occupied for the calculation
         """
@@ -120,7 +124,11 @@ class StaticHessian(object):
         # Initialize vector with the initial guess (the SSCHA matrix)
         counter = 0
         for i in range(n_modes):
-            self.vector[counter] = 1 / self.lanczos.w[i]**2
+            if not preconditioner:
+                self.vector[counter] = 1 / self.lanczos.w[i]**2
+            else:
+                self.vector[counter] = 1 / self.lanczos.w[i]
+
             counter += n_modes - i
 
         self.verbose = verbose
@@ -179,10 +187,10 @@ class StaticHessian(object):
             return self.apply_L(x, preconditioner = True)
         A_precond_half = scipy.sparse.linalg.LinearOperator((lenv, lenv), matvec = prec_mult)
 
-        A_real = sscha.Tools.get_matrix_from_sparse_linop(A)
-        A_prec = sscha.Tools.get_matrix_from_sparse_linop(A_precond_half)
-        np.savetxt("A.dat", A_real)
-        np.savetxt("A_precond.dat", A_prec)
+        #A_real = sscha.Tools.get_matrix_from_sparse_linop(A)
+        #A_prec = sscha.Tools.get_matrix_from_sparse_linop(A_precond_half)
+        #np.savetxt("A.dat", A_real)
+        #np.savetxt("A_precond.dat", A_prec)
 
         # Define the function to save the results
         def callback(x, iters):
@@ -354,6 +362,94 @@ class StaticHessian(object):
     #                 print()
     #                 print("CONVERGED!")
     #             break
+
+    def run_no_mode_mixing(self, nsteps, save_dir = None, restart_from_file = False):
+        """
+        RUN THE HESSIAN CALCULATION NEGLECTING MODE MIXING
+        ==================================================
+
+        This algorithm computes the Hessian matrix by applying the static approximation on the diagonal
+        elements of the dynamical Green function for each phonon mode of the auxiliary force constant matrix.
+
+        This neglects mode mixing introduced by the "bubble" and higher-order phonon-phonon scattering diagrams,
+        but contains anharmonicity non-perturbatively.
+
+        Parameters
+        ----------
+            nsteps : int
+                The number of steps for each Lanczos iterations to converge
+            save_dir : string
+                Path to the file on which the Lanczos data will be saved for restarting.
+            restart_from_file: bool
+                If True, we load the data from save_dir and continue from a previous calculation.
+                NOT YET IMPLEMENTED
+
+        Results
+        -------
+            hessian : CC.Phonons.Phonons()
+                The free energy Hessian, without the mode-mixing approximation.
+        """
+        nmodes = self.lanczos.n_modes
+
+        Gw = np.zeros( (nmodes, nmodes), dtype = np.double)
+
+
+        if not save_dir == None:
+            if not os.path.exists(save_dir):
+                os.makedirs(save_dir)
+
+        for i in range(nmodes):
+            self.lanczos.prepare_mode(i)
+
+            if self.verbose:
+                print()
+                string = "RUNNING MODE {} out of {}".format(i + 1, nmodes)
+                print(string)
+                print("-"*len(string))
+                print()
+
+            new_nsteps = nsteps
+
+            if save_dir is not None:
+                final_lanc_filename = os.path.join(save_dir, prefix)
+
+                if  restart_from_file:
+                    # Check if the lanczos needs to be loaded
+                    if os.path.exists( final_lanc_filename ):
+                        if self.verbose:
+                            print("Loading from {}...".format(final_lanc_filename))
+                        self.lanczos.load_status(final_lanc_filename)
+                    else:
+                        all_files = [x for x in os.listdir(save_dir) if x.startswith(prefix) and x.endswith(".npz") and "STEP" in x]
+                        count = [int(x.split(".")[-2].split("STEP")[-1]) for x in all_files]
+                        index = np.argmax(count)
+                        filename = os.path.join(save_dir, all_files[index])
+
+                        if self.verbose:
+                            print("Loading from {}...".format(filename))
+                        self.lanczos.load_status(filename)
+
+                    # Get the number of steps
+                    new_nsteps = nsteps - len(self.lanczos.a_coeffs)
+                        
+
+            if new_nsteps > 0:
+                self.lanczos.run_FT(new_nsteps, save_dir = save_dir, verbose = self.verbose, prefix = "HESSIAN_M{:d}".format(i+1))
+
+            # Save the final status
+            if save_dir is not None:
+                self.lanczos.save_status(final_lanc_filename)
+
+            # Get the static limit from the dynamical response funciton
+            gf0 = self.lanczos.get_green_function_continued_fraction(np.array([0]), use_terminator = False, smearing = 0)[0]
+            Gw[i, i] = 1 / gf0
+
+        # Retrive the hessian
+        W = np.zeros((nmodes, nmodes, nmodes), dtype = np.double)
+        self.vector = self.get_vector(Gw, W)
+
+        return self.retrieve_hessian()
+
 
     def retrieve_hessian(self):
         """
