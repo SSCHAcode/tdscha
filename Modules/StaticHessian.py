@@ -7,6 +7,7 @@ import sys, os
 import time
 import warnings, difflib
 import numpy as np
+import json
 
 from timeit import default_timer as timer
 
@@ -46,9 +47,9 @@ class StaticHessian(object):
         # The minimization variables
         self.vector = None
         self.lanczos = sscha.DynamicalLanczos.Lanczos()
-        self.step = 0
         self.verbose = False
         self.prefix = "hessian_calculation"
+        self.preconitioned = True
 
         if ensemble is not None:
             self.init(ensemble, verbose)
@@ -83,8 +84,23 @@ class StaticHessian(object):
         """
         Load the current vector from a previous calculation
         """
-        self.vector[:] = np.loadtxt(fname)
         self.lanczos.load_status(fname + ".npz")
+
+        n_modes = self.lanczos.n_modes
+        lenv = (self.lanczos.n_modes * (self.lanczos.n_modes + 1)) // 2
+        n_g = (n_modes * (n_modes + 1)) // 2
+        n_w = (n_modes * (n_modes**2 + 3*n_modes + 2)) // 6
+        self.vector = np.zeros( n_g + n_w, dtype = sscha.DynamicalLanczos.TYPE_DP)
+
+        self.vector[:] = np.loadtxt(fname)
+
+        # Load all the rest from the json file
+        with open(fname + ".json", "r") as fp:
+            data = json.load(fp)
+            for x in data:
+                self.__setattr__(x, data[x])
+
+
 
     def save_status(self, fname):
         """
@@ -93,8 +109,21 @@ class StaticHessian(object):
         np.savetxt(fname, self.vector)
         self.lanczos.save_status(fname)
 
+        # Save all the other info in a json file
+        selfdict = vars(self)
+        new_dict = {}
+        IGNORE = ["lanczos", "vector", "fixed_attributes", "__total_attributes__"]
 
-    def init(self, ensemble, preconditioner = True, verbose = True):
+        for x in selfdict:
+            if not x in IGNORE:
+                new_dict[x] = selfdict[x]
+
+            
+        with open(fname + ".json", "w") as fp:
+            json.dump(new_dict, fp)
+
+
+    def init(self, ensemble = None, verbose = True):
         """
         Initialize the StaticHessian with a given ensemble
 
@@ -110,26 +139,30 @@ class StaticHessian(object):
                 If true prints the memory occupied for the calculation
         """
 
-        self.lanczos = sscha.DynamicalLanczos.Lanczos(ensemble)
-        self.lanczos.init()
+        if ensemble is not None:
+            self.lanczos = sscha.DynamicalLanczos.Lanczos(ensemble)
+            self.lanczos.init()
 
-        n_modes = self.lanczos.n_modes
-        lenv = (self.lanczos.n_modes * (self.lanczos.n_modes + 1)) // 2
-        n_g = (n_modes * (n_modes + 1)) // 2
-        n_w = (n_modes * (n_modes**2 + 3*n_modes + 2)) // 6
+            n_modes = self.lanczos.n_modes
+            lenv = (self.lanczos.n_modes * (self.lanczos.n_modes + 1)) // 2
+            n_g = (n_modes * (n_modes + 1)) // 2
+            n_w = (n_modes * (n_modes**2 + 3*n_modes + 2)) // 6
 
 
-        self.vector = np.zeros( n_g + n_w, dtype = sscha.DynamicalLanczos.TYPE_DP)
-        
-        # Initialize vector with the initial guess (the SSCHA matrix)
-        counter = 0
-        for i in range(n_modes):
-            if not preconditioner:
-                self.vector[counter] = 1 / self.lanczos.w[i]**2
-            else:
-                self.vector[counter] = 1 / self.lanczos.w[i]
+            self.vector = np.zeros( n_g + n_w, dtype = sscha.DynamicalLanczos.TYPE_DP)
+            
+            # Initialize vector with the initial guess (the SSCHA matrix)
+            counter = 0
+            for i in range(n_modes):
+                if not self.preconitioned:
+                    self.vector[counter] = 1 / self.lanczos.w[i]**2
+                else:
+                    self.vector[counter] = 1 / self.lanczos.w[i]
 
-            counter += n_modes - i
+                counter += n_modes - i
+        else:
+            if self.lanczos.N == 0:
+                raise ValueError("Error, you must specify an ensemble or initialize the system loading a lanczos algorithm.")
 
         self.verbose = verbose
 
@@ -189,16 +222,13 @@ class StaticHessian(object):
 
         #A_real = sscha.Tools.get_matrix_from_sparse_linop(A)
         #A_prec = sscha.Tools.get_matrix_from_sparse_linop(A_precond_half)
-        #np.savetxt("A.dat", A_real)
+        #np.savetxt("A.dat", A_real) 
         #np.savetxt("A_precond.dat", A_prec)
 
         # Define the function to save the results
         def callback(x, iters):
             if save_dir is not None:
-                if "prec" in algorithm:
-                    xtilde = prec_mult(x)
-                else:
-                    xtilde = x
+                xtilde = x
                 np.savetxt(os.path.join(save_dir, "{}_step{:05d}.dat".format(self.prefix, iters)), xtilde)
             sys.stdout.flush()
         
@@ -451,20 +481,32 @@ class StaticHessian(object):
         return self.retrieve_hessian()
 
 
-    def retrieve_hessian(self):
+    def retrieve_hessian(self, noq = False):
         """
         Return the Hessian matrix as a CC.Phonons.Phonons object.
 
         Note that you need to run the Hessian calculation (run method), otherwise this
         method returns the SSCHA dynamical matrix.
+
+        If noq is true, it returns a numpy matrix in the polarization basis.
+        This enable to get the Hessian even if the dynamical matrix of the Lanczos is not initialized,
+        as it occurs when loading from a file.
         """
 
-        Ginv = self.get_G_W(self.vector, ignore_W = True)
+        new_vector = self.vector.copy()
+
+        if self.preconitioned:
+           new_vector = self.apply_L(self.vector, preconditioner = True) 
+
+        Ginv = self.get_G_W(new_vector, ignore_W = True)
 
         G = np.linalg.inv(Ginv)
         dyn = self.lanczos.pols.dot(G.dot(self.lanczos.pols.T))
 
         dyn[:,:] *= np.outer(np.sqrt(self.lanczos.m), np.sqrt(self.lanczos.m))
+
+        if noq:
+            return dyn
         #CC.symmetries.CustomASR(dyn)
 
         # We copy the q points from the SSCHA dyn
@@ -490,12 +532,15 @@ class StaticHessian(object):
         return hessian_matrix
 
 
-    def apply_L(self, vect, preconditioner = False):
+    def apply_L(self, vect, preconditioner = False, inverse_preconditioner = False):
         """
         Apply the system matrix to the full array.
         """
         if self.verbose:
             t1 = time.time()
+
+        if preconditioner and inverse_preconditioner:
+            raise ValueError("Error, only one between preconditioner and inverse_preconditioner can be True")
 
         lenv = self.lanczos.n_modes
         lenv += (self.lanczos.n_modes * (self.lanczos.n_modes + 1)) // 2
@@ -516,11 +561,15 @@ class StaticHessian(object):
             # Here the L application (TODO: Here eventual preconditioning)
             self.lanczos.psi = vector
 
-            if not preconditioner:
+            if not preconditioner and not inverse_preconditioner:
                 outv = self.lanczos.apply_L1_static(vector)
                 outv += self.lanczos.apply_anharmonic_static()
             else:
-                outv = self.lanczos.apply_L1_static(vector, inverse = True, power = 0.5)
+                if preconditioner:
+                    power = 0.5
+                if inverse_preconditioner:
+                    power = -0.5
+                outv = self.lanczos.apply_L1_static(vector, inverse = True, power = power)
 
             Ginv[i, :] = outv[:self.lanczos.n_modes]
             W[i, :, :] = _from_symmetric_to_matrix(outv[self.lanczos.n_modes:], self.lanczos.n_modes)
@@ -554,7 +603,6 @@ class StaticHessian(object):
         """
 
         n_modes = self.lanczos.n_modes
-
         # The first part of the vector describes the G
         G = np.zeros((n_modes, n_modes), dtype = np.double)
 

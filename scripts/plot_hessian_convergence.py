@@ -14,7 +14,7 @@ def print_info():
     print()
     print("1) The directory in which the calculations are stored")
     print("2) The PREFIX of the calculation")
-    print("3) [Optional] The Lanczos status to initialize the system")
+    print("3) [Optional] The status to initialize the system (must be the prefix of two files: a json and an npz)")
     print("4) [Optional] The dynamical matrix for reference phonon modes")
     print()
     print("The last two arguments are optional, however if you want to specify the fourth parameter, you need also the third one")
@@ -36,16 +36,21 @@ def plot_convergence(directory, prefix, sh, reference = None):
     else:
         print("The algorithm did not converged!")
 
-    ws = np.zeros((sh.lanczos.n_modes, len(all_files)))
+    ws = np.zeros((sh.lanczos.pols.shape[0], len(all_files)))
     
+    print()
     for i, fname in enumerate(all_files):
         sh.vector = np.loadtxt(os.path.join(directory, fname))
 
-        G = sh.get_G_W(sh.vector, ignore_W=True)
-        G = np.linalg.inv(G)
+        G = sh.retrieve_hessian(noq = True) / np.sqrt(np.outer(sh.lanczos.m, sh.lanczos.m))
 
-        w = np.linalg.eigvalsh(G)
-        ws[:, i] = np.sign(w) * np.sqrt(np.abs(w))
+        w2 = np.linalg.eigvalsh(G)
+        ws[:, i] = np.sign(w2) * np.sqrt(np.abs(w2))
+
+        if i % 10 == 0:
+            sys.stdout.write("\rProgress {:d} %".format((i * 100) // len(all_files)))
+            sys.stdout.flush()
+    print()
     
     # Plot
     plt.rcParams["font.family"] = "Liberation Serif"
@@ -85,9 +90,16 @@ if __name__ == "__main__":
     static_hessian = sscha.StaticHessian.StaticHessian()
     
     if nargs >= 4:
-        static_hessian.lanczos.load_status(sys.argv[3])
+        if not os.path.exists(sys.argv[3] + ".json"):
+            static_hessian.lanczos.load_status(sys.argv[3])
+            static_hessian.preconitioned = False
+            print("Neglecting json file")
+        else:
+            static_hessian.load_status(sys.argv[3])
+            print("Loading from json file")
+
     else:
-        static_hessian.lanczos.load_status(os.path.join(datadir, prefix + ".npz"))
+        static_hessian.lanczos.load_status(os.path.join(datadir, prefix))
 
     reference = None
 

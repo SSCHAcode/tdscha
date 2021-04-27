@@ -1614,6 +1614,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         # Force all the process to be here
         Parallel.barrier()
 
+        # Add the correct extension
+        if not ".npz" in file.lower():
+            file += ".npz"
+
         # Check if the provided file exists
         if not os.path.exists(file):
             print ("Error while loading %s file.\n" % file)
@@ -1638,15 +1642,15 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         # Now bcast to everyone
         data = Parallel.broadcast(dict(data))
 
-        self.T = data["T"]
-        self.nat = data["nat"]
+        self.T = np.double(data["T"])
+        self.nat = np.intc(data["nat"])
         self.m = data["m"]
         self.w = data["w"]
         self.pols = data["pols"]
-        self.n_modes = data["n_modes"]
-        self.ignore_v3 = data["ignore_v3"]
-        self.ignore_v4 = data["ignore_v4"]
-        self.N = data["N"]
+        self.n_modes = np.intc(data["n_modes"])
+        self.ignore_v3 = bool(data["ignore_v3"])
+        self.ignore_v4 = bool(data["ignore_v4"])
+        self.N = np.intc(data["N"])
         self.rho = data["rho"]
         self.X = data["X"]
         self.Y = data["Y"]
