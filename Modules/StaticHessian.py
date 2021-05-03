@@ -431,53 +431,57 @@ class StaticHessian(object):
                 os.makedirs(save_dir)
 
         for i in range(nmodes):
+            run_lanczos = True
             # Avoid redundancies in simulating degenerate modes.
             if i > 0:
                 if np.abs(self.lanczos.w[i-1] - self.lanczos.w[i]) < 1e-10:
                     if self.verbose:
                         print("SKIPPING MODE {} (Degeneracy)")
-                    continue 
+                    run_lanczos = False 
 
-            self.lanczos.prepare_mode(i)
+            if run_lanczos:
+                self.lanczos.prepare_mode(i)
 
-            if self.verbose:
-                print()
-                string = "RUNNING MODE {} out of {}".format(i + 1, nmodes)
-                print(string)
-                print("-"*len(string))
-                print()
+                if self.verbose:
+                    print()
+                    string = "RUNNING MODE {} out of {}".format(i + 1, nmodes)
+                    print(string)
+                    print("-"*len(string))
+                    print()
 
-            new_nsteps = nsteps
+                new_nsteps = nsteps
 
-            if save_dir is not None:
-                final_lanc_filename = os.path.join(save_dir, self.prefix)
+                if save_dir is not None:
+                    final_lanc_filename = os.path.join(save_dir, self.prefix)
 
-                if  restart_from_file:
-                    # Check if the lanczos needs to be loaded
-                    if os.path.exists( final_lanc_filename ):
-                        if self.verbose:
-                            print("Loading from {}...".format(final_lanc_filename))
-                        self.lanczos.load_status(final_lanc_filename)
-                    else:
-                        all_files = [x for x in os.listdir(save_dir) if x.startswith(prefix) and x.endswith(".npz") and "STEP" in x]
-                        count = [int(x.split(".")[-2].split("STEP")[-1]) for x in all_files]
-                        index = np.argmax(count)
-                        filename = os.path.join(save_dir, all_files[index])
+                    if  restart_from_file:
+                        # Check if the lanczos needs to be loaded
+                        if os.path.exists( final_lanc_filename ):
+                            if self.verbose:
+                                print("Loading from {}...".format(final_lanc_filename))
+                            self.lanczos.load_status(final_lanc_filename)
+                        else:
+                            all_files = [x for x in os.listdir(save_dir) if x.startswith(prefix) and x.endswith(".npz") and "STEP" in x]
+                            count = [int(x.split(".")[-2].split("STEP")[-1]) for x in all_files]
+                            index = np.argmax(count)
+                            filename = os.path.join(save_dir, all_files[index])
 
-                        if self.verbose:
-                            print("Loading from {}...".format(filename))
-                        self.lanczos.load_status(filename)
+                            if self.verbose:
+                                print("Loading from {}...".format(filename))
+                            self.lanczos.load_status(filename)
 
-                    # Get the number of steps
-                    new_nsteps = nsteps - len(self.lanczos.a_coeffs)
-                        
+                        # Get the number of steps
+                        new_nsteps = nsteps - len(self.lanczos.a_coeffs)
+                            
 
-            if new_nsteps > 0:
-                self.lanczos.run_FT(new_nsteps, save_dir = save_dir, verbose = self.verbose, prefix = "HESSIAN_M{:d}".format(i+1))
+                if new_nsteps > 0:
+                    self.lanczos.run_FT(new_nsteps, save_dir = save_dir, verbose = self.verbose, prefix = "HESSIAN_M{:d}".format(i+1))
 
-            # Save the final status
-            if save_dir is not None:
-                self.lanczos.save_status(final_lanc_filename)
+                # Save the final status
+                if save_dir is not None:
+                    self.lanczos.save_status(final_lanc_filename)
+                
+                # END if run_lanczos
 
             # Get the static limit from the dynamical response funciton
             gf0 = self.lanczos.get_green_function_continued_fraction(np.array([0]), use_terminator = False, smearing = 0)[0]
