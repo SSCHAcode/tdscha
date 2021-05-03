@@ -404,6 +404,8 @@ class StaticHessian(object):
         This neglects mode mixing introduced by the "bubble" and higher-order phonon-phonon scattering diagrams,
         but contains anharmonicity non-perturbatively.
 
+        TODO: exploit mode symmetries to avoid to repeat calculations for degenerate modes.
+
         Parameters
         ----------
             nsteps : int
@@ -429,6 +431,13 @@ class StaticHessian(object):
                 os.makedirs(save_dir)
 
         for i in range(nmodes):
+            # Avoid redundancies in simulating degenerate modes.
+            if i > 0:
+                if np.abs(self.lanczos.w[i-1] - self.lanczos.w[i]) < 1e-10:
+                    if self.verbose:
+                        print("SKIPPING MODE {} (Degeneracy)")
+                    continue 
+
             self.lanczos.prepare_mode(i)
 
             if self.verbose:
@@ -441,7 +450,7 @@ class StaticHessian(object):
             new_nsteps = nsteps
 
             if save_dir is not None:
-                final_lanc_filename = os.path.join(save_dir, prefix)
+                final_lanc_filename = os.path.join(save_dir, self.prefix)
 
                 if  restart_from_file:
                     # Check if the lanczos needs to be loaded
