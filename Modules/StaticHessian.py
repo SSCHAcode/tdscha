@@ -436,7 +436,7 @@ class StaticHessian(object):
             if i > 0:
                 if np.abs(self.lanczos.w[i-1] - self.lanczos.w[i]) < 1e-10:
                     if self.verbose:
-                        print("SKIPPING MODE {} (Degeneracy)")
+                        print("SKIPPING MODE {} (Degeneracy)".format(i+1))
                     run_lanczos = False 
 
             if run_lanczos:
@@ -452,7 +452,7 @@ class StaticHessian(object):
                 new_nsteps = nsteps
 
                 if save_dir is not None:
-                    final_lanc_filename = os.path.join(save_dir, self.prefix)
+                    final_lanc_filename = os.path.join(save_dir, self.prefix + "_M{:d}_conv".format(i + 1))
 
                     if  restart_from_file:
                         # Check if the lanczos needs to be loaded
@@ -461,21 +461,23 @@ class StaticHessian(object):
                                 print("Loading from {}...".format(final_lanc_filename))
                             self.lanczos.load_status(final_lanc_filename)
                         else:
-                            all_files = [x for x in os.listdir(save_dir) if x.startswith(prefix) and x.endswith(".npz") and "STEP" in x]
-                            count = [int(x.split(".")[-2].split("STEP")[-1]) for x in all_files]
-                            index = np.argmax(count)
-                            filename = os.path.join(save_dir, all_files[index])
+                            all_files = [x for x in os.listdir(save_dir) if x.startswith(self.prefix + "_M{:d}".format(i+1)) and x.endswith(".npz") and "STEP" in x]
+                            if len(all_files) > 0:
+                                count = [int(x.split(".")[-2].split("STEP")[-1]) for x in all_files]
+                                index = np.argmax(count)
+                                filename = os.path.join(save_dir, all_files[index])
 
-                            if self.verbose:
-                                print("Loading from {}...".format(filename))
-                            self.lanczos.load_status(filename)
+                                if self.verbose:
+                                    print("Loading from {}...".format(filename))
+                                self.lanczos.load_status(filename)
 
                         # Get the number of steps
-                        new_nsteps = nsteps - len(self.lanczos.a_coeffs)
+                        if len(self.lanczos.a_coeffs):
+                            new_nsteps = nsteps - len(self.lanczos.a_coeffs)
                             
 
                 if new_nsteps > 0:
-                    self.lanczos.run_FT(new_nsteps, save_dir = save_dir, verbose = self.verbose, prefix = "HESSIAN_M{:d}".format(i+1))
+                    self.lanczos.run_FT(new_nsteps, save_dir = save_dir, verbose = self.verbose, prefix = self.prefix + "_M{:d}".format(i+1))
 
                 # Save the final status
                 if save_dir is not None:
@@ -485,11 +487,13 @@ class StaticHessian(object):
 
             # Get the static limit from the dynamical response funciton
             gf0 = self.lanczos.get_green_function_continued_fraction(np.array([0]), use_terminator = False, smearing = 0)[0]
-            Gw[i, i] = 1 / gf0
+            Gw[i, i] = gf0
 
         # Retrive the hessian
         W = np.zeros((nmodes, nmodes, nmodes), dtype = np.double)
         self.vector = self.get_vector(Gw, W)
+
+        self.preconitioned = False
 
         return self.retrieve_hessian()
 
@@ -501,7 +505,7 @@ class StaticHessian(object):
         Note that you need to run the Hessian calculation (run method), otherwise this
         method returns the SSCHA dynamical matrix.
 
-        If noq is true, it returns a numpy matrix in the polarization basis.
+        If noq is true, it returns a numpy matrix in the supercell.
         This enable to get the Hessian even if the dynamical matrix of the Lanczos is not initialized,
         as it occurs when loading from a file.
         """

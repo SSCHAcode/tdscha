@@ -106,8 +106,8 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     new_ens = ens.split(first_1000_configs)
 
     # # Get the hessian in the standard way
-    # hessian = new_ens.get_free_energy_hessian(include_v4 = True, use_symmetries = True)
-    # hessian.save_qe(os.path.join(dirname, "hessian_v4_"))
+    #hessian = new_ens.get_free_energy_hessian(include_v4 = True, use_symmetries = True)
+    #hessian.save_qe(os.path.join(dirname, "hessian_v4_"))
     # dyn.save_qe(os.path.join(dirname, "sscha"))
     hessian = CC.Phonons.Phonons(os.path.join(dirname, "hessian_v4_"), 3)
 
@@ -170,10 +170,11 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # Get the free energy hessian
     hessian_calculator = sscha.StaticHessian.StaticHessian()
     hessian_calculator.init(new_ens)
-    hessian_calculator.run_no_mode_mixing(30, save_dir = "hessian_no_mode_mixing") 
+    hessian_calculator.prefix = "HESSIAN"
+    hessian_calculator.run_no_mode_mixing(30, save_dir = "hessian_no_mode_mixing", restart_from_file = True) 
     #hessian_calculator.run(1000, save_dir = "hessian_calculation_precall", threshold = 1e-7)
 
-    hmat = hessian_calculator.retreive_hessian()
+    hmat = hessian_calculator.retrieve_hessian()
     hmat.save_qe("final_hessian_no_mode_mixing")
     
 
