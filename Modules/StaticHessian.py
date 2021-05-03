@@ -491,9 +491,11 @@ class StaticHessian(object):
 
         # Retrive the hessian
         W = np.zeros((nmodes, nmodes, nmodes), dtype = np.double)
-        self.vector = self.get_vector(Gw, W)
 
+        # TODO: Apply the correct preconditioning to the vector
+        #       this would allow to use the no_mode_mixing as an ansatz for the full algorithm.
         self.preconitioned = False
+        self.vector = self.get_vector(Gw, W)
 
         return self.retrieve_hessian()
 
