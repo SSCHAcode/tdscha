@@ -52,6 +52,7 @@ freqs = np.zeros((N_iters, 3*nat))
 dynamical = np.zeros((N_iters, NW))
 dynamical_noterm = np.zeros((N_iters, NW))
 w_array = np.linspace(W_START, W_END, NW)
+w_static = np.zeros((N_iters), dtype = np.double)
 
 a_coeffs = np.copy(data.a_coeffs)
 b_coeffs = np.copy(data.b_coeffs)
@@ -70,9 +71,16 @@ for i in range(N_iters):
     #w *= CC.Phonons.RY_TO_CM
     #freqs[i, :] = w 
 
-    dynamical_noterm[i, :] = -np.imag( data.get_green_function_continued_fraction(w_array, use_terminator = False, smearing = SMEARING))
+    gf = data.get_green_function_continued_fraction(w_array, use_terminator = False, smearing = SMEARING)
+
+    dynamical_noterm[i, :] = -np.imag( gf)
+    w2 = 1 / np.real(gf[0])
+    w_static[i] = np.sign(w2) * np.sqrt(np.abs(w2)) * CC.Units.RY_TO_CM
     dynamical[i, :] = -np.imag( data.get_green_function_continued_fraction(w_array, use_terminator = True, smearing = SMEARING))
     
+
+
+
     if i % 10 == 0:
         sys.stderr.write("\rProgress %% %d" % (i * 100 / N_iters))
         sys.stderr.flush()
@@ -81,17 +89,16 @@ sys.stderr.write("\n")
 print ("Plotting the results...")
 
 plt.figure(dpi = 160)
-plt.title("Static Odd")
-for i in range(3*nat):
-    plt.plot(np.arange(N_iters) + 1, freqs[:, i])
-
+plt.title("Static Frequency")
+plt.plot(np.arange(N_iters), w_static, marker = "o")
 plt.xlabel("Lanczos step")
-plt.ylabel("frequencies [cm-1]")
+plt.ylabel("Static frequency [cm-1]")
 plt.tight_layout()
+
 
 plt.figure(dpi = 160)
 plt.title("Green function without terminator")
-plt.imshow(dynamical_noterm, aspect = "auto", origin = "upper", extent = [W_START*CC.Phonons.RY_TO_CM, W_END*CC.Phonons.RY_TO_CM, 1, N_iters])
+plt.imshow(dynamical_noterm, aspect = "auto", origin = "lower", extent = [W_START*CC.Phonons.RY_TO_CM, W_END*CC.Phonons.RY_TO_CM, 1, N_iters])
 plt.xlabel("Frequency [cm-1]")
 plt.ylabel("Steps")
 plt.colorbar()
@@ -100,7 +107,7 @@ plt.tight_layout()
 
 plt.figure(dpi = 160)
 plt.title("Green function with terminator")
-plt.imshow(dynamical, aspect = "auto", origin = "upper", extent = [W_START*CC.Phonons.RY_TO_CM, W_END*CC.Phonons.RY_TO_CM, 1, N_iters])
+plt.imshow(dynamical, aspect = "auto", origin = "lower", extent = [W_START*CC.Phonons.RY_TO_CM, W_END*CC.Phonons.RY_TO_CM, 1, N_iters])
 plt.xlabel("Frequency [cm-1]")
 plt.ylabel("Steps")
 plt.colorbar()

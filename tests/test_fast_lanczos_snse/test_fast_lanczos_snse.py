@@ -90,7 +90,9 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     dyn = CC.Phonons.Phonons(os.path.join(PATH_TO_DYN, "SnTe_final"), 3)
     ens = sscha.Ensemble.Ensemble(dyn, temperature, dyn.GetSupercell())
     ens.load_bin(os.path.join(PATH_TO_DYN, "ensemble"), 1)
+    print("Forc COMP:", ens.force_computed)
     ens.update_weights(dyn, temperature)
+    print("Forc COMP:", ens.force_computed)
 
     dirname = "SC_T_{:d}_N_{:d}".format(temperature, N)
     if not os.path.exists(dirname):
@@ -100,6 +102,7 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # Get only the first 1000 configurations
     first_1000_configs = np.zeros(ens.N, dtype = bool)
     first_1000_configs[:200] = True
+    print("Forc COMP:", ens.force_computed)
     new_ens = ens.split(first_1000_configs)
 
     # # Get the hessian in the standard way
@@ -167,10 +170,11 @@ def test_lanczos_snse(temperature = 250, N = 10000):
     # Get the free energy hessian
     hessian_calculator = sscha.StaticHessian.StaticHessian()
     hessian_calculator.init(new_ens)
-    hessian_calculator.run(1000, save_dir = "hessian_calculation_precall", threshold = 1e-7)
+    hessian_calculator.run_no_mode_mixing(30, save_dir = "hessian_no_mode_mixing") 
+    #hessian_calculator.run(1000, save_dir = "hessian_calculation_precall", threshold = 1e-7)
 
     hmat = hessian_calculator.retreive_hessian()
-    hmat.save_qe("final_hessian_new")
+    hmat.save_qe("final_hessian_no_mode_mixing")
     
 
 
