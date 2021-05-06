@@ -46,6 +46,10 @@ def am_i_the_master():
     else:
         return True 
 
+def makedirs(*args):
+    if am_i_the_master():
+        os.makedirs(*args)
+
 def pprint(*argv):
     """
     PARALLEL PRINTING

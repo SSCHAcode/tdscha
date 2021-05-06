@@ -27,6 +27,7 @@ import sscha_HP_odd
 # Override the print function to print in parallel only from the master
 import cellconstructor.Settings as Parallel
 from sscha.Parallel import pprint as print
+from sscha.Parallel import *
 
 # Define a generic type for the double precision.
 TYPE_DP = np.double
@@ -2716,7 +2717,7 @@ Max number of iterations: {}
         # Otherwise we create it
         if not save_step_dir is None:
             if not os.path.exists(save_step_dir):
-                os.makedirs(save_step_dir)
+                makedirs(save_step_dir)
 
         # Load all the data
         a_ns = np.zeros( (self.n_modes, self.n_modes, N_steps), dtype = np.double)
@@ -3269,6 +3270,12 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
         if np.isnan(psi_norm) or psi_norm == 0:
             print(ERROR_MSG)
             raise ValueError(ERROR_MSG)
+
+        # If save_dir does not exist, create it
+        if save_dir is not None:
+            if not os.path.exists(save_dir):
+                makedirs(save_dir)
+
 
         # Get the current step
         i_step = len(self.a_coeffs)
