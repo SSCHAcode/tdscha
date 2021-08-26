@@ -8,7 +8,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
-#include "LanczosFunctions.hpp"
+#include "LanczosFunctions.h"
 
 #define RY_TO_K 157887.32400374097
 using namespace std;

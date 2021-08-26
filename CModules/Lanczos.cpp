@@ -296,7 +296,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
         get_f_average_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, f_pert_av);
         get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
-    
+
     if (! ignore_v4) {
         get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
@@ -324,7 +324,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
         ReA_w2 = 2*w[y]*nbose[y] * (nbose[y] + 1) / (2*nbose[y] + 1);
 
         if (transpose) {
-            pert_Y = 0.5 *  d2v_pert_av[x*n_modes + y] / (Y_wa * Y_wb)
+            pert_Y = 0.5 *  d2v_pert_av[x*n_modes + y] / (Y_wa * Y_wb);
             pert_RA = 0;
 
             if (x != y) pert_Y *= 2;

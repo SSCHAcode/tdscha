@@ -243,16 +243,16 @@ double get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double 
  */
 
 void get_f_average_from_Y_pert_sym(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, 
-                                   const double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, const int ** degenerate_space,
+                                   const double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
 								   double * f_average);
 
 void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const double * w, const double * R1, double T, int n_modes, 
                                  int n_configs, double * w_is, 
-								 const double * symmetries, int N_sym, const int * N_degeneracy, const int ** degenerate_space,
+								 const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
 								 double * d2v_dR2);
 
 double get_d2v_dR2_from_Y_pert_sym(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, 
-                                   double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, const int ** degenerate_space,
+                                   double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
 								   double * d2v_dR2_out);
 
 /*
