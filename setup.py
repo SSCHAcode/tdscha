@@ -49,7 +49,7 @@ EXTRA_F90_FLAGS =  ["-cpp", "-fopenmp"]
 EXTRA_LINK_ARGS = ["-fopenmp"]
 
 # Compile the fortran SCHA modules
-SCHAModules = Extension(name = "SCHAModules", 
+SCHAModules = Extension(name = "TDSCHAModules", 
                         sources = ["SCHAModules/module_stochastic.f90",
                                    "SCHAModules/module_new_thermodynamic.f90",
                                    "SCHAModules/module_anharmonic.f90",
@@ -85,18 +85,16 @@ odd_HP = Extension(name = "sscha_HP_odd",
 
 
 # Prepare the compilation of the Python Conde
-setup( name = "python-sscha",
+setup( name = "tdscha",
        version = "0.1",
-       description = "Python implementation of the sscha code",
+       description = "Time Dependent Self Consistent Harmonic Approximation",
        author = "Lorenzo Monacelli",
        url = "https://github.com/mesonepigreco/python-sscha",
-       packages = ["sscha"],
-       package_dir = {"sscha": "Modules"},
-       install_requires = ["numpy", "ase", "scipy", "cellconstructor", "lapack", "blas"],
+       packages = ["tdscha"],
+       package_dir = {"tdscha": "Modules"},
+       install_requires = ["numpy", "ase", "scipy", "cellconstructor", "python-sscha"],
        ext_modules = [SCHAModules, odd_HP],
-       scripts = ["scripts/sscha", "scripts/cluster_check.x", "scripts/plot_frequencies.pyx",
-                  "scripts/static-vc-relax.pyx", "scripts/read_incomplete_ensemble.py",
-                  "scripts/plot_lanczos_convergence.py", "scripts/plot_hessian_convergence.py"],
+       scripts = ["scripts/plot_lanczos_convergence.py", "scripts/plot_hessian_convergence.py"],
        license = "GPLv3"
        )
                                                                                                                                                           

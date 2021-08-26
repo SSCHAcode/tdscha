@@ -13,6 +13,8 @@ import numpy as np
 
 from timeit import default_timer as timer
 
+import json
+
 # Import the scipy Lanczos modules
 import scipy, scipy.sparse.linalg
 
@@ -21,7 +23,7 @@ import cellconstructor.Phonons
 import cellconstructor.symmetries
 
 import sscha.Ensemble as Ensemble
-import sscha.Tools
+import tdscha.Tools as Tools
 import sscha_HP_odd
 
 # Override the print function to print in parallel only from the master
@@ -398,7 +400,115 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.initialized = True
 
 
-    def prepare_symmetrization(self, no_sym = False):
+    def interpolate(self, q_mesh, support_dyn = None, auto_init = True):
+        """
+        INTERPOLATION
+        =============
+
+        This subroutine prepare the Lanczos algorithm to run on a bigger mesh than the one defined on the original supercell.
+        This is fundamental to correctly converge resonances.
+
+        This method automatically initializes with symmetries the new Lanczos. 
+        You can disable this behaviour setting auto_init = False.
+
+        Parameters
+        ----------
+            q_mesh : list or ndarray (size=3, dtye = np.intc)
+                The mesh of q points on which you want to perform the simulation.
+                It should be bigger than the original supercell size.
+            support_dyn : CC.Phonons.Phonons, optional
+                By default, the original dynamical matrix will be Fourier interpolated in the new q_mesh.
+                However, you can provide a new dynamical matrix in the q_mesh already interpolated.
+                This is usefull if you want to use a custom interpolation
+                (for example to interpolate only the differences between the SSCHA force constat matrix and the harmonic one).
+            auto_init: bool
+                If True, after the interpolation is performed, the new Lanczos object will be initialized (with symmetries).
+                If you disable it, you must call the init function manually
+        
+        Results
+        -------
+            interpolated_lanczos : Lanczos()
+                A new Lanczos class object, with interpolated data.
+
+        """
+        interpolated_lanczos = Lanczos()
+
+        # Interpolate the original dynamical matrix
+        if support_dyn is not None:
+            interpolated_lanczos.dyn = support_dyn.Copy()
+        else:
+            interpolated_lanczos.dyn = self.dyn.Interpolate(q_mesh)
+
+        # Prepare the new structure
+        interpolated_lanczos.uci_structure = interpolated_lanczos.dyn.structure.copy()
+        interpolated_lanczos.super_structure = interpolated_lanczos.uci_structure.generate_supercell(q_mesh)
+
+        interpolated_lanczos.T = self.T 
+
+        ws, pols = interpolated_lanczos.dyn.DiagonalizeSupercell()
+
+
+        interpolated_lanczos.nat = interpolated_lanczos.super_structure.N_atoms
+        n_cell = np.prod(q_mesh)
+
+        interpolated_lanczos.qe_sym = CC.symmetries.QE_Symmetry(interpolated_lanczos.uci_structure)
+        interpolated_lanczos.qe_sym.SetupQPoint()
+
+        # Get the masses
+        m = interpolated_lanczos.super_structure.get_masses_array()
+        interpolated_lanczos.m = np.tile(m, (3,1)).T.ravel()
+
+        # Remove the translations
+        trans_mask = CC.Methods.get_translations(pols, m)
+
+        # Isolate only translational modes
+        good_mask = ~trans_mask
+
+        # Get the polarization vectors
+        interpolated_lanczos.w = ws[good_mask]
+        interpolated_lanczos.pols = pols[:, good_mask]
+
+        # Correctly reshape the polarization in case only one mode is selected
+        if len(self.w) == 1:
+            self.pols = self.pols.reshape((len(self.m), 1))
+
+        interpolated_lanczos.n_modes = len(interpolated_lanczos.w)
+
+
+        # Prepare the list of q point starting from the polarization vectors
+        #q_list = CC.symmetries.GetQForEachMode(self.pols, self.uci_structure, self.super_structure, self.dyn.GetSupercell())
+        # Store the q vectors in crystal space
+        bg = interpolated_lanczos.uci_structure.get_reciprocal_vectors() / 2* np.pi
+        interpolated_lanczos.q_vectors = np.zeros((interpolated_lanczos.n_modes, 3), dtype = np.double, order = "C")
+        #for iq, q in enumerate(q_list):
+        #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
+
+
+        # Prepare the interpolation of the ensemble
+        interpolated_lanczos.rho = self.rho.copy()
+        interpolated_lanczos.N_eff = np.sum(self.rho)
+
+        interpolated_lanczos.u_tilde = self.u_tilde.copy()
+        interpolated_lanczos.f_tilde = self.f_tilde.copy()
+
+        interpolated_lanczos.X = np.zeros((interpolated_lanczos.N, interpolated_lanczos.n_modes), order = order, dtype = TYPE_DP)
+        interpolated_lanczos.Y = np.zeros((interpolated_lanczos.N, interpolated_lanczos.n_modes), order = order, dtype = TYPE_DP)
+
+        # TODO: Interpolation of the q vectors with the Tetrahedral method.
+        raise NotImplementedError("Error, interpolation is not yet implemented.")
+        interpolated_lanczos.X[:, :] = self.u_tilde.dot(self.pols) #.T.dot(self.u_tilde)
+        interpolated_lanczos.Y[:, :] = self.f_tilde.dot(self.pols) #self.pols.T.dot(self.f_tilde)
+
+        
+        
+
+        if auto_init:
+            interpolated_lanczos.init()
+        return interpolated_lanczos
+        
+
+
+    def prepare_symmetrization(self, no_sym = False, verbose = True):
         """
         PREPARE THE SYMMETRIZATION
         ==========================
@@ -435,11 +545,20 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.degenerate_space = [[i] for i in range(self.n_modes)]
             return
 
+        t1 = time.time()
         super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+        t2 = time.time()
+
+        if verbose:
+            print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
         pol_symmetries = CC.symmetries.GetSymmetriesOnModes(super_symmetries, super_structure, pols)
+        t1 = time.time()
+        if verbose:
+            print("Time to convert symmetries in the polarizaion space: {} s".format(t1-t2))
+
 
         Ns, dumb, dump = np.shape(pol_symmetries)
         
@@ -471,6 +590,111 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         self.N_degeneracy = N_deg
         self.degenerate_space = deg_space
+
+    def prepare_input_files(self, root_name = "tdscha", n_steps = 100, start_from_scratch = True, directory="."):
+        """
+        PREPARE INPUT FILES
+        ===================
+
+        This method prepares the input files for the submission with the binary executable.
+        This is usefull to prepare the input in a local computer and submit the calculation on a cluster,
+        where it is easier to work.
+
+        Parameters
+        ----------
+            root_name : string
+                The title of the calculation.
+            n_steps: int
+                The number of steps to be performed in the lanczos calculation.
+            start_from_scratch: bool
+                If True the calculation is restarted from scratch.
+            directory : string
+                Path to the directory on which the input files will be saved
+
+        
+        This file will prepare inside the directory the following input files.
+        (where XXX = root_name)
+
+        XXX.json
+        XXX.X.dat
+        XXX.Y.dat
+        XXX.syms.$i   ($i = 0, ..., N symmetries - 1)
+        XXX.degs
+        XXX.psi
+
+        and the following optional files (in case the calculation should be restarted):
+
+        XXX.Qbasis
+        XXX.Pbasis
+
+
+        The file XXX.json contains the generic information about the minimization,
+        as well as all arrays not too big and that can be easily stored in a json file.
+
+        All the other data contain 2d arrays or more sophisticated data.
+        """
+
+        Nsyms, _, __ = self.symmetries.shape
+
+        json_data = {"T" : self.T, 
+                     "n_steps" : n_steps,
+                     "ignore_v3" : self.ignore_v3,
+                     "ignore_v4" : self.ignore_v4,
+                     "data" : {
+                         "n_configs" : int(self.N),
+                         "n_modes" : int(self.n_modes),
+                         "n_syms" : Nsyms,
+                         "perturbation_modulus" : self.perturbation_modulus,
+                         "reverse" : self.reverse_L,
+                         "shift" : self.shift_value} }
+        
+        Parallel.barrier()
+
+        if not start_from_scratch:
+            raise NotImplementedError("Error, restarting from a previous calculation is not yet implemented.")
+
+        if Parallel.am_i_the_master():
+            root_fname = os.path.join(directory, root_name)
+
+            # Writhe the json input file
+            with open(root_fname + ".json", "w") as fp:
+                json.dump(json_data, fp)
+
+            # Save 1D arrays
+            np.savetxt(root_fname + ".ndegs", self.N_degeneracy, fmt = "%d")
+            np.savetxt(root_fname + ".masses", self.m)
+            np.savetxt(root_fname + ".freqs", self.w)
+            np.savetxt(root_fname + ".rho", self.rho)
+            
+            # Save all the other data
+            np.savetxt(root_fname + ".X.dat", self.X)
+            np.savetxt(root_fname + ".Y.dat", self.Y)
+
+
+            np.savetxt(root_fname + ".psi", self.psi)
+
+            # Prepare the symmetry variables for the C code
+            deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
+            i = 0
+            i_mode = 0
+            j_mode = 0
+            #print("Mapping degeneracies:", np.sum(n_degeneracies))
+            while i_mode < self.n_modes:
+                #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
+                deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
+                j_mode += 1
+                i += 1
+                if j_mode == self.N_degeneracy[i_mode]:
+                    i_mode += 1
+                    j_mode = 0
+            np.savetxt(root_fname + ".degs", deg_space_new)
+
+
+            # Save all the symmetries
+            for i in range(Nsyms):
+                np.savetxt(root_fname + ".syms{:d}".format(i), self.symmetries[i, :, :])
+
+
 
     def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
         """
@@ -2035,9 +2259,9 @@ Error, algorithm type '{}' in subroutine run_biconjugate_gradient not implemente
             t1 = time.time()
             if algorithm.lower() == "cg":
                 if not use_preconditioning:
-                    res = sscha.Tools.minimum_residual_algorithm(L_operator, self.psi.copy(), x0 = x0, precond = None, max_iters = max_iters)
+                    res = Tools.minimum_residual_algorithm(L_operator, self.psi.copy(), x0 = x0, precond = None, max_iters = max_iters)
                 else:
-                    res = sscha.Tools.minimum_residual_algorithm_precond(L_operator, self.psi.copy(), M_prec, max_iters = max_iters)
+                    res = Tools.minimum_residual_algorithm_precond(L_operator, self.psi.copy(), M_prec, max_iters = max_iters)
                 info = 0
                 #res, info = scipy.sparse.linalg.cg(L_operator, self.psi, x0 = x0)#, tol = tol, maxiter = maxiter, callback=callback, M = M_prec)
             #elif algorithm.lower() == "bicg":

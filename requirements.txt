@@ -4,3 +4,4 @@ scipy
 ase
 spglib
 cellconstructor
+mpi4py

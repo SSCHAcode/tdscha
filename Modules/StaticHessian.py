@@ -19,7 +19,7 @@ import cellconstructor.Phonons
 import cellconstructor.symmetries
 
 import sscha.Ensemble as Ensemble
-import sscha.Tools
+import tdscha.Tools as Tools
 import sscha_HP_odd
 
 # Override the print function to print in parallel only from the master
@@ -245,9 +245,9 @@ class StaticHessian(object):
 
         t1 = time.time()
         if algorithm.lower() == "cg":
-            res = sscha.Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
+            res = Tools.minimum_residual_algorithm(A, b, x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
         elif algorithm.lower() == "cg-prec":
-            res = sscha.Tools.minimum_residual_algorithm_precond(A, b, A_precond_half, x0 = x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
+            res = Tools.minimum_residual_algorithm_precond(A, b, A_precond_half, x0 = x0, max_iters = n_steps, conv_thr = threshold, callback = callback)
         else:
             raise NotImplementedError("Error, algorithm '{}' not implemented.".format(algorithm))
         t2 = time.time()
