@@ -8,6 +8,9 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
+#include "LanczosFunctions.hpp"
+
+#define RY_TO_K 157887.32400374097
 using namespace std;
 
 class Lanczos {
@@ -16,10 +19,12 @@ class Lanczos {
 
     double T, shift_value;
 
-    double *w, *rho, *m;
-    int * N_degeneracy, *degenerate_space;
+    double *w, *nbose, *rho, *m;
+    int * N_degeneracy, *degenerate_space, **good_deg_space;
 
     double *X, *Y, *psi,  *symmetries;
+
+    double * Ups1, *ReA1;
 
     double *a, *b, *c;
     double *Qbasis, *Pbasis;
@@ -33,9 +38,24 @@ public:
     // Load everything from the input files
     void setup_from_input(string rootname);
 
+    void update_nbose();
+
+    // Apply the noninteracting propagation from the psi to the out_vect
+    void apply_L1(double * out_vect, bool transpose);
+
+    // Apply the anharmonic part of the L  interaction
+    void apply_anharmonic(double * out_vect, bool transpose);
+
+    void get_Y1(bool half_off_diagonal);
+    void get_ReA1(bool half_off_diagonal);
+    
+
     // Run the lanczos algorithm
     void run();
 };
 
+
+int get_sym_index(int, int);
+void get_indices_from_sym_index(int index, int &a, int &b);
 #endif
 
