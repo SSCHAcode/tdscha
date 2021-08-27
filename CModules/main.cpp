@@ -19,8 +19,7 @@ int main(int argc, char * argv[]) {
 
     // Initialize the Lanczos object
     Lanczos lanc(root_name);
-
-    cout << "Done" << endl; 
+    lanc.run();
 }
 
 
