@@ -1,4 +1,5 @@
 #include "Lanczos.hpp"
+#include "Utils.hpp"
 #include <cmath>
 #include <chrono>
 
@@ -40,7 +41,7 @@ void Lanczos::setup_from_input(string rootname) {
     
     n_psi = n_modes + n_modes * (n_modes + 1);
 
-    if (DEBUG_READ) {
+    if (DEBUG_READ && am_i_the_master()) {
         cout << "[DEBUG READ] N = " << N << endl;
         cout << "[DEBUG READ] n_modes = " << n_modes << endl;
         cout << "[DEBUG READ] n_syms = " << n_syms << endl;
@@ -138,17 +139,16 @@ void Lanczos::setup_from_input(string rootname) {
     // Get the length of the degenerate space
     int n_deg_total = 0;
     for (int i = 0; i < n_modes; ++i) n_deg_total += N_degeneracy[i];
-    degenerate_space = (int*) malloc(sizeof(int) * n_deg_total);
+    degenerate_space = (int*) calloc(sizeof(int), n_deg_total);
 
 
     file.open(rootname + ".degs");
     if (file.is_open()) {
-        string line;
         int counter = 0;
         for (int k = 0; k < n_deg_total; ++k) {
             file >> degenerate_space[k];
         }
-    }
+    } 
     file.close();
 
 
@@ -179,7 +179,7 @@ void Lanczos::setup_from_input(string rootname) {
     for (int i = 0; i < n_modes;++i) {
         good_deg_space[i] = (int*) malloc(sizeof(int) * N_degeneracy[i]);
         for (int j = 0; j < N_degeneracy[i]; ++j) {
-        good_deg_space[i][j] = degenerate_space[counter++];
+            good_deg_space[i][j] = degenerate_space[counter++];
         }
     }
 }
@@ -189,7 +189,7 @@ void Lanczos::update_nbose() {
         nbose[i] = 0;
 
         if (T > 0) {
-            nbose[i] = 1.0 / (exp(w[i] / (T * RY_TO_K)) - 1);
+            nbose[i] = 1.0 / (exp( (w[i] * RY_TO_K) / T) - 1);
         }
     }
 }
@@ -264,6 +264,11 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
     double Y_wa, Y_wb, coeff_Y, ReA_w1, ReA_w2, coeff_RA;
 
+    // Fill the R perturbation
+    for (int i = 0; i < n_modes; ++i) {
+        R1[i] = psi[i];
+    }
+
     if (transpose) {
         for (int i = 0; i < N_w2; ++i) {
             get_indices_from_sym_index(i, x, y);
@@ -306,6 +311,15 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
         get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
 
+    cout << endl;
+    cout << "D2v[0,0] = " << scientific << setprecision(8) << d2v_pert_av[0] << endl;
+    // for (int i = 0; i < n_modes; ++i) {
+    //     for (int j = 0; j < n_modes; ++j) 
+    //         cout << d2v_pert_av[n_modes * i + j] << " ";
+    //     cout << endl;
+    // }
+    // cout << endl;
+
     if (! ignore_v4) {
         get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
@@ -318,7 +332,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
 
     for (int i = 0; i < n_modes; ++i) {
-        final_psi[i] = -f_pert_av[i];
+        final_psi[i] += -f_pert_av[i];
     }
 
     double pert_Y, pert_RA;
@@ -342,8 +356,10 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
             pert_RA = d2v_pert_av[x*n_modes + y] * (ReA_w1 + ReA_w2);
         }
 
-        final_psi[start_Y + i] = -pert_Y;
-        final_psi[start_A + i] = -pert_RA;
+        if (i == 0) cout << "First element of pert_Y: " << scientific << setprecision(6) << pert_Y << endl; 
+        if (i == 0) cout << "Y_w[0] = " << Y_wa << " w[0] = " << w[0] << " n_mu[0] = " << nbose[0] << endl;
+        final_psi[start_Y + i] += -pert_Y;
+        final_psi[start_A + i] += -pert_RA;
         
     }
 
@@ -361,13 +377,15 @@ void Lanczos::apply_full_L(double * target, bool transpose, double * output) {
     auto t1 = chrono::steady_clock::now();
     apply_L1(output, transpose);
 
-    if ((!ignore_v3) && (!ignore_v4))
+    if ((!ignore_v3) || (!ignore_v4))
         apply_anharmonic(output, transpose);
 
     auto t2 = chrono::steady_clock::now();
 
     auto diff = t2- t1;
-    cout << "Time to apply the L matrix: " <<  chrono::duration <double, milli> (diff).count() << " ms" << endl;
+
+    if (am_i_the_master())
+        cout << "Time to apply the L matrix: " <<  chrono::duration <double, milli> (diff).count() << " ms" << endl;
 
 
 
@@ -399,7 +417,7 @@ void Lanczos::run() {
     int len_bq = 1, len_bp = 1;
     
     // Prepare the first vector computing the norm of psi
-    double psi_norm;
+    double psi_norm = 0;
     for (int i = 0; i < n_psi; ++i) psi_norm += psi[i] * psi[i];
     psi_norm = sqrt(psi_norm);
 
@@ -433,21 +451,30 @@ void Lanczos::run() {
     fstream file_qbasis(rootname + ".qbasis.out");
     fstream file_pbasis(rootname + ".pbasis.out");
 
-    if (file_qbasis.is_open())  file_qbasis << scientific;
-    if (file_pbasis.is_open())  file_pbasis << scientific;
+    if (file_qbasis.is_open())  file_qbasis << scientific << setprecision(16);
+    if (file_pbasis.is_open())  file_pbasis << scientific << setprecision(16);
 
     // Here the run
     bool next_converged = false;
     bool converged = false;
     for (int i = i_step; i < i_step + n_steps; ++i) {
-        cout << endl;
-        cout << "===== NEW STEP " << i + 1 <<" =====" <<endl << endl;
-
+        if (am_i_the_master()) {
+            cout << endl;
+            cout << "===== NEW STEP " << i + 1 <<" =====" <<endl << endl;
+        }
 
         // Apply Lq and pL
         // This is the most time consuming part of the code
         apply_full_L(psi_q, false, L_q);
         apply_full_L(psi_p, true, p_L);
+
+        if (DEBUG_LANC && am_i_the_master()) {
+            cout << "L_q [from " << n_modes << "]" << endl; 
+            for(int j = n_modes; j < n_modes + 10; ++j) {
+                cout << scientific << setprecision(2) << L_q[j] << " ";
+            }
+            cout << endl;
+        }
 
         double c_old = 1;
         if (lenc > 0) {
@@ -456,8 +483,8 @@ void Lanczos::run() {
 
         double p_norm = snorm[lens-1] / c_old;
         double old_p_norm;
-        if (DEBUG_LANC) 
-            cout << "p_norm: " << p_norm;
+        if (DEBUG_LANC && am_i_the_master()) 
+            cout << "p_norm: " << p_norm << endl;
 
         a_coeff = 0;
         for (int j = 0; j < n_psi; ++j) {
@@ -501,7 +528,7 @@ void Lanczos::run() {
             c_coeff += sk_tilde[j] * (L_q[j] / b_coeff) * s_norm_coeff;
         }
 
-        if (DEBUG_LANC) {
+        if (DEBUG_LANC && am_i_the_master()) {
             cout << "New p norm: " << s_norm_coeff / c_coeff << endl;
             cout << "Modulus of rk: " << b_coeff << endl;
         }
@@ -542,23 +569,35 @@ void Lanczos::run() {
 
 
         // Write on output
-        cout << "Lanczos coefficients:" << endl << endl;
-        cout << "a_" << i << " = " << scientific << a_coeff << endl;
-        cout << "b_" << i << " = " << b_coeff << endl;
-        cout << "c_" << i << " = " << c_coeff << endl << endl;
+        if (am_i_the_master()) {
+            cout << "Lanczos coefficients:" << endl << endl;
+            cout << "a_" << i << " = " << scientific << setprecision(16) << a_coeff << endl;
+            cout << "b_" << i << " = " << b_coeff << endl;
+            cout << "c_" << i << " = " << c_coeff << endl << endl << fixed;
 
-        if (file_abc.is_open()) {
-            file_abc << scientific << a_coeff << "\t" << b_coeff << "\t" << c_coeff << endl << flush;
-        }
-
-        if(file_qbasis.is_open() && file_pbasis.is_open()) {
-            for (int j = 0; j < n_psi; ++j) {
-                file_qbasis << psi_q[j];
-                file_pbasis << psi_p[j];
+            if (file_abc.is_open()) {
+                file_abc << scientific << setprecision(16) << a_coeff << "\t" << b_coeff << "\t" << c_coeff << endl << flush;
             }
-            file_qbasis << endl << flush;
-            file_pbasis << endl << flush;
+
+            if(file_qbasis.is_open() && file_pbasis.is_open()) {
+                for (int j = 0; j < n_psi; ++j) {
+                    file_qbasis << psi_q[j];
+                    file_pbasis << psi_p[j];
+                }
+                file_qbasis << endl << flush;
+                file_pbasis << endl << flush;
+            }
         }
+    }
+
+    if (converged && am_i_the_master()) {
+        cout << "  Converged." << endl;
+        cout << " The last a coefficient is " << scientific << setprecision(16) << a_coeff <<endl;
+        file_abc << a_coeff << endl;
+    }
+    
+    if (am_i_the_master()) {
+        cout << "I'm done with the calculation!" << endl;
     }
 
     file_abc.close();

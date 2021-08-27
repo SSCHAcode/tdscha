@@ -9,7 +9,7 @@ import cellconstructor.Phonons
 import cellconstructor.Methods
 
 # Import the sscha modules
-import Ensemble
+import sscha.Ensemble as Ensemble
 
 """
 This source contains the subroutines to compute the dynamical spectrum.

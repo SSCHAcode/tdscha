@@ -1912,8 +1912,8 @@ double get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double 
 // ----------------------------------------------------------------------------------------------
 // HERE THE PERTURBATION WITH SYMMETRIES EXPLICITLY
 
-void get_f_average_from_Y_pert_sym(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, 
-                                   const double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
+void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                    double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * f_average) {
 	int i, j, k, mu, nu;
 
@@ -1932,6 +1932,9 @@ void get_f_average_from_Y_pert_sym(const double * X, const double * Y, const dou
 	// Get the effective sample size first of all
 	for (i = 0; i < n_configs; ++i)
 		N_eff += w_is[i];
+
+	if (DEB) printf("N_eff: %16.8lf\n", N_eff);
+
 
 	// Prepare the temporaney force and displacement (after symmetry applicaiton)
 	double * force = (double*) calloc(sizeof(double), n_modes);
@@ -1967,6 +1970,12 @@ void get_f_average_from_Y_pert_sym(const double * X, const double * Y, const dou
 
 
 	printf("MPI COMPUTATION | rank %d computes configs [%d, %d)\n", rank, start, stop);
+
+	if (DEB) {
+		/*for (i = 0; i < n_modes; ++i) {
+			printf("%7d) forc = %16.8lf; disp = %16.8lf\n", i, force[mu], displacement[mu]);
+		}*/
+	}
 
 	// The parallel loop
 	for (i = start; i < stop; ++i) {
@@ -2065,9 +2074,9 @@ void get_f_average_from_Y_pert_sym(const double * X, const double * Y, const dou
 }
 
 
-void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const double * w, const double * R1, double T, int n_modes, 
+void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double * R1, double T, int n_modes, 
                                  int n_configs, double * w_is, 
-								 const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
+								  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								 double * d2v_dR2) {
 	int i, j, k, mu, nu;
 
@@ -2079,6 +2088,46 @@ void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const doubl
 	// Prepare the temporaney force and displacement (after symmetry applicaiton)
 	double * force = (double*) calloc(sizeof(double), n_modes);
 	double * displacement = (double*) calloc(sizeof(double), n_modes);
+
+
+	// printf("R1 pert: (first 15 values)\n");
+	// for (i = 0; i < n_modes; ++i) {
+	// 	printf(" %.2e ", R1[i]);
+	// } printf("\n");
+
+	// printf("X: (config 1)\n");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %.2e ", X[1 * n_modes + i]);
+	// printf("\n"); 
+	// printf("Y: (config 1)\n");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %.2e ", Y[1 * n_modes + i]);
+	// printf("\n"); 
+
+	// printf("Ndegs:");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %d", N_degeneracy[i]);
+	// printf("\n"); 
+
+	// printf("N_sym: %d\n", N_sym);
+
+	// printf("Diag s[0]:\n");
+	// for (i = 0; i < n_modes; ++i) {
+	// 	printf(" %.2lf", symmetries[n_modes*i + i]);
+	// }
+	// printf("\n");
+
+	// printf("Deg space:\n");
+	// for (i = 0; i < n_modes;++i) {
+	// 	for (j = 0; j < N_degeneracy[i]; ++j) {
+	// 		printf(" %d", degenerate_space[i][j]);
+	// 	}
+	// 	printf("\n");
+	// }
+
+
+
+
 
 	// Reset the starting value of d2v_dR2
 	for (mu = 0; mu < n_modes; ++mu) {
@@ -2123,7 +2172,7 @@ void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const doubl
 	for (i = start; i < stop; ++i) {
 		// Here the symmetry application
 		for (j = 0; j < N_sym; ++j) {
-			
+
 			// Get the symmetry equivalent force and displacement
 			for(mu = 0; mu < n_modes; ++mu){
 				force[mu] = 0;
@@ -2135,7 +2184,6 @@ void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const doubl
 					displacement[mu] += X[i * n_modes + nu] * symmetries[j * n_modes * n_modes + mu * n_modes + nu];
 				}
 			}
-
 			
 			weight = 0;
 
@@ -2197,8 +2245,8 @@ void get_d2v_dR2_from_R_pert_sym(const double * X, const double * Y, const doubl
 }
 
 // D4 contribution
-double get_d2v_dR2_from_Y_pert_sym(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, 
-                                   double * w_is, const double * symmetries, int N_sym, const int * N_degeneracy, int ** degenerate_space,
+double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                   double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * d2v_dR2_out) {
 	int i, j, k, mu, nu;
 

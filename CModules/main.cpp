@@ -1,21 +1,26 @@
 #include<iostream>
 #include<string.h>
 #include "Lanczos.hpp"
-#define _MPI
+#include <mpi.h>
+#include "Utils.hpp"
 
 using namespace std;
 
 void PrintUsage();
 
 int main(int argc, char * argv[]) {
-    if (argc < 2) {
-        PrintUsage();
+
+    MPI_Init(&argc, &argv);
+
+    if (argc != 2) {
+        if (am_i_the_master()) PrintUsage();
         return EXIT_FAILURE;
     }
 
     string root_name = argv[1];
 
     // TODO: Initialize MPI
+
 
     // Initialize the Lanczos object
     Lanczos lanc(root_name);

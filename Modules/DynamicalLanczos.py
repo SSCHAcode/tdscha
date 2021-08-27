@@ -28,8 +28,8 @@ import sscha_HP_odd
 
 # Override the print function to print in parallel only from the master
 import cellconstructor.Settings as Parallel
-from sscha.Parallel import pprint as print
-from sscha.Parallel import *
+from tdscha.Parallel import pprint as print
+from tdscha.Parallel import *
 
 # Define a generic type for the double precision.
 TYPE_DP = np.double
@@ -656,6 +656,9 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         if Parallel.am_i_the_master():
             root_fname = os.path.join(directory, root_name)
 
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+
             # Writhe the json input file
             with open(root_fname + ".json", "w") as fp:
                 json.dump(json_data, fp)
@@ -687,7 +690,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 if j_mode == self.N_degeneracy[i_mode]:
                     i_mode += 1
                     j_mode = 0
-            np.savetxt(root_fname + ".degs", deg_space_new)
+            np.savetxt(root_fname + ".degs", deg_space_new, fmt = "%d")
 
 
             # Save all the symmetries
@@ -1387,6 +1390,9 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, 
                                           self.symmetries, self.N_degeneracy, deg_space_new, 
                                           f_pert_av, d2v_pert_av)
+
+        print("D2V:")
+        print(d2v_pert_av)
         #print("Out get pert")
 
         #print("<f> pert = {}".format(f_pert_av))
@@ -1500,6 +1506,9 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         for i in range(self.n_modes):
             final_psi[current : current + self.n_modes - i] = pert_RA[i, i:]
             current = current + self.n_modes - i
+
+        print("First element of pert_Y:", pert_Y[0,0])
+        print("Y_w[0] = ", Y_w[0], "w[0] = ", self.w[0], " n[0] = ", n_mu[0])
 
 
         #print("Output:", final_psi)
@@ -3583,6 +3592,8 @@ Max number of iterations: {}
 
             L_q = self.L_linop.matvec(psi_q)
             p_L = self.L_linop.rmatvec(psi_p) # psi_p is normalized (this must be considered when computing c coeff) 
+
+            print("L_q: ", L_q[self.n_modes: self.n_modes + 10])
             t2 = time.time()
 
             if debug:
@@ -3830,8 +3841,8 @@ or if the acoustic sum rule is not satisfied.
                 print("Lanczos step %d ultimated." % (i +1))
             
 
-            if converged:
-                return
+        if converged:
+            print("   last a coeff = {}".format(a_coeff))    
             
 
             
