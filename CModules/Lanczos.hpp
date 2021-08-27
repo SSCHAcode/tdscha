@@ -15,6 +15,7 @@ using namespace std;
 
 class Lanczos {
     int N, n_syms, n_modes, n_steps;
+    int i_step;
     bool ignore_v3, ignore_v4, reverse_L;
 
     double T, shift_value;
@@ -27,16 +28,11 @@ class Lanczos {
     double * Ups1, *ReA1;
 
     double *a, *b, *c;
-    double *Qbasis, *Pbasis;
+    double *Qbasis, *Pbasis, *snorm;
+
+    string rootname;
 
     int n_psi;
-
-public:
-    // Constructors
-    Lanczos(string rootname);
-
-    // Load everything from the input files
-    void setup_from_input(string rootname);
 
     void update_nbose();
 
@@ -48,6 +44,16 @@ public:
 
     void get_Y1(bool half_off_diagonal);
     void get_ReA1(bool half_off_diagonal);
+
+    void apply_full_L(double * target, bool transpose, double * output);
+
+public:
+    // Constructors
+    Lanczos(string rootname);
+
+    // Load everything from the input files
+    void setup_from_input(string rootname);
+
     
 
     // Run the lanczos algorithm

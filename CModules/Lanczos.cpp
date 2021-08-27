@@ -1,19 +1,27 @@
 #include "Lanczos.hpp"
 #include <cmath>
+#include <chrono>
 
 #define DEBUG_READ true
+#define DEBUG_LANC true
+#define EPSILON 1e-12
 
 using namespace std;
 namespace pt = boost::property_tree;
 
-Lanczos::Lanczos(string rootname) {
-    setup_from_input(rootname);
+Lanczos::Lanczos(string root_name) {
+    rootname = root_name;
+    i_step = 0;
+    setup_from_input(root_name);
 }
 
 
 void Lanczos::setup_from_input(string rootname) {
+
     pt::ptree root;
     pt::read_json(rootname + ".json", root);
+
+    
     
     // Fill the generic values
     T = root.get<double>("T");
@@ -63,6 +71,7 @@ void Lanczos::setup_from_input(string rootname) {
 
     Qbasis = (double*) calloc(sizeof(double), n_psi * n_steps);
     Pbasis = (double*) calloc(sizeof(double), n_psi * n_steps);
+    snorm = (double*) calloc(sizeof(double), n_steps);
     
     
     // Read the arrays from the files
@@ -340,6 +349,224 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
     free(f_pert_av);
     free(d2v_pert_av);
+}
+
+
+void Lanczos::apply_full_L(double * target, bool transpose, double * output) {
+    // Copy the target into psi
+    if (!(target == NULL)) {
+        for (int i = 0; i < n_psi; ++i) psi[i] = target[i];
+    }
+
+    auto t1 = chrono::steady_clock::now();
+    apply_L1(output, transpose);
+
+    if ((!ignore_v3) && (!ignore_v4))
+        apply_anharmonic(output, transpose);
+
+    auto t2 = chrono::steady_clock::now();
+
+    auto diff = t2- t1;
+    cout << "Time to apply the L matrix: " <<  chrono::duration <double, milli> (diff).count() << " ms" << endl;
+
+
+
+    // Reverse the output if requested
+    if (reverse_L) {
+        for (int i = 0; i < n_psi; ++i)
+            output[i] *= -1;
+    }
+    if (shift_value != 0) {
+        for (int i = 0; i < n_psi; ++i) 
+            output[i] += shift_value;
+    }
+
+    // Copy the output on self.psi
+    for (int i = 0; i < n_psi; ++i) 
+        psi[i] = output[i];
+}
+
+
+void Lanczos::run() {
+    // Run the lanczos algorithm
+    double * psi_q, *psi_p;
+
+    double * L_q = (double*) malloc(sizeof(double) * n_psi);
+    double * p_L = (double*) malloc(sizeof(double) * n_psi);
+
+    // Store the lenght of the variables
+    int lena = 0, lenb = 0, lenc = 0, lens = 1;
+    int len_bq = 1, len_bp = 1;
+    
+    // Prepare the first vector computing the norm of psi
+    double psi_norm;
+    for (int i = 0; i < n_psi; ++i) psi_norm += psi[i] * psi[i];
+    psi_norm = sqrt(psi_norm);
+
+
+    // Fill the first vector of P and Q basis
+    if (i_step == 0) {
+        for (int i = 0; i < n_psi; ++i) {
+            Qbasis[i] = psi[i] / psi_norm;
+            Pbasis[i] = psi[i] / psi_norm;
+        }
+        snorm[0] = 1;
+    } else {
+        cerr << "Error, starting from a non zero step is not implemented." << endl;
+        exit(EXIT_FAILURE);
+    }
+
+
+    psi_q = (double *) malloc(sizeof(double) * n_psi);
+    psi_p = (double *) malloc(sizeof(double) * n_psi);
+    double * sk_tilde = (double*) malloc(sizeof(double) * n_psi);
+
+    for (int j = 0; j < n_psi; ++j) {
+        psi_q[j] = Qbasis[j];
+        psi_p[j] = Pbasis[j];
+    }
+
+    double a_coeff, b_coeff, c_coeff;
+
+    // Open the file for writing
+    fstream file_abc(rootname + ".abc");
+    fstream file_qbasis(rootname + ".qbasis.out");
+    fstream file_pbasis(rootname + ".pbasis.out");
+
+    if (file_qbasis.is_open())  file_qbasis << scientific;
+    if (file_pbasis.is_open())  file_pbasis << scientific;
+
+    // Here the run
+    bool next_converged = false;
+    bool converged = false;
+    for (int i = i_step; i < i_step + n_steps; ++i) {
+        cout << endl;
+        cout << "===== NEW STEP " << i + 1 <<" =====" <<endl << endl;
+
+
+        // Apply Lq and pL
+        // This is the most time consuming part of the code
+        apply_full_L(psi_q, false, L_q);
+        apply_full_L(psi_p, true, p_L);
+
+        double c_old = 1;
+        if (lenc > 0) {
+            c_old = c[lenc-1];
+        }
+
+        double p_norm = snorm[lens-1] / c_old;
+        double old_p_norm;
+        if (DEBUG_LANC) 
+            cout << "p_norm: " << p_norm;
+
+        a_coeff = 0;
+        for (int j = 0; j < n_psi; ++j) {
+            a_coeff += psi_p[j] * L_q[j];
+        }
+        a_coeff *= p_norm;
+
+        // Get the residual
+        for (int j = 0; j < n_psi; ++j) {
+            L_q[j] -= a_coeff * psi_q[j];
+            if (len_bq > 1) {
+                L_q[j] -= c[lenc - 1] * Qbasis[ n_psi * (len_bq - 2) + j];
+            }
+
+            p_L[j] -= a_coeff * psi_p[j];
+            if (len_bp > 1) {
+                if (lenc < 2) 
+                    old_p_norm = snorm[lens - 2];
+                else
+                    old_p_norm = snorm[lens - 2] / c[lenc - 2];
+                
+                p_L[j] -= b[lenb - 1] * Pbasis[n_psi * (len_bp - 2) + j] * (old_p_norm / p_norm);
+            }
+        }
+
+        double s_norm_coeff;
+        b_coeff = 0;
+        c_coeff = 0;
+        for (int j = 0; j < n_psi; ++j) {
+            b_coeff += L_q[j] * L_q[j];
+            s_norm_coeff += p_L[j] * p_L[j];
+        }
+        s_norm_coeff = sqrt(s_norm_coeff);
+        b_coeff = sqrt(b_coeff);
+
+        for (int j = 0; j < n_psi; ++j) {
+            sk_tilde[j] = p_L[j] / s_norm_coeff;
+        }
+        s_norm_coeff *= p_norm;
+        for (int j = 0; j < n_psi; ++j) {
+            c_coeff += sk_tilde[j] * (L_q[j] / b_coeff) * s_norm_coeff;
+        }
+
+        if (DEBUG_LANC) {
+            cout << "New p norm: " << s_norm_coeff / c_coeff << endl;
+            cout << "Modulus of rk: " << b_coeff << endl;
+        }
+
+        // Append the lanczos
+        a[lena++] = a_coeff;
+
+        // Check if the algorithm converged
+        if (abs(b_coeff) < EPSILON || next_converged) {
+            converged = true;
+            break;
+        }
+        if (abs(c_coeff) < EPSILON || next_converged) {
+            converged = true;
+            break;
+        }
+
+        // Fill the psi_q and psi_o vectors
+        for (int j = 0; j < n_psi; ++j) {
+            psi_q[j] = L_q[j] / b_coeff;
+            psi_p[j] = sk_tilde[j];
+        }
+
+        converged = false;
+
+        // Update the basis
+        for(int j = 0; j < n_psi; ++j) {
+            Qbasis[ n_psi * (len_bq) + j] = psi_q[j];
+            Pbasis[ n_psi * len_bp + j] = psi_p[j];
+        }
+        len_bq++;
+        len_bp++;
+
+        // Update the coefficients
+        b[lenb++] = b_coeff;
+        c[lenc++] = c_coeff;
+        snorm[lens++] = s_norm_coeff;
+
+
+        // Write on output
+        cout << "Lanczos coefficients:" << endl << endl;
+        cout << "a_" << i << " = " << scientific << a_coeff << endl;
+        cout << "b_" << i << " = " << b_coeff << endl;
+        cout << "c_" << i << " = " << c_coeff << endl << endl;
+
+        if (file_abc.is_open()) {
+            file_abc << scientific << a_coeff << "\t" << b_coeff << "\t" << c_coeff << endl << flush;
+        }
+
+        if(file_qbasis.is_open() && file_pbasis.is_open()) {
+            for (int j = 0; j < n_psi; ++j) {
+                file_qbasis << psi_q[j];
+                file_pbasis << psi_p[j];
+            }
+            file_qbasis << endl << flush;
+            file_pbasis << endl << flush;
+        }
+    }
+
+    file_abc.close();
+    free(L_q);
+    free(p_L);
+    free(psi_p);
+    free(psi_q);
+    free(sk_tilde);
 }
 
 
