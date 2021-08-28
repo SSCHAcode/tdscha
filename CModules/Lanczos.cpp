@@ -27,6 +27,7 @@ void Lanczos::setup_from_input(string rootname) {
     // Fill the generic values
     T = root.get<double>("T");
     n_steps = root.get<int>("n_steps");
+    ignore_v2 = root.get<bool>("ignore_v2");
     ignore_v3 = root.get<bool>("ignore_v3");
     ignore_v4 = root.get<bool>("ignore_v4");
 
@@ -312,13 +313,13 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
     }
 
     cout << endl;
-    cout << "D2v[0,0] = " << scientific << setprecision(8) << d2v_pert_av[0] << endl;
-    // for (int i = 0; i < n_modes; ++i) {
-    //     for (int j = 0; j < n_modes; ++j) 
-    //         cout << d2v_pert_av[n_modes * i + j] << " ";
-    //     cout << endl;
-    // }
-    // cout << endl;
+    cout << "D2v[...10, ...10] = " << scientific << setprecision(3) << endl;
+    for (int i = 0; i < 10; ++i) {
+        for (int j = 0; j < 10; ++j) 
+            cout << d2v_pert_av[n_modes * i + j] << " ";
+        cout << endl;
+    }
+    cout << endl;
 
     if (! ignore_v4) {
         get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
@@ -337,6 +338,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
     double pert_Y, pert_RA;
 
+    cout << "Pert Y: " << scientific << setprecision(4) << endl;
     for (int i = 0; i < N_w2; ++i) {
         get_indices_from_sym_index(i, x, y);
 
@@ -356,12 +358,17 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
             pert_RA = d2v_pert_av[x*n_modes + y] * (ReA_w1 + ReA_w2);
         }
 
-        if (i == 0) cout << "First element of pert_Y: " << scientific << setprecision(6) << pert_Y << endl; 
-        if (i == 0) cout << "Y_w[0] = " << Y_wa << " w[0] = " << w[0] << " n_mu[0] = " << nbose[0] << endl;
+        if (i == 3) cout << "pert_Y[" << i << "]: " << scientific << setprecision(6) << pert_Y << endl; 
+        if (i == 3) cout << "Y_wa["<<x<<"] = " << Y_wa << " Y_wb["<<y<<"] = " << Y_wb << endl << endl;
         final_psi[start_Y + i] += -pert_Y;
         final_psi[start_A + i] += -pert_RA;
         
     }
+
+    cout << "Final psi [from 45...]:" << endl;
+    for (int i = 0; i < 10; ++i) {
+        cout << final_psi[start_Y + i] << " ";
+    }cout << endl;
 
     free(f_pert_av);
     free(d2v_pert_av);
@@ -374,8 +381,14 @@ void Lanczos::apply_full_L(double * target, bool transpose, double * output) {
         for (int i = 0; i < n_psi; ++i) psi[i] = target[i];
     }
 
+    // Delete the output
+    for (int i = 0; i < n_psi; ++i) {
+        output[i] = 0;
+    }
+
     auto t1 = chrono::steady_clock::now();
-    apply_L1(output, transpose);
+    if (!ignore_v2)
+        apply_L1(output, transpose);
 
     if ((!ignore_v3) || (!ignore_v4))
         apply_anharmonic(output, transpose);
@@ -471,7 +484,7 @@ void Lanczos::run() {
         if (DEBUG_LANC && am_i_the_master()) {
             cout << "L_q [from " << n_modes << "]" << endl; 
             for(int j = n_modes; j < n_modes + 10; ++j) {
-                cout << scientific << setprecision(2) << L_q[j] << " ";
+                cout << scientific << setprecision(3) << L_q[j] << " ";
             }
             cout << endl;
         }
@@ -484,7 +497,7 @@ void Lanczos::run() {
         double p_norm = snorm[lens-1] / c_old;
         double old_p_norm;
         if (DEBUG_LANC && am_i_the_master()) 
-            cout << "p_norm: " << p_norm << endl;
+            cout << "p_norm: " << setprecision(6) << p_norm << endl;
 
         a_coeff = 0;
         for (int j = 0; j < n_psi; ++j) {
@@ -510,7 +523,7 @@ void Lanczos::run() {
             }
         }
 
-        double s_norm_coeff;
+        double s_norm_coeff = 0;
         b_coeff = 0;
         c_coeff = 0;
         for (int j = 0; j < n_psi; ++j) {
@@ -519,18 +532,23 @@ void Lanczos::run() {
         }
         s_norm_coeff = sqrt(s_norm_coeff);
         b_coeff = sqrt(b_coeff);
+        if (DEBUG_LANC && am_i_the_master()) {
+            cout << "Modulus of sk: " << s_norm_coeff << endl;
+            cout << "Modulus of rk: " << b_coeff << endl;
+            cout << "old_p_norm: " << old_p_norm << endl;
+
+        }
 
         for (int j = 0; j < n_psi; ++j) {
             sk_tilde[j] = p_L[j] / s_norm_coeff;
         }
         s_norm_coeff *= p_norm;
         for (int j = 0; j < n_psi; ++j) {
-            c_coeff += sk_tilde[j] * (L_q[j] / b_coeff) * s_norm_coeff;
+            c_coeff += (sk_tilde[j] * (L_q[j] / b_coeff)) * s_norm_coeff;
         }
 
         if (DEBUG_LANC && am_i_the_master()) {
             cout << "New p norm: " << s_norm_coeff / c_coeff << endl;
-            cout << "Modulus of rk: " << b_coeff << endl;
         }
 
         // Append the lanczos
@@ -627,10 +645,10 @@ void get_indices_from_sym_index(int index, int &a, int &b) {
     a = 0;
     b = 0;
     for (i= 0; i < index; ++i) {
-        if (i - counter > a) { 
+        b++;
+        if (b > a) {
+            b = 0;
             a++;
-            counter = i;
         }
     }
-    b = index - counter;
 }

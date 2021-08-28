@@ -638,6 +638,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         json_data = {"T" : self.T, 
                      "n_steps" : n_steps,
+                     "ignore_v2" : self.ignore_harmonic,
                      "ignore_v3" : self.ignore_v3,
                      "ignore_v4" : self.ignore_v4,
                      "data" : {
@@ -1392,8 +1393,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                           f_pert_av, d2v_pert_av)
 
         print("D2V:")
-        print(d2v_pert_av)
-        #print("Out get pert")
+        np.set_printoptions(threshold = 10)
+        print(d2v_pert_av[:10, :10])#print("Out get pert")
 
         #print("<f> pert = {}".format(f_pert_av))
         #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
@@ -1507,8 +1508,14 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             final_psi[current : current + self.n_modes - i] = pert_RA[i, i:]
             current = current + self.n_modes - i
 
+
         print("First element of pert_Y:", pert_Y[0,0])
-        print("Y_w[0] = ", Y_w[0], "w[0] = ", self.w[0], " n[0] = ", n_mu[0])
+        print("Y_w = ", Y_w)
+        print("All pert Y:")
+        print(pert_Y)
+
+        print("Final psi:")
+        print(final_psi[self.n_modes: self.n_modes + 10])
 
 
         #print("Output:", final_psi)
@@ -3631,6 +3638,7 @@ or if the acoustic sum rule is not satisfied.
                 rk -= self.c_coeffs[-1] * self.basis_Q[-2]
 
             sk = p_L - a_coeff * psi_p 
+            old_p_norm = 0
             if len(self.basis_P) > 1:
                 # Get the multiplication factor to rescale the old p to the normalization of the new one.
                 if len(self.c_coeffs) < 2:
@@ -3654,6 +3662,7 @@ or if the acoustic sum rule is not satisfied.
 
             if debug:
                 print("new p norm: {}".format(s_norm / c_coeff))
+                print("old_p_norm: {}".format(old_p_norm))
 
                 print("Modulus of rk: {}".format(b_coeff))
                 print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
