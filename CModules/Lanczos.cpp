@@ -518,9 +518,15 @@ void Lanczos::run() {
     double a_coeff, b_coeff, c_coeff;
 
     // Open the file for writing
-    fstream file_abc(rootname + ".abc");
-    fstream file_qbasis(rootname + ".qbasis.out");
-    fstream file_pbasis(rootname + ".pbasis.out");
+    fstream file_abc;
+    fstream file_qbasis;(rootname + ".qbasis.out", fstream::out);
+    fstream file_pbasis;
+    
+    if (am_i_the_master()) {
+        file_abc.open(rootname + ".abc", fstream::out);
+        file_qbasis.open(rootname + ".qbasis.out", fstream::out);
+        file_pbasis.open(rootname + ".pbasis.out", fstream::out);
+    }
 
     if (file_qbasis.is_open())  file_qbasis << scientific << setprecision(16);
     if (file_pbasis.is_open())  file_pbasis << scientific << setprecision(16);
@@ -684,6 +690,8 @@ void Lanczos::run() {
 
             if (file_abc.is_open()) {
                 file_abc << scientific << setprecision(16) << a_coeff << "\t" << b_coeff << "\t" << c_coeff << endl << flush;
+            } else {
+                cerr << "ERROR: FILE ABC not opened" << endl;
             }
 
             if(file_qbasis.is_open() && file_pbasis.is_open()) {
