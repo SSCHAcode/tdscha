@@ -3,8 +3,8 @@
 #include <cmath>
 #include <chrono>
 
-#define DEBUG_READ true
-#define DEBUG_LANC true
+#define DEBUG_READ false
+#define DEBUG_LANC false
 #define EPSILON 1e-12
 
 using namespace std;
@@ -14,6 +14,32 @@ Lanczos::Lanczos(string root_name) {
     rootname = root_name;
     i_step = 0;
     setup_from_input(root_name);
+}
+Lanczos::~Lanczos() {
+    free(nbose);
+    free(rho);
+    free(w);
+
+    free(N_degeneracy);
+    free(degenerate_space);
+
+    // Free good_deg_space
+    for (int i = 0; i < n_modes; ++i){
+        free (good_deg_space[i]);
+    }
+    free(good_deg_space);
+
+    free(X);
+    free(Y);
+    free(psi);
+    free(symmetries);
+
+    free(Qbasis);
+    free(Pbasis);
+    free(snorm);
+    free(a);
+    free(b);
+    free(c);
 }
 
 
@@ -59,22 +85,21 @@ void Lanczos::setup_from_input(string rootname) {
     rho = (double *) malloc(sizeof(double) * N);
     psi = (double *) malloc(sizeof(double) * n_psi);
 
-    Ups1 = (double*) calloc(sizeof(double), n_modes*n_modes);
-    ReA1 = (double*) calloc(sizeof(double), n_modes*n_modes);
+    //Ups1 = (double*) calloc(sizeof(double), n_modes*n_modes);
+    //ReA1 = (double*) calloc(sizeof(double), n_modes*n_modes);
 
     X = (double *) malloc(sizeof(double) * N * n_modes);
     Y = (double *) malloc(sizeof(double) * N * n_modes);
-
-    psi = (double*) malloc(sizeof(double) * n_psi);
 
     a = (double*) calloc(sizeof(double), n_steps);
     b = (double*) calloc(sizeof(double), n_steps);
     c = (double*) calloc(sizeof(double), n_steps);
 
-    Qbasis = (double*) calloc(sizeof(double), n_psi * n_steps);
-    Pbasis = (double*) calloc(sizeof(double), n_psi * n_steps);
-    snorm = (double*) calloc(sizeof(double), n_steps);
-    
+
+
+    Qbasis = (double*) calloc(sizeof(double), n_psi * (n_steps + 1));
+    Pbasis = (double*) calloc(sizeof(double), n_psi * (n_steps + 1));
+    snorm = (double*) calloc(sizeof(double), n_steps + 1);
     
     // Read the arrays from the files
     fstream file(rootname + ".ndegs");
@@ -171,6 +196,9 @@ void Lanczos::setup_from_input(string rootname) {
         file.close();
     }
 
+    if (DEBUG_LANC && am_i_the_master()) 
+        cout << "PSI POINTER (LINE " << __LINE__ << "): " << psi << endl;
+
     // Update the Bose-Einstein statistics
     update_nbose();
 
@@ -183,6 +211,10 @@ void Lanczos::setup_from_input(string rootname) {
             good_deg_space[i][j] = degenerate_space[counter++];
         }
     }
+
+    if (DEBUG_LANC && am_i_the_master()) 
+        cout << "PSI POINTER (LINE " << __LINE__ << "): " << psi << endl;
+
 }
 
 void Lanczos::update_nbose() {
@@ -232,13 +264,13 @@ void Lanczos::apply_L1(double * out_vect, bool transpose) {
         Y_ni = -(8*w[x]*w[y]) / den;
 
         if (transpose) 
-            out_vect[start_A + i] += -Y_ni * psi[start_Y + 1];
+            out_vect[start_A + i] += -Y_ni * psi[start_Y + i];
         else
             out_vect[start_Y + i] += -Y_ni * psi[start_A + i];
         
         X1_ni = -(2*nbose[x]*nbose[y] + nbose[x] + nbose[y]);
         X1_ni *= 2*nbose[x]*nbose[y] + nbose[x] + nbose[y] + 1;
-        X1_ni *= 2*nbose[x]*nbose[y];
+        X1_ni *= 2*w[x]*w[y];
         X1_ni /= den;
 
         if (transpose)
@@ -246,10 +278,36 @@ void Lanczos::apply_L1(double * out_vect, bool transpose) {
         else
             out_vect[start_A + i] += -X1_ni * psi[start_Y + i];
         
-        Y1_ni = -w[x]*w[x] - w[y]*w[y] + 2*w[x]*w[y];
-        Y1_ni /= den;
+        Y1_ni = -w[x]*w[x] - w[y]*w[y] + (2*w[x]*w[y]) / den;
 
-        out_vect[start_A + i] = -Y1_ni * psi[start_A + i];
+        if (i < 10  && DEBUG_LANC && am_i_the_master()) {
+            cout << scientific << setprecision(8);
+            cout << "X1[" << i << "] = " << X1_ni << endl;
+            cout << "Y1[" << i << "] = " << Y1_ni << endl;
+        }
+
+        out_vect[start_A + i] += -Y1_ni * psi[start_A + i];
+    }
+
+    if (DEBUG_LANC && am_i_the_master()) {
+        cout << scientific << setprecision(8) << endl;
+        cout << "Harmonic interacting output:" << endl;
+        cout << "From start_Y:" << endl;
+        for (int i = 0; i < 10 ; ++i) {
+            cout << out_vect[start_Y + i] << " " ;
+        }
+        cout << endl << "From start_A:" << endl;
+        for (int i = 0; i < 10 ; ++i) {
+            cout << out_vect[start_A + i] << " " ;
+        }cout << endl;
+        cout << "Old psi from start_Y:" << endl;
+        for (int i = 0; i < 10 ; ++i) {
+            cout << psi[start_Y + i] << " " ;
+        }
+        cout << endl << "Old psi start_A:" << endl;
+        for (int i = 0; i < 10 ; ++i) {
+            cout << psi[start_A + i] << " " ;
+        }cout << endl;
     }
 }
 
@@ -312,14 +370,14 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
         get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
 
-    cout << endl;
-    cout << "D2v[...10, ...10] = " << scientific << setprecision(3) << endl;
-    for (int i = 0; i < 10; ++i) {
-        for (int j = 0; j < 10; ++j) 
-            cout << d2v_pert_av[n_modes * i + j] << " ";
-        cout << endl;
-    }
-    cout << endl;
+    // cout << endl;
+    // cout << "D2v[...10, ...10] = " << scientific << setprecision(3) << endl;
+    // for (int i = 0; i < 10; ++i) {
+    //     for (int j = 0; j < 10; ++j) 
+    //         cout << d2v_pert_av[n_modes * i + j] << " ";
+    //     cout << endl;
+    // }
+    // cout << endl;
 
     if (! ignore_v4) {
         get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
@@ -338,7 +396,6 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
     double pert_Y, pert_RA;
 
-    cout << "Pert Y: " << scientific << setprecision(4) << endl;
     for (int i = 0; i < N_w2; ++i) {
         get_indices_from_sym_index(i, x, y);
 
@@ -358,17 +415,17 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
             pert_RA = d2v_pert_av[x*n_modes + y] * (ReA_w1 + ReA_w2);
         }
 
-        if (i == 3) cout << "pert_Y[" << i << "]: " << scientific << setprecision(6) << pert_Y << endl; 
-        if (i == 3) cout << "Y_wa["<<x<<"] = " << Y_wa << " Y_wb["<<y<<"] = " << Y_wb << endl << endl;
         final_psi[start_Y + i] += -pert_Y;
         final_psi[start_A + i] += -pert_RA;
         
     }
 
-    cout << "Final psi [from 45...]:" << endl;
-    for (int i = 0; i < 10; ++i) {
-        cout << final_psi[start_Y + i] << " ";
-    }cout << endl;
+    if (DEBUG_LANC && am_i_the_master()) {
+        cout << "Final psi [from 45...]:" << endl;
+        for (int i = 0; i < 10; ++i) {
+            cout << final_psi[start_Y + i] << " ";
+        }cout << endl;
+    }
 
     free(f_pert_av);
     free(d2v_pert_av);
@@ -452,6 +509,7 @@ void Lanczos::run() {
     psi_p = (double *) malloc(sizeof(double) * n_psi);
     double * sk_tilde = (double*) malloc(sizeof(double) * n_psi);
 
+
     for (int j = 0; j < n_psi; ++j) {
         psi_q[j] = Qbasis[j];
         psi_p[j] = Pbasis[j];
@@ -470,6 +528,11 @@ void Lanczos::run() {
     // Here the run
     bool next_converged = false;
     bool converged = false;
+
+
+    if (DEBUG_LANC && am_i_the_master()) 
+        cout << "PSI POINTER (LINE " << __LINE__ << "): " << psi << endl;
+
     for (int i = i_step; i < i_step + n_steps; ++i) {
         if (am_i_the_master()) {
             cout << endl;
@@ -488,14 +551,39 @@ void Lanczos::run() {
             }
             cout << endl;
         }
+        if (DEBUG_LANC && am_i_the_master()) {
+            cout << "p_L [from " << n_modes << "]" << endl; 
+            for(int j = n_modes; j < n_modes + 10; ++j) {
+                cout << scientific << setprecision(3) << p_L[j] << " ";
+            }
+            cout << endl;
+        }
 
         double c_old = 1;
         if (lenc > 0) {
             c_old = c[lenc-1];
         }
 
+        if (DEBUG_LANC && am_i_the_master()) {
+            double L_qmod = 0, p_Lmod = 0;
+            for (int j = 0; j < n_psi; ++j) {
+                L_qmod += L_q[j] * L_q[j];
+                p_Lmod += p_L[j] * p_L[j];
+            }
+            L_qmod = sqrt(L_qmod);
+            p_Lmod = sqrt(p_Lmod);
+
+            cout << scientific << setprecision(8);
+            cout << "Modulus of L_q: " << L_qmod << endl;
+            cout << "Modulus of p_L: " << p_Lmod << endl;
+
+            cout << "(len  BP: " << len_bp << " BQ: " << len_bq << " C: " << lenc << " )"<< endl;
+        }
+
+
+
         double p_norm = snorm[lens-1] / c_old;
-        double old_p_norm;
+        double old_p_norm = 0;
         if (DEBUG_LANC && am_i_the_master()) 
             cout << "p_norm: " << setprecision(6) << p_norm << endl;
 
@@ -593,6 +681,7 @@ void Lanczos::run() {
             cout << "b_" << i << " = " << b_coeff << endl;
             cout << "c_" << i << " = " << c_coeff << endl << endl << fixed;
 
+
             if (file_abc.is_open()) {
                 file_abc << scientific << setprecision(16) << a_coeff << "\t" << b_coeff << "\t" << c_coeff << endl << flush;
             }
@@ -627,20 +716,36 @@ void Lanczos::run() {
 }
 
 
-int get_sym_index(int a, int b) {
+int Lanczos::get_sym_index(int a, int b) {
     int ret = 0;
+
+    if (b < a) return get_sym_index(b, a);
+
+    for (int i = 0; i < a; ++i)
+        ret += n_modes - i;
+    ret += b - a;
+
+    /* int ret = 0;
 
     if (b > a) return get_sym_index(b, a);
 
     for (int i = 0; i < a; ++i) {
         ret += i + 1;
     } 
-    ret += b;
-    return ret;
+    ret += b;*/
+    return ret; 
 }
 
-void get_indices_from_sym_index(int index, int &a, int &b) {
+void Lanczos::get_indices_from_sym_index(int index, int &a, int &b) {
     int i, j;
+    int new_i = index;
+    a = 0; b = 0;
+    while (new_i >= n_modes - a) {
+        new_i -= n_modes - a;
+        a++;
+    }
+    b = new_i + a;
+   /*  int i, j;
     int counter = 0;
     a = 0;
     b = 0;
@@ -650,5 +755,5 @@ void get_indices_from_sym_index(int index, int &a, int &b) {
             b = 0;
             a++;
         }
-    }
+    } */
 }

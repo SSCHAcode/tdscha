@@ -23,8 +23,9 @@ int main(int argc, char * argv[]) {
 
 
     // Initialize the Lanczos object
-    Lanczos lanc(root_name);
-    lanc.run();
+    Lanczos *lanc = new Lanczos(root_name);
+    lanc->run();
+    delete lanc;
 }
 
 

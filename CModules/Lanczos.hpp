@@ -20,12 +20,11 @@ class Lanczos {
 
     double T, shift_value;
 
-    double *w, *nbose, *rho, *m;
+    double *w, *nbose, *rho;
     int * N_degeneracy, *degenerate_space, **good_deg_space;
 
     double *X, *Y, *psi,  *symmetries;
 
-    double * Ups1, *ReA1;
 
     double *a, *b, *c;
     double *Qbasis, *Pbasis, *snorm;
@@ -47,9 +46,12 @@ class Lanczos {
 
     void apply_full_L(double * target, bool transpose, double * output);
 
+    int get_sym_index(int, int);
+    void get_indices_from_sym_index(int index, int &a, int &b);
 public:
     // Constructors
     Lanczos(string rootname);
+    ~Lanczos();
 
     // Load everything from the input files
     void setup_from_input(string rootname);
@@ -61,7 +63,5 @@ public:
 };
 
 
-int get_sym_index(int, int);
-void get_indices_from_sym_index(int index, int &a, int &b);
 #endif
 
