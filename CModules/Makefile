@@ -1,12 +1,14 @@
 CPP := mpic++
 CC := mpicc
-FLAGS := -g #-O3
+FLAGS :=  -g  # -O3 (Causes a seg. fault)
 DFLAGS := -D_MPI
-MPI_FLAGS := #-I/usr/lib/x86_64-linux-gnu/openmpi/include/openmpi -I/usr/lib/x86_64-linux-gnu/openmpi/include -pthread -L/usr/lib/x86_64-linux-gnu/openmpi/lib -lmpi 
+MPI_FLAGS := 
+LIBS := 
+
 OBJECTS := LanczosFunctions.o Lanczos.o main.o Utils.o
 
 tdscha-lanczos.x: $(OBJECTS)
-	$(CPP) $(FLAGS) $(MPI_FLAGS) $(OBJECTS) $(DFLAGS) -o tdscha-lanczos.x
+	$(CPP) $(FLAGS) $(MPI_FLAGS) $(OBJECTS) $(DFLAGS) -o tdscha-lanczos.x $(LIBS)
 
 LanczosFunctions.o: LanczosFunctions.c LanczosFunctions.h
 	$(CPP) $(FLAGS) $(MPI_FLAGS) $(DFLAGS) -c LanczosFunctions.c -o LanczosFunctions.o

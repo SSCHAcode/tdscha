@@ -519,17 +519,36 @@ void Lanczos::run() {
 
     // Open the file for writing
     fstream file_abc;
-    fstream file_qbasis;(rootname + ".qbasis.out", fstream::out);
+    fstream file_qbasis;//(rootname + ".qbasis.out", fstream::out);
     fstream file_pbasis;
+    fstream file_snorm;
     
     if (am_i_the_master()) {
         file_abc.open(rootname + ".abc", fstream::out);
         file_qbasis.open(rootname + ".qbasis.out", fstream::out);
         file_pbasis.open(rootname + ".pbasis.out", fstream::out);
+        file_snorm.open(rootname + ".snorm.out", fstream::out);
     }
 
-    if (file_qbasis.is_open())  file_qbasis << scientific << setprecision(16);
-    if (file_pbasis.is_open())  file_pbasis << scientific << setprecision(16);
+    if (file_qbasis.is_open()) {
+        file_qbasis << scientific << setprecision(16);
+        for (int j = 0; j < n_psi; ++j) {
+            file_qbasis << psi_q[j] << " ";
+        }
+        file_qbasis << endl;
+
+    } 
+    if (file_pbasis.is_open()) { 
+        file_pbasis << scientific << setprecision(16);
+        for (int j = 0; j < n_psi; ++j) {
+            file_pbasis << psi_p[j] << " ";
+        }
+        file_pbasis << endl;
+    }
+
+    if (file_snorm.is_open()) {
+        file_snorm << scientific << setprecision(16) << snorm[0] << endl << flush;
+    }
 
     // Here the run
     bool next_converged = false;
@@ -579,11 +598,11 @@ void Lanczos::run() {
             L_qmod = sqrt(L_qmod);
             p_Lmod = sqrt(p_Lmod);
 
-            cout << scientific << setprecision(8);
-            cout << "Modulus of L_q: " << L_qmod << endl;
-            cout << "Modulus of p_L: " << p_Lmod << endl;
+            // cout << scientific << setprecision(8);
+            // cout << "Modulus of L_q: " << L_qmod << endl;
+            // cout << "Modulus of p_L: " << p_Lmod << endl;
 
-            cout << "(len  BP: " << len_bp << " BQ: " << len_bq << " C: " << lenc << " )"<< endl;
+            // cout << "(len  BP: " << len_bp << " BQ: " << len_bq << " C: " << lenc << " )"<< endl;
         }
 
 
@@ -694,10 +713,14 @@ void Lanczos::run() {
                 cerr << "ERROR: FILE ABC not opened" << endl;
             }
 
+            if (file_snorm.is_open()) {
+                file_snorm << snorm[lens - 1] << endl << flush;
+            }
+
             if(file_qbasis.is_open() && file_pbasis.is_open()) {
                 for (int j = 0; j < n_psi; ++j) {
-                    file_qbasis << psi_q[j];
-                    file_pbasis << psi_p[j];
+                    file_qbasis << psi_q[j] << " ";
+                    file_pbasis << psi_p[j] << " ";
                 }
                 file_qbasis << endl << flush;
                 file_pbasis << endl << flush;

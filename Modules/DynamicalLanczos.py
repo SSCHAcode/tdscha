@@ -699,6 +699,70 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 np.savetxt(root_fname + ".syms{:d}".format(i), self.symmetries[i, :, :])
 
 
+    def load_from_input_files(self, root_name = "tdscha", directory="."):
+        """
+        Load the results from a calculation performed by the binary executable.
+        
+        NOTE: You must initialize the ensemble as did before calling the prepare_input_files method.
+        Then execute the lanczos run with the tdscha-lanczos.x executable.
+        Then load the results of the lanczos with this method.
+
+        You must use the same keyword used in the prepare_input_files
+        """
+
+        if not os.path.exists(directory):
+            raise IOError("Error, the specified directory '{}' does not exist".format(directory))
+
+        abc_file = os.path.join(directory, "{}.abc".format(root_name))
+        if not os.path.exists(abc_file):
+            errmsg = """
+Error, the file '{}' does not exist. 
+       please, check if you correctly run the tdscha-lanczos.x executable.
+""".format(abc_file)
+            print(errmsg)
+            raise IOError(errmsg)
+
+
+        data_abc = np.loadtxt(abc_file, dtype= np.double)
+        self.a_coeffs = data_abc[:,0]
+        self.b_coeffs = data_abc[:, 1]
+        self.c_coeffs = data_abc[:, 2]
+
+
+        # Load the Pbasis and Qbasis only if the files exists.
+        # These are very heavy files, and they are not needed for the spectral function
+        # in the continued fraction representation.
+        # (they are needed to restart a calculation)
+
+        qbasis_file = os.path.join(directory, "{}.qbasis.out".format(root_name))
+        pbasis_file = os.path.join(directory, "{}.pbasis.out".format(root_name))
+        snorm_file = os.path.join(directory, "{}.snorm.out".format(root_name))
+
+        if os.path.exists(qbasis_file):
+            self.basis_Q = np.loadtxt(qbasis_file, dtype = np.double)
+        else:
+            warnmsg = """
+File {} not found. basis_Q not loaded.
+""".format(qbasis_file)
+            warnings.warn(warnmsg)
+        
+        if os.path.exists(pbasis_file):
+            self.basis_P = np.loadtxt(pbasis_file, dtype = np.double)
+        else:
+            warnmsg = """
+File {} not found. basis_P not loaded.
+""".format(pbasis_file)
+            warnings.warn(warnmsg)
+
+        if os.path.exists(snorm_file):
+            self.s_norm = np.loadtxt(snorm_file, dtype = np.double).ravel()
+        else:
+            warnmsg = """
+File {} not found. S norm not loaded.
+""".format(snorm_file)
+            warnings.warn(warnmsg)
+
+
 
     def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
         """
@@ -3558,7 +3622,7 @@ Max number of iterations: {}
             self.a_coeffs = list(self.a_coeffs)
             self.b_coeffs = list(self.b_coeffs)
             self.c_coeffs = list(self.c_coeffs)
-            self.arnoldi_matrix = list(self.arnoldi_matrix)
+            #self.arnoldi_matrix = list(self.arnoldi_matrix)
 
             if len(self.basis_Q) != i_step + 1:
                 print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
