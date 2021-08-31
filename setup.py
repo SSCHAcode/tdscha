@@ -49,27 +49,27 @@ EXTRA_F90_FLAGS =  ["-cpp", "-fopenmp"]
 EXTRA_LINK_ARGS = ["-fopenmp"]
 
 # Compile the fortran SCHA modules
-SCHAModules = Extension(name = "TDSCHAModules", 
-                        sources = ["SCHAModules/module_stochastic.f90",
-                                   "SCHAModules/module_new_thermodynamic.f90",
-                                   "SCHAModules/module_anharmonic.f90",
-                                   "SCHAModules/get_stress_tensor.f90",
-                                   "SCHAModules/get_gradient_supercell.f90",
-                                   "SCHAModules/get_upsilon_matrix.f90",
-                                   "SCHAModules/multiply_lambda_tensor.f90",
-                                   "SCHAModules/cell_force.f90",
-                                   "SCHAModules/get_gradient_supercell_fast.f90",
-                                   "SCHAModules/get_g.f90",
-                                   "SCHAModules/get_emat.f90",
-                                   "SCHAModules/get_v3.f90",
-                                   "SCHAModules/get_odd_straight.f90",
-                                   "SCHAModules/get_cmat.f90",
-                                   "SCHAModules/get_v4.f90",
-                                   "SCHAModules/unwrap_ensemble.f90",
-                                   "SCHAModules/get_odd_straight_with_v4.f90"],
-                        libraries = LIBRARIES,
-                        extra_f90_compile_args = EXTRA_F90_FLAGS,
-                        extra_link_args= EXTRA_LINK_ARGS)
+# SCHAModules = Extension(name = "TDSCHAModules", 
+#                         sources = ["SCHAModules/module_stochastic.f90",
+#                                    "SCHAModules/module_new_thermodynamic.f90",
+#                                    "SCHAModules/module_anharmonic.f90",
+#                                    "SCHAModules/get_stress_tensor.f90",
+#                                    "SCHAModules/get_gradient_supercell.f90",
+#                                    "SCHAModules/get_upsilon_matrix.f90",
+#                                    "SCHAModules/multiply_lambda_tensor.f90",
+#                                    "SCHAModules/cell_force.f90",
+#                                    "SCHAModules/get_gradient_supercell_fast.f90",
+#                                    "SCHAModules/get_g.f90",
+#                                    "SCHAModules/get_emat.f90",
+#                                    "SCHAModules/get_v3.f90",
+#                                    "SCHAModules/get_odd_straight.f90",
+#                                    "SCHAModules/get_cmat.f90",
+#                                    "SCHAModules/get_v4.f90",
+#                                    "SCHAModules/unwrap_ensemble.f90",
+#                                    "SCHAModules/get_odd_straight_with_v4.f90"],
+#                         libraries = LIBRARIES,
+#                         extra_f90_compile_args = EXTRA_F90_FLAGS,
+#                         extra_link_args= EXTRA_LINK_ARGS)
 
 
 
@@ -93,7 +93,7 @@ setup( name = "tdscha",
        packages = ["tdscha"],
        package_dir = {"tdscha": "Modules"},
        install_requires = ["numpy", "ase", "scipy", "cellconstructor", "python-sscha"],
-       ext_modules = [SCHAModules, odd_HP],
+       ext_modules = [odd_HP],
        scripts = ["scripts/plot_lanczos_convergence.py", "scripts/plot_hessian_convergence.py"],
        license = "GPLv3"
        )
