@@ -392,7 +392,6 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
     free(Y1);
     free(Y1_new);
     free(R1);
-    cout << "Freed. Line: " << __LINE__ << endl;
 
 
     for (int i = 0; i < n_modes; ++i) {
