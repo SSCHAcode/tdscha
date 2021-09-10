@@ -2169,6 +2169,7 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 	}
 
 
+
 	for (i = start; i < stop; ++i) {
 		// Here the symmetry application
 		for (j = 0; j < N_sym; ++j) {
@@ -2239,6 +2240,7 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 		}
 	}
 
+
 	free(force);
 	free(displacement);
 	free(d2v_tmp);
@@ -2261,6 +2263,7 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Prepare the temporaney force and displacement (after symmetry applicaiton)
 	double * force = (double*) calloc(sizeof(double), n_modes);
 	double * displacement = (double*) calloc(sizeof(double), n_modes);
+
 
 
 
@@ -2293,7 +2296,6 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 		start = rank * count + remainer;
 		stop = start + count;
 	}
-
 	// Start the distributed sum over the configurations
 	for (i = start; i < stop; ++i) {
 		// Here the symmetry application
@@ -2310,6 +2312,7 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 					displacement[mu] += X[i * n_modes + nu] * symmetries[j * n_modes * n_modes + mu * n_modes + nu];
 				}
 			}
+
 
 
 			weight = 0;
@@ -2363,7 +2366,6 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	}
 	#endif
 
-
 	// Apply the normalization and write the output
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu) {
@@ -2374,8 +2376,10 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Free the allocated memory
 	free(d2v_dR2);
 	free(d2v_tmp);
+
 	free(force);
 	free(displacement);
+
 }
 
 

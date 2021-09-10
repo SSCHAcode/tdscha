@@ -365,6 +365,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
         }
     }
 
+
     if (! ignore_v3) {
         get_f_average_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, f_pert_av);
         get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
@@ -379,15 +380,19 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
     // }
     // cout << endl;
 
+
     if (! ignore_v4) {
+        // This subroutine gives seg. fault if optimized with -O3
         get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
     }
+
 
 
     // Free memory 
     free(Y1);
     free(Y1_new);
     free(R1);
+    cout << "Freed. Line: " << __LINE__ << endl;
 
 
     for (int i = 0; i < n_modes; ++i) {

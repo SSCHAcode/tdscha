@@ -1,6 +1,6 @@
 CPP := mpic++
 CC := mpicc
-FLAGS :=  -g  # -O3 (Causes a seg. fault)
+FLAGS :=  -g  -O3 #(Causes a seg. fault)
 DFLAGS := -D_MPI
 MPI_FLAGS := 
 LIBS := 
