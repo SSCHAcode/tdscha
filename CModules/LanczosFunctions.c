@@ -1,7 +1,7 @@
 #include "LanczosFunctions.h"
 
 
-#define DEB 0
+#define DEB 1
 #define DEB_L 0
 
 // These are used for debugging
@@ -2139,6 +2139,7 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 	}
 
 	int block_id = 0;
+	int mu_id = 0;
 	int block_dim = 0;
 
 	// The parallel loop
@@ -2152,11 +2153,12 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 				force[mu] = 0;
 				displacement[mu] = 0;
 				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
 				block_dim =  N_degeneracy[block_id];
 				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
 					nu = degenerate_space[block_id][k];
-					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
-					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
 					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
 				}
 			}

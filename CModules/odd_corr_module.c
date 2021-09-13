@@ -581,8 +581,8 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
     good_deg_space[i] = (int*)  PyArray_DATA( PyList_GetItem(sym_basis_list, i)); //malloc(sizeof(int) * n_deg[i]);
     good_syms[i] = (double*) PyArray_DATA( PyList_GetItem(sym_list, i)) ;  // malloc(sizeof(double) * n_deg[i] * n_deg[i] * N_syms);
 
-
-    /*printf("Block:\n");
+    /*
+    printf("Block:\n");
     for(j = 0; j < n_deg[i]; ++j) {
       printf(" %d", good_deg_space[i][j]);
     }

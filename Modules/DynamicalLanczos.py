@@ -1486,12 +1486,12 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                           f_pert_av, d2v_pert_av)
 
         print("D2V:")
-        np.set_printoptions(threshold = 10)
+        np.set_printoptions(threshold = 10000)
         print(d2v_pert_av[:10, :10])#print("Out get pert")
 
-        #print("<f> pert = {}".format(f_pert_av))
-        #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
-        #print()
+        print("<f> pert = {}".format(f_pert_av))
+        print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
+        print()
 
         # Compute the average with the old version
         if use_old_version:
