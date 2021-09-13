@@ -490,7 +490,8 @@ static PyObject * Get_Perturb_Averages(PyObject * self, PyObject * args) {
 
 static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
   PyArrayObject * npy_X, *npy_Y, *npy_omega, *npy_rho, *npy_R1, *npy_Y1;
-  PyArrayObject *npy_force, *npy_d2vdr2, *npy_symmetries, *npy_n_deg, *npy_deg_space;
+  PyArrayObject *npy_force, *npy_d2vdr2, *npy_symmetries, *npy_n_deg, *npy_deg_space, *npy_blocks_ids;
+  PyObject * sym_list, *sym_basis_list;
   double * X; 
   double * Y;
   double * R1, *Y1;
@@ -502,9 +503,12 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
 
   double * symmetries;
   int * n_deg;
+  int * blocks_ids;
   int ** good_deg_space;
+  double ** good_syms;
   int N_configs;
   int N_modes;
+  int N_syms;
   int apply_D4;
 
   double T;
@@ -512,8 +516,8 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
   int index_mode = 1, index_config = 0;
 
   // Parse the python arguments
-  if (!PyArg_ParseTuple(args, "OOOOOOdiOOOOO", &npy_X,  &npy_Y, &npy_omega, &npy_rho, &npy_R1, &npy_Y1, &T, &apply_D4, 
-                        &npy_symmetries, &npy_n_deg, &npy_deg_space, &npy_force, &npy_d2vdr2))
+  if (!PyArg_ParseTuple(args, "OOOOOOdiiOOOOOO", &npy_X,  &npy_Y, &npy_omega, &npy_rho, &npy_R1, &npy_Y1, &T, &apply_D4, 
+                          &N_syms, &sym_list, &npy_n_deg, &sym_basis_list, &npy_blocks_ids, &npy_force, &npy_d2vdr2))
     return NULL;
   
   // Check the array memory setting
@@ -549,54 +553,79 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
   w = (double*) PyArray_DATA(npy_omega);
   force = (double*) PyArray_DATA(npy_force);
   d2vdr2 = (double*) PyArray_DATA(npy_d2vdr2);
+  blocks_ids = (int*) PyArray_DATA(npy_blocks_ids);
 
   R1 = (double*) PyArray_DATA(npy_R1);
   Y1 = (double*) PyArray_DATA(npy_Y1);
 
 
+  // Prepare the symmetries
+  int n_blocks = PyObject_Length(sym_list);
+
+
+
+
   // Read the symmetries
-  symmetries = (double*)PyArray_DATA(npy_symmetries);
+  //symmetries = (double*)PyArray_DATA(npy_symmetries);
   n_deg = (int*)PyArray_DATA(npy_n_deg);
 
   // Build the degeneracy space
-  good_deg_space = (int **) malloc(sizeof(int*) * N_modes);
-  int i, j;
+  good_deg_space = (int **) malloc(sizeof(int*) * n_blocks);
+  good_syms = (double**) malloc(sizeof(double*) * n_blocks);
+  int i, j, k, h;
   int counter= 0;
-  int N_symmetries;
-  for (i = 0; i < N_modes;++i) {
-    good_deg_space[i] = (int*) malloc(sizeof(int) * n_deg[i]);
-    for (j = 0; j < n_deg[i]; ++j) {
-      good_deg_space[i][j] = ((int*) PyArray_DATA(npy_deg_space))[counter++];
+
+  //printf("I'm here, %s:%d\n", __FILE__, __LINE__);
+
+  for (i = 0; i < n_blocks; ++i) {
+    good_deg_space[i] = (int*)  PyArray_DATA( PyList_GetItem(sym_basis_list, i)); //malloc(sizeof(int) * n_deg[i]);
+    good_syms[i] = (double*) PyArray_DATA( PyList_GetItem(sym_list, i)) ;  // malloc(sizeof(double) * n_deg[i] * n_deg[i] * N_syms);
+
+
+    /*printf("Block:\n");
+    for(j = 0; j < n_deg[i]; ++j) {
+      printf(" %d", good_deg_space[i][j]);
     }
+    printf("\n");
+
+    printf("Symmetries:\n");
+    for (j = 0; j < N_syms; ++j) {
+      printf("Sym number %d\n", j);
+      for (k=0; k < n_deg[i]; ++k) {
+        for (h=0; h < n_deg[i]; ++h) {
+          printf(" %8.4lf", good_syms[i][j * n_deg[i] * n_deg[i] + k * n_deg[i] + h]);
+        }
+        printf("\n");
+      }
+    }*/
   }
 
-  N_symmetries = PyArray_DIM(npy_symmetries, 0);
+  //printf("I'm here, %s:%d\n", __FILE__, __LINE__);
+
+
+  //N_symmetries = PyArray_DIM(npy_symmetries, 0);
 
 
   
   // Employ the Y1 to get the average force (D3)
   // printf("Getting f av...\n");
   // fflush(stdout);
-  get_f_average_from_Y_pert_sym(X, Y, w, Y1, T, N_modes, N_configs, rho, symmetries, N_symmetries, n_deg, good_deg_space, force);
+  get_f_average_from_Y_pert_sym_fast(X, Y, w, Y1, T, N_modes, N_configs, rho, good_syms, N_syms, n_deg, good_deg_space, blocks_ids, force);
 
   // Employ the R1 to get the average of the second derivative of the potential (D3)
   // printf("Getting d2v_dr2 av...\n");
   // fflush(stdout);
-  get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, N_modes, N_configs, rho, symmetries, N_symmetries, n_deg, good_deg_space, d2vdr2);
+  get_d2v_dR2_from_R_pert_sym_fast(X, Y, w, R1, T, N_modes, N_configs, rho, good_syms, N_syms, n_deg, good_deg_space, blocks_ids, d2vdr2);
 
   // Employ Y1 to get the average of the second derivative of the potential (D4)
   if (apply_D4) {
     // printf("Getting d2v_dr2 av from d4...\n");
     // fflush(stdout);
-    get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1, T, N_modes, N_configs, rho, symmetries, N_symmetries, n_deg, good_deg_space, d2vdr2);
+    get_d2v_dR2_from_Y_pert_sym_fast(X, Y, w, Y1, T, N_modes, N_configs, rho, good_syms, N_syms, n_deg, good_deg_space, blocks_ids, d2vdr2);
   }
 
-  // Free the memory of the degenerate space allocated
-  for (i = 0; i < N_modes; ++i) {
-    free(good_deg_space[i]);
-  }
+  free(good_syms);
   free(good_deg_space);
-
 
   Py_INCREF(Py_None);
   return Py_None;

@@ -255,6 +255,23 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
                                    double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * d2v_dR2_out);
 
+
+
+
+// Here the symmetrized functions with clever symmetries (low memory consumption)
+
+
+void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                         double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								         double * f_average) ;
+void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  double * R1, double T, int n_modes, 
+                                 int n_configs, double * w_is, 
+								  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								 double * d2v_dR2) ;
+double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                   double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								   double * d2v_dR2_out);
+
 /*
  * Here we define some working methods that are usefull to be
  * called outside. They take the frequency and the occupation number
