@@ -612,12 +612,7 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
   // fflush(stdout);
   get_f_average_from_Y_pert_sym_fast(X, Y, w, Y1, T, N_modes, N_configs, rho, good_syms, N_syms, n_deg, good_deg_space, blocks_ids, force);
 
-  // Print the force until c
-  printf("Output force:\n");
-  for (i = 0; i < N_modes; ++i) {
-    printf(" %16.8lf", force[i]);
-  }
-  printf("\n");
+  
   
   // Employ the R1 to get the average of the second derivative of the potential (D3)
   // printf("Getting d2v_dr2 av...\n");

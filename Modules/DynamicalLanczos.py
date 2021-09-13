@@ -1479,19 +1479,19 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         # Compute the perturbed averages (the time consuming part is HERE)
         #print("Entering in get pert...")
         n_syms, _, _ = np.shape(self.symmetries[0])
-        print("DEG:")
-        print(self.degenerate_space)
+        #print("DEG:")
+        #print(self.degenerate_space)
         sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
                                           self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
                                           f_pert_av, d2v_pert_av)
 
-        print("D2V:")
-        np.set_printoptions(threshold = 10000)
-        print(d2v_pert_av[:10, :10])#print("Out get pert")
+        #print("D2V:")
+        #np.set_printoptions(threshold = 10000)
+        #print(d2v_pert_av[:10, :10])#print("Out get pert")
 
-        print("<f> pert = {}".format(f_pert_av))
-        print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
-        print()
+        #print("<f> pert = {}".format(f_pert_av))
+        #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
+        #print()
 
         # Compute the average with the old version
         if use_old_version:
@@ -1602,13 +1602,13 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             current = current + self.n_modes - i
 
 
-        print("First element of pert_Y:", pert_Y[0,0])
-        print("Y_w = ", Y_w)
-        print("All pert Y:")
-        print(pert_Y)
+        # print("First element of pert_Y:", pert_Y[0,0])
+        # print("Y_w = ", Y_w)
+        # print("All pert Y:")
+        # print(pert_Y)
 
-        print("Final psi:")
-        print(final_psi[self.n_modes: self.n_modes + 10])
+        # print("Final psi:")
+        # print(final_psi[self.n_modes: self.n_modes + 10])
 
 
         #print("Output:", final_psi)
@@ -3689,7 +3689,6 @@ Max number of iterations: {}
             L_q = self.L_linop.matvec(psi_q)
             p_L = self.L_linop.rmatvec(psi_p) # psi_p is normalized (this must be considered when computing c coeff) 
 
-            print("L_q: ", L_q[self.n_modes: self.n_modes + 10])
             t2 = time.time()
 
             if debug:

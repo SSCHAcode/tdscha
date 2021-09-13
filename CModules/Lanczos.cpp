@@ -62,6 +62,7 @@ void Lanczos::setup_from_input(string rootname) {
     N = data.get<int>("n_configs");
     n_modes = data.get<int>("n_modes");
     n_syms = data.get<int>("n_syms");
+    n_blocks = data.get<int>("n_blocks");
 
     reverse_L = data.get<bool>("reverse");
     shift_value = data.get<double>("shift");
@@ -84,6 +85,7 @@ void Lanczos::setup_from_input(string rootname) {
     nbose = (double*) malloc(sizeof(double) * n_modes);
     rho = (double *) malloc(sizeof(double) * N);
     psi = (double *) malloc(sizeof(double) * n_psi);
+    blocks_ids = (int*) malloc(sizeof(int) * n_modes);
 
     //Ups1 = (double*) calloc(sizeof(double), n_modes*n_modes);
     //ReA1 = (double*) calloc(sizeof(double), n_modes*n_modes);
@@ -105,8 +107,7 @@ void Lanczos::setup_from_input(string rootname) {
     fstream file(rootname + ".ndegs");
     if (file.is_open()) {
         string line;
-        int counter = 0;
-        for (int k = 0; k < n_modes; ++k) {
+        for (int k = 0; k < n_blocks; ++k) {
             file >> N_degeneracy[k];
         }
     }
@@ -162,36 +163,36 @@ void Lanczos::setup_from_input(string rootname) {
     file.close();
 
 
-    // Get the length of the degenerate space
-    int n_deg_total = 0;
-    for (int i = 0; i < n_modes; ++i) n_deg_total += N_degeneracy[i];
-    degenerate_space = (int*) calloc(sizeof(int), n_deg_total);
-
-
-    file.open(rootname + ".degs");
+    file.open(rootname + ".blockid");
     if (file.is_open()) {
-        int counter = 0;
-        for (int k = 0; k < n_deg_total; ++k) {
-            file >> degenerate_space[k];
+        string line;
+        for (int k = 0; k < n_modes; ++k) {
+            file >> blocks_ids[k];
         }
-    } 
+    }
     file.close();
 
 
-    // Load the symmetries
-    symmetries = (double*) calloc(sizeof(double), n_syms * n_modes * n_modes);
-    int counter = 0;
-    for (int i = 0; i < n_syms; ++i) {
-        if (DEBUG_READ) {
-            //cout << "[DEBUG READ]  Reading symmetry " << i + 1 << "/" << n_syms << " ..." <<  endl; 
-        }
+    // Get the length of the degenerate space
+    good_deg_space = (int**) malloc(sizeof(int*) * n_blocks);
+    symmetries = (double**) malloc(sizeof(double*) * n_blocks);
+    for (int i = 0; i < n_blocks ++i) {
+        good_deg_space[i] = (int*) calloc(sizeof(int), N_degeneracy[i]);
+        symmetries[i] = (double*) calloc(sizeof(double), n_syms * N_degeneracy[i] * N_degeneracy[i]);
 
-        file.open(rootname + ".syms" + to_string(i));
+        file.open(rootname + ".block" + to_string(i))
         if (file.is_open()) {
-            for (int k = 0; k < n_modes*n_modes; ++k) {
-                file >> symmetries[counter + k];
+            for (int j = 0; j < N_degeneracy[i]; ++j) {
+                file >> good_deg_space[i][j];
             }
-            counter += n_modes * n_modes;
+        }
+        file.close();
+
+        file.open(rootname + ".symsb" + to_string(i))
+        if (file.is_open()) {
+            for (int j = 0; j < n_syms*N_degeneracy[i]*N_degeneracy[i]; ++j) {
+                file >> symmetries[i][j];
+            }
         }
         file.close();
     }
@@ -202,15 +203,6 @@ void Lanczos::setup_from_input(string rootname) {
     // Update the Bose-Einstein statistics
     update_nbose();
 
-    // Update the degenerate space to be used inside the lanczos functions
-    good_deg_space = (int **) malloc(sizeof(int*) * n_modes);
-    counter= 0;
-    for (int i = 0; i < n_modes;++i) {
-        good_deg_space[i] = (int*) malloc(sizeof(int) * N_degeneracy[i]);
-        for (int j = 0; j < N_degeneracy[i]; ++j) {
-            good_deg_space[i][j] = degenerate_space[counter++];
-        }
-    }
 
     if (DEBUG_LANC && am_i_the_master()) 
         cout << "PSI POINTER (LINE " << __LINE__ << "): " << psi << endl;

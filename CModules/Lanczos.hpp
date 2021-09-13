@@ -14,14 +14,14 @@
 using namespace std;
 
 class Lanczos {
-    int N, n_syms, n_modes, n_steps;
+    int N, n_syms, n_modes, n_steps, n_blocks;
     int i_step;
     bool ignore_v2, ignore_v3, ignore_v4, reverse_L;
 
     double T, shift_value;
 
     double *w, *nbose, *rho;
-    int * N_degeneracy, *degenerate_space, **good_deg_space;
+    int * N_degeneracy, *blocks_ids,  **good_deg_space;
 
     double *X, *Y, *psi,  *symmetries;
 

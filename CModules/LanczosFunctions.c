@@ -1,7 +1,7 @@
 #include "LanczosFunctions.h"
 
 
-#define DEB 1
+#define DEB 0
 #define DEB_L 0
 
 // These are used for debugging
@@ -1996,14 +1996,18 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 
 			if (DEB) {
 				printf("#C DEB | CONFIG %d | SYMMETRY %d\n", i, j);
-				printf(" force_old = ");
-				for (mu = 0; mu < n_modes; ++mu) 
-					printf("%10.3e ", Y[i * n_modes + mu]);
-				printf("\n\n");
-				printf(" force_new[9] = %.8e\n", force[9]);
-				for (mu = 0; mu < n_modes; ++mu) 
+				printf(" force_old = \n[");
+				for (mu = 0; mu < n_modes; ++mu) {
+					printf("%10.3e", Y[i * n_modes + mu]);
+					if (mu != n_modes -1) printf("\n");
+				}
+				printf("]\n\n");
+				printf(" force_new[9] = %.8e\n[", force[9]);
+				for (mu = 0; mu < n_modes; ++mu) {
 					printf("%10.3e ", force[mu]);
-				printf("\n");
+					if (mu != n_modes - 1) printf("\n");
+				}
+				printf("]\n");
 				printf(" displacement = ");
 				for (mu = 0; mu < n_modes; ++mu) 
 					printf("%8.3lf ", displacement[mu]);
@@ -2166,14 +2170,16 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 			if (DEB) {
 				printf("#C DEB | CONFIG %d | SYMMETRY %d\n", i, j);
 				printf(" force_old[9] = %.8f\n[", Y[i * n_modes + 9]);
-				for (mu = 0; mu < n_modes; ++mu) 
+				for (mu = 0; mu < n_modes; ++mu) {
 					printf("%10.3e", Y[i * n_modes + mu]);
 					if (mu != n_modes - 1) printf(", ");
+				}
 				printf("]\n\n");
 				printf(" force_new[9] = %.8e\n[", force[9]);
-				for (mu = 0; mu < n_modes; ++mu) 
+				for (mu = 0; mu < n_modes; ++mu) {
 					printf("%10.3e", force[mu]);
 					if (mu != n_modes - 1) printf(", ");
+				}
 				printf("]\n");
 				printf(" displacement = ");
 				for (mu = 0; mu < n_modes; ++mu) 
@@ -2339,7 +2345,7 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 		stop = start + count;
 	}
 
-	int block_id, block_dim;
+	int block_id, block_dim, mu_id;
 
 
 	for (i = start; i < stop; ++i) {
@@ -2351,11 +2357,12 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 				force[mu] = 0;
 				displacement[mu] = 0;
 				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
 				block_dim =  N_degeneracy[block_id];
 				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
 					nu = degenerate_space[block_id][k];
-					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
-					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
 					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
 				}
 			}
@@ -2644,7 +2651,7 @@ double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 		start = rank * count + remainer;
 		stop = start + count;
 	}
-
+	int mu_id;	
 	int block_id, block_dim;
 
 	// Start the distributed sum over the configurations
@@ -2657,16 +2664,15 @@ double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 				force[mu] = 0;
 				displacement[mu] = 0;
 				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
 				block_dim =  N_degeneracy[block_id];
 				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
 					nu = degenerate_space[block_id][k];
-					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
-					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + block_id * block_dim + k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
 					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
 				}
 			}
-
-
 
 			weight = 0;
 			// First the standard weight
