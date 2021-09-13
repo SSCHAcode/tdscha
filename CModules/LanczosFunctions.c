@@ -2165,14 +2165,16 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 
 			if (DEB) {
 				printf("#C DEB | CONFIG %d | SYMMETRY %d\n", i, j);
-				printf(" force_old = ");
+				printf(" force_old[9] = %.8f\n[", Y[i * n_modes + 9]);
 				for (mu = 0; mu < n_modes; ++mu) 
-					printf("%10.3e ", Y[i * n_modes + mu]);
-				printf("\n\n");
-				printf(" force_new[9] = %.8e\n", force[9]);
+					printf("%10.3e", Y[i * n_modes + mu]);
+					if (mu != n_modes - 1) printf(", ");
+				printf("]\n\n");
+				printf(" force_new[9] = %.8e\n[", force[9]);
 				for (mu = 0; mu < n_modes; ++mu) 
-					printf("%10.3e ", force[mu]);
-				printf("\n");
+					printf("%10.3e", force[mu]);
+					if (mu != n_modes - 1) printf(", ");
+				printf("]\n");
 				printf(" displacement = ");
 				for (mu = 0; mu < n_modes; ++mu) 
 					printf("%8.3lf ", displacement[mu]);
