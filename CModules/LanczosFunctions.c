@@ -189,7 +189,7 @@ void OMP_ApplyD3ToVector(const double * X, const double * Y, const double * rho,
     //}
 
     if (DEB) {
-      printf("File %s, Line %d: Got the new X\n", __FILE__, __LINE__, N_eff);
+      printf("File %s, Line %d: Got the new X\n", __FILE__, __LINE__);
       fflush(stdout);
     }
     
@@ -548,7 +548,7 @@ void MPI_D3_FT(const double * X, const double * Y, const double * rho, const dou
 	if (DEB) printf("Division: %d in %d ranks, with %d remainer\n",
 		count*size, size, remainer);
 
-	printf("Fast D3 FT Computation | rank %d computes from %u to %u\n", rank, start, stop);
+	printf("Fast D3 FT Computation | rank %d computes from %llu to %llu\n", rank, start, stop);
 	fflush(stdout);
 
 	clock_t d3_timing = 0, sym_timing = 0;
@@ -565,7 +565,7 @@ void MPI_D3_FT(const double * X, const double * Y, const double * rho, const dou
 		a = (mpi_index/N_modes) / N_modes;
 
 		if (DEB_L) {
-			printf("RANK %d, index = %d (%d, %d). a = %d, b = %d, c = %d\n",
+			printf("RANK %d, index = %lld (%lld, %lld). a = %d, b = %d, c = %d\n",
 				rank, mpi_index, start, stop, a, b, c);
 		}
 
@@ -852,7 +852,7 @@ void MPI_D4_FT(const double * X, const double * Y, const double * rho, const dou
 	}
 
 
-	printf("Fast D4 FT Computation | rank %d computes from %u to %u\n", rank, start, stop);
+	printf("Fast D4 FT Computation | rank %d computes from %llu to %llu\n", rank, start, stop);
 	fflush(stdout);
 
 	unsigned long long int mpi_index;
@@ -1844,7 +1844,7 @@ void get_d2v_dR2_from_R_pert(const double * X, const double * Y, const double * 
 }
 
 // D4 contribution
-double get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2_out) {
+void get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2_out) {
 	int i, mu, nu;
 
 	double weight;
@@ -1996,14 +1996,18 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 
 			if (DEB) {
 				printf("#C DEB | CONFIG %d | SYMMETRY %d\n", i, j);
-				printf(" force_old = ");
-				for (mu = 0; mu < n_modes; ++mu) 
-					printf("%10.3e ", Y[i * n_modes + mu]);
-				printf("\n\n");
-				printf(" force_new[9] = %.8e\n", force[9]);
-				for (mu = 0; mu < n_modes; ++mu) 
+				printf(" force_old = \n[");
+				for (mu = 0; mu < n_modes; ++mu) {
+					printf("%10.3e", Y[i * n_modes + mu]);
+					if (mu != n_modes -1) printf("\n");
+				}
+				printf("]\n\n");
+				printf(" force_new[9] = %.8e\n[", force[9]);
+				for (mu = 0; mu < n_modes; ++mu) {
 					printf("%10.3e ", force[mu]);
-				printf("\n");
+					if (mu != n_modes - 1) printf("\n");
+				}
+				printf("]\n");
 				printf(" displacement = ");
 				for (mu = 0; mu < n_modes; ++mu) 
 					printf("%8.3lf ", displacement[mu]);
@@ -2055,7 +2059,7 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(f_av_tmp, f_average, n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu)
 		f_average[mu] = f_av_tmp[mu];
@@ -2073,6 +2077,355 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	free(f_av_tmp);
 }
 
+void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                         double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								         double * f_average) {
+	int i, j, k, mu, nu;
+
+	double weight;
+	double N_eff = 0;
+	double u_mu, u_nu, f_mu, f_nu;
+
+	// Clean up the force
+	for(mu = 0; mu < n_modes; ++mu) {
+		f_average[mu] = 0;
+	}
+
+	// Allocate the temporany array for the parallel calculation
+	double * f_av_tmp = (double*) calloc(sizeof(double), n_modes);
+
+	// Get the effective sample size first of all
+	for (i = 0; i < n_configs; ++i)
+		N_eff += w_is[i];
+
+	if (DEB) printf("N_eff: %16.8lf\n", N_eff);
+
+
+	// Prepare the temporaney force and displacement (after symmetry applicaiton)
+	double * force = (double*) calloc(sizeof(double), n_modes);
+	double * displacement = (double*) calloc(sizeof(double), n_modes);
+
+	// Prepare everything for the parallemization
+	int size = 1, rank = 0;
+	int count, remainer;
+	int start, stop;
+	#ifdef _MPI
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	//MPI_Bcast(X, n_configs*n_modes, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	//MPI_Bcast(Y, n_configs*n_modes, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	MPI_Bcast(Y1, n_modes*n_modes, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	#endif
+
+	// Get each pool of configurations over different processors (if MPI)
+	count = n_configs / size;
+	remainer = n_configs % size;
+
+	// Distribute the remainers in a clever way
+	// To get the most efficient parallelization
+	// Dividing the remainers in the first remainer processors
+	if (rank < remainer) {
+		start = rank * (count + 1);
+		stop = start + count + 1;
+	} else {
+		start = rank * count + remainer;
+		stop = start + count;
+	}
+
+
+	printf("MPI COMPUTATION | rank %d computes configs [%d, %d)\n", rank, start, stop);
+
+	if (DEB) {
+		/*for (i = 0; i < n_modes; ++i) {
+			printf("%7d) forc = %16.8lf; disp = %16.8lf\n", i, force[mu], displacement[mu]);
+		}*/
+	}
+
+	int block_id = 0;
+	int mu_id = 0;
+	int block_dim = 0;
+
+	// The parallel loop
+	for (i = start; i < stop; ++i) {
+
+		// Here the symmetry application
+		for (j = 0; j < N_sym; ++j) {
+			
+			// Get the symmetry equivalent force and displacement
+			for(mu = 0; mu < n_modes; ++mu){
+				force[mu] = 0;
+				displacement[mu] = 0;
+				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
+				block_dim =  N_degeneracy[block_id];
+				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
+					nu = degenerate_space[block_id][k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
+				}
+			}
+
+			if (DEB) {
+				printf("#C DEB | CONFIG %d | SYMMETRY %d\n", i, j);
+				printf(" force_old[9] = %.8f\n[", Y[i * n_modes + 9]);
+				for (mu = 0; mu < n_modes; ++mu) {
+					printf("%10.3e", Y[i * n_modes + mu]);
+					if (mu != n_modes - 1) printf(", ");
+				}
+				printf("]\n\n");
+				printf(" force_new[9] = %.8e\n[", force[9]);
+				for (mu = 0; mu < n_modes; ++mu) {
+					printf("%10.3e", force[mu]);
+					if (mu != n_modes - 1) printf(", ");
+				}
+				printf("]\n");
+				printf(" displacement = ");
+				for (mu = 0; mu < n_modes; ++mu) 
+					printf("%8.3lf ", displacement[mu]);
+				printf("\n");
+				//fflush(stdout);
+			}
+			
+
+			// Compute the standard weight Y1
+			weight = 0;
+			for (mu = 0; mu < n_modes; ++mu) {
+				for (nu = 0; nu < n_modes; ++nu) {
+					weight -= displacement[mu] * displacement[nu] * Y1[mu * n_modes +  nu] / 2;
+				}
+			}
+
+
+			// Get the average of the potential
+			for (mu = 0; mu < n_modes; ++mu) {
+				f_av_tmp[mu] += w_is[i] * weight * force[mu] / 3;
+				//if (mu == 9) {
+				//printf("ADD1 %d | CONF %d | SYM %d => %.8e\n", mu, i, j, w_is[i] * weight * force[mu] / 3);
+				//}
+			}
+
+			// Get the permutated average
+			weight = 0;
+			for (mu = 0; mu < n_modes; ++mu) {
+				f_mu = f_psi(w[mu], T) * force[mu];
+				for (nu = 0; nu < n_modes; ++nu) {
+					f_nu = f_psi(w[nu], T) * force[nu];
+					weight -= displacement[mu] * f_nu * Y1[mu * n_modes +  nu] / 4;
+					weight -= displacement[nu] * f_mu * Y1[mu * n_modes +  nu] / 4;
+				}
+			}
+
+
+			// Get the average of the potential
+			for (mu = 0; mu < n_modes; ++mu) {
+				u_mu = f_ups(w[mu], T) * displacement[mu];
+				f_av_tmp[mu] += w_is[i] * weight * u_mu * 2 / 3.; // Since we have 2 permutations here, this count twice
+				//if (mu == 9) {
+				//printf("ADD2 %d | CONF %d | SYM %d => %.8e\n", mu, i, j, w_is[i] * weight * u_mu * 2 / 3.);
+				//}
+			}
+		}
+	}
+
+	// Sum back the computation from different processors
+	#ifdef _MPI
+	MPI_Allreduce(f_av_tmp, f_average, n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	#endif 
+	#ifndef _MPI
+	for (mu = 0; mu < n_modes; ++mu)
+		f_average[mu] = f_av_tmp[mu];
+	#endif
+
+
+	// Apply the normalization
+	for (mu = 0; mu < n_modes; ++mu) {
+		f_average[mu] /= N_eff * N_sym;
+	}
+
+	// Free the memory
+	free(displacement);
+	free(force);
+	free(f_av_tmp);
+}
+
+
+void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  double * R1, double T, int n_modes, 
+                                 int n_configs, double * w_is, 
+								  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								 double * d2v_dR2) {
+	int i, j, k, mu, nu;
+
+	double weight;
+	double N_eff = 0;
+	double u_mu, u_nu;
+	
+
+	// Prepare the temporaney force and displacement (after symmetry applicaiton)
+	double * force = (double*) calloc(sizeof(double), n_modes);
+	double * displacement = (double*) calloc(sizeof(double), n_modes);
+
+
+	// printf("R1 pert: (first 15 values)\n");
+	// for (i = 0; i < n_modes; ++i) {
+	// 	printf(" %.2e ", R1[i]);
+	// } printf("\n");
+
+	// printf("X: (config 1)\n");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %.2e ", X[1 * n_modes + i]);
+	// printf("\n"); 
+	// printf("Y: (config 1)\n");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %.2e ", Y[1 * n_modes + i]);
+	// printf("\n"); 
+
+	// printf("Ndegs:");
+	// for (i = 0; i < n_modes; ++i)
+	// 	printf(" %d", N_degeneracy[i]);
+	// printf("\n"); 
+
+	// printf("N_sym: %d\n", N_sym);
+
+	// printf("Diag s[0]:\n");
+	// for (i = 0; i < n_modes; ++i) {
+	// 	printf(" %.2lf", symmetries[n_modes*i + i]);
+	// }
+	// printf("\n");
+
+	// printf("Deg space:\n");
+	// for (i = 0; i < n_modes;++i) {
+	// 	for (j = 0; j < N_degeneracy[i]; ++j) {
+	// 		printf(" %d", degenerate_space[i][j]);
+	// 	}
+	// 	printf("\n");
+	// }
+
+
+
+
+
+	// Reset the starting value of d2v_dR2
+	for (mu = 0; mu < n_modes; ++mu) {
+		for (nu = 0; nu < n_modes; ++nu) {
+			d2v_dR2[mu * n_modes + nu] = 0;
+		}
+	}
+
+
+	for (i = 0; i < n_configs; ++i) 
+		N_eff += w_is[i];
+
+	double * d2v_tmp = (double*) calloc(sizeof(double), n_modes * n_modes);
+
+	// Prepare everything for the parallemization
+	int size = 1, rank = 0;
+	int count, remainer;
+	int start, stop;
+	#ifdef _MPI
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	MPI_Bcast(R1, n_modes, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	#endif
+
+	// Get each pool of configurations over different processors (if MPI)
+	count = n_configs / size;
+	remainer = n_configs % size;
+
+	// Distribute the remainers in a clever way
+	// To get the most efficient parallelization
+	// Dividing the remainers in the first remainer processors
+	if (rank < remainer) {
+		start = rank * (count + 1);
+		stop = start + count + 1;
+	} else {
+		start = rank * count + remainer;
+		stop = start + count;
+	}
+
+	int block_id, block_dim, mu_id;
+
+
+	for (i = start; i < stop; ++i) {
+		// Here the symmetry application
+		for (j = 0; j < N_sym; ++j) {
+
+			// Get the symmetry equivalent force and displacement
+			for(mu = 0; mu < n_modes; ++mu){
+				force[mu] = 0;
+				displacement[mu] = 0;
+				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
+				block_dim =  N_degeneracy[block_id];
+				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
+					nu = degenerate_space[block_id][k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
+				}
+			}
+			
+			weight = 0;
+
+			// Compute the standard weight
+			for (mu = 0; mu < n_modes; ++mu) {
+				weight += f_ups(w[mu], T) * R1[mu] * displacement[mu];
+			}
+
+			// Compute the d2V_dR2
+			for (mu = 0; mu < n_modes; ++mu) {
+				u_mu = f_ups(w[mu], T) * displacement[mu];
+				for (nu = 0; nu < n_modes; ++nu) {
+					d2v_tmp[mu * n_modes + nu] -= u_mu * force[nu] * weight * w_is[i] / 3;
+					d2v_tmp[nu * n_modes + mu] -= u_mu * force[nu] * weight * w_is[i] / 3; 
+				}
+			}	
+
+			// Apply permutation symmetry exchanging the weights
+			weight = 0;
+
+			// Compute the weight permuting f with the displacement
+			for (mu = 0; mu < n_modes; ++mu) {
+				weight +=  R1[mu] * force[mu];
+			}
+
+			// Compute the d2V_dR2 permuting f with the displacement
+			for (mu = 0; mu < n_modes; ++mu) {
+				u_mu = f_ups(w[mu], T) * displacement[mu];
+				for (nu = 0; nu < n_modes; ++nu) {
+					u_nu =  f_ups(w[nu], T) * displacement[nu];
+					d2v_tmp[mu * n_modes + nu] -= u_mu * u_nu * weight * w_is[i] / 3;
+				}
+			}	
+		}
+	}
+
+	// Sum back the computation from different processors
+	#ifdef _MPI
+	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	#endif 
+	#ifndef _MPI
+	for (mu = 0; mu < n_modes; ++mu) {
+		for (nu = 0; nu < n_modes; ++nu)
+			d2v_dR2[mu * n_modes + nu] = d2v_tmp[mu*n_modes + nu];
+	}
+	#endif
+
+
+	// Apply the normalization
+	for (mu = 0; mu < n_modes; ++mu) {
+		for (nu = 0; nu < n_modes; ++nu) {
+			d2v_dR2[mu * n_modes + nu] /= N_eff * N_sym;
+		}
+	}
+
+
+	free(force);
+	free(displacement);
+	free(d2v_tmp);
+}
 
 void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double * R1, double T, int n_modes, 
                                  int n_configs, double * w_is, 
@@ -2224,7 +2577,7 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2246,8 +2599,152 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 	free(d2v_tmp);
 }
 
+
+
 // D4 contribution
-double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                   double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								   double * d2v_dR2_out) {
+	int i, j, k, mu, nu;
+
+	double weight;
+	double N_eff = 0;
+	double u_mu, u_nu, f_mu, f_nu;
+
+	double * d2v_dR2 = (double*) calloc(sizeof(double), n_modes * n_modes);
+	double * d2v_tmp = (double*) calloc(sizeof(double), n_modes * n_modes);
+
+
+	// Prepare the temporaney force and displacement (after symmetry applicaiton)
+	double * force = (double*) calloc(sizeof(double), n_modes);
+	double * displacement = (double*) calloc(sizeof(double), n_modes);
+
+
+
+
+
+	for (i = 0; i < n_configs; ++i) 
+		N_eff += w_is[i];
+
+	// Prepare everything for the parallemization
+	int size = 1, rank = 0;
+	int count, remainer;
+	int start, stop;
+	#ifdef _MPI
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+	MPI_Bcast(Y1, n_modes*n_modes, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+	#endif
+
+	// Get each pool of configurations over different processors (if MPI)
+	count = n_configs / size;
+	remainer = n_configs % size;
+
+	// Distribute the remainers in a clever way
+	// To get the most efficient parallelization
+	// Dividing the remainers in the first remainer processors
+	if (rank < remainer) {
+		start = rank * (count + 1);
+		stop = start + count + 1;
+	} else {
+		start = rank * count + remainer;
+		stop = start + count;
+	}
+	int mu_id;	
+	int block_id, block_dim;
+
+	// Start the distributed sum over the configurations
+	for (i = start; i < stop; ++i) {
+		// Here the symmetry application
+		for (j = 0; j < N_sym; ++j) {
+			
+			// Get the symmetry equivalent force and displacement
+			for(mu = 0; mu < n_modes; ++mu){
+				force[mu] = 0;
+				displacement[mu] = 0;
+				block_id = blocks_ids[mu];
+				mu_id = mu - degenerate_space[block_id][0];
+				block_dim =  N_degeneracy[block_id];
+				for (k = 0; k < block_dim; ++k) { // Exploit the sparseness of the symmetry matrix
+					nu = degenerate_space[block_id][k];
+					force[mu] += Y[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					displacement[mu] += X[i * n_modes + nu] * symmetries[block_id][j * block_dim * block_dim + mu_id * block_dim + k];
+					//symmetries[j * n_modes * n_modes + mu * n_modes + nu];
+				}
+			}
+
+			weight = 0;
+			// First the standard weight
+			for (mu = 0; mu < n_modes; ++mu) {
+				for(nu = 0; nu < n_modes; ++nu) {
+					weight -= displacement[mu] * displacement[nu] * Y1[mu * n_modes + nu] / 2;
+				}
+			}
+
+			// Now the first part of the potential
+			for (mu = 0; mu < n_modes; ++mu) {
+				u_mu = f_ups(w[mu], T) * displacement[mu];
+				for(nu = 0; nu < n_modes; ++nu) {
+					d2v_tmp[mu * n_modes + nu] -= force[nu] * u_mu * weight * w_is[i] / 4; // Permutation symmetry
+					d2v_tmp[nu * n_modes + mu] -= force[nu] * u_mu * weight * w_is[i] / 4; // Permutation symmetry
+				}
+			}
+
+
+			weight = 0;
+			// First the permutated weight
+			for (mu = 0; mu < n_modes; ++mu) {
+				f_mu = f_psi(w[mu], T) * force[mu];
+				for(nu = 0; nu < n_modes; ++nu) {
+					f_nu = f_psi(w[nu], T) * force[nu];
+					weight -= f_mu * displacement[nu] * Y1[mu * n_modes + nu] / 4;
+					weight -= f_nu * displacement[mu] * Y1[mu * n_modes + nu] / 4;
+				}
+			}
+
+			// Now the first part of the potential
+			for (mu = 0; mu < n_modes; ++mu) {
+				u_mu = f_ups(w[mu], T) * displacement[mu];
+				for(nu = 0; nu < n_modes; ++nu) {
+					u_nu = f_ups(w[nu], T) * displacement[nu];
+					d2v_tmp[mu * n_modes + nu] -= u_nu * u_mu * weight * w_is[i] / 2; // Permutation symmetry
+				}
+			}
+		}
+	}
+
+	// Sum back the computation from different processors
+	#ifdef _MPI
+	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+	#endif 
+	#ifndef _MPI
+	for (mu = 0; mu < n_modes; ++mu) {
+		for (nu = 0; nu < n_modes; ++nu)
+			d2v_dR2[mu * n_modes + nu] = d2v_tmp[mu*n_modes + nu];
+	}
+	#endif
+
+	// Apply the normalization and write the output
+	for (mu = 0; mu < n_modes; ++mu) {
+		for (nu = 0; nu < n_modes; ++nu) {
+			d2v_dR2_out[mu * n_modes + nu] += d2v_dR2[mu * n_modes + nu] / (N_eff * N_sym);
+		}
+	}
+
+	// Free the allocated memory
+	free(d2v_dR2);
+	free(d2v_tmp);
+
+	free(force);
+	free(displacement);
+
+}
+
+
+
+// D4 contribution
+void get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                    double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * d2v_dR2_out) {
 	int i, j, k, mu, nu;
@@ -2358,7 +2855,7 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2383,8 +2880,11 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 }
 
 
+
+
+
 // Deprecated
-double get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) {
+void get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) {
 	int i, mu, nu;
 
 	double N_eff = 0;

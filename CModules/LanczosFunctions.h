@@ -201,7 +201,7 @@ void get_weights(const double * X, const double * w, const double * R1, const do
  *   T : double	
  *       The temperature of the calculation.
  */
-double get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) ;
+void get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) ;
 
 
 
@@ -222,7 +222,7 @@ void get_d2v_dR2_from_R_pert(const double * X, const double * Y, const double * 
 // This includes the D4.
 // Differently from the previous two subroutintes, this one does not reset the <d2v/dr2>,
 // But adds the result on the top of it.
-double get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2);
+void get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2);
 
 
 // ---------------------- HERE THE VERSION WITH THE EXPLICIT SYMMETRIZATION -----------------------------
@@ -251,8 +251,25 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 								  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								 double * d2v_dR2);
 
-double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                    double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
+								   double * d2v_dR2_out);
+
+
+
+
+// Here the symmetrized functions with clever symmetries (low memory consumption)
+
+
+void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                         double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								         double * f_average) ;
+void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  double * R1, double T, int n_modes, 
+                                 int n_configs, double * w_is, 
+								  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
+								 double * d2v_dR2) ;
+void get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+                                   double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
 								   double * d2v_dR2_out);
 
 /*

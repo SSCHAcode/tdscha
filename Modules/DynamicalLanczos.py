@@ -106,6 +106,8 @@ class Lanczos(object):
         order = "C"
         #if self.mode >= 1:
         #    order = "F"
+
+        # HERE DEFINE ALL THE VARIABLES FOR THE Dynamical Lanczos
     
         self.T = 0
         self.nat = 0
@@ -150,10 +152,22 @@ class Lanczos(object):
         self.M_linop = None
         self.unwrapped = False
 
+        self.u_tilde = None
+        self.f_tilde = None
+
+        self.sym_block_id = None
+
+
+        # Setup the attribute control
+        self.__total_attributes__ = [item for item in self.__dict__.keys()]
+        self.fixed_attributes = True # This must be the last attribute to be setted
+
         # Perform a bare initialization if the ensemble is not provided
         if ensemble is None:
             return
 
+
+        # ========== END OF VARIABLE DEFINITION (EACH NEW DEFINITION FROM NOW ON RESULTS IN AN ERROR) =======
 
         self.dyn = ensemble.current_dyn.Copy() 
         superdyn = self.dyn.GenerateSupercellDyn(ensemble.supercell)
@@ -303,9 +317,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         # Store the basis and the coefficients of the Lanczos procedure
         # In the custom lanczos mode
-        self.a_coeffs = [] #Coefficients on the diagonal
-        self.b_coeffs = [] # Coefficients close to the diagonal
-        self.g_coeffs = [] # Coefficients for the non symmetric Lanczos (finite temperature)
         self.krilov_basis = [] # The basis of the krilov subspace
         self.arnoldi_matrix = [] # If requested, the upper triangular arnoldi matrix
 
@@ -314,10 +325,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.reverse_L = False
         self.shift_value = 0
 
-
-        # Setup the attribute control
-        self.__total_attributes__ = [item for item in self.__dict__.keys()]
-        self.fixed_attributes = True # This must be the last attribute to be setted
 
 
     def __setattr__(self, name, value):
@@ -539,11 +546,12 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         
         # Neglect the symmetries
         if no_sym or self.unwrapped:
-            self.symmetries = np.zeros( (1, self.n_modes, self.n_modes), dtype = TYPE_DP)
-            self.symmetries[0, :, :] = np.eye(self.n_modes)
+            self.symmetries = [np.ones( (1,1,1), dtype = np.double)] * self.n_modes
             self.N_degeneracy = np.ones(self.n_modes, dtype = np.intc)
             self.degenerate_space = [[i] for i in range(self.n_modes)]
+            self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
+
 
         t1 = time.time()
         super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
@@ -554,42 +562,64 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
-        pol_symmetries = CC.symmetries.GetSymmetriesOnModes(super_symmetries, super_structure, pols)
+        pol_symmetries, basis = CC.symmetries.GetSymmetriesOnModesDeg(super_symmetries, super_structure, self.pols, self.w)
+        #pol_symmetries = CC.symmetries.GetSymmetriesOnModes(super_symmetries, super_structure, pols)
         t1 = time.time()
         if verbose:
             print("Time to convert symmetries in the polarizaion space: {} s".format(t1-t2))
 
+        self.symmetries = pol_symmetries
+        self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
+        self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
+        self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
 
-        Ns, dumb, dump = np.shape(pol_symmetries)
+        # Create the mapping between the modes and the block id.
+        t1 = time.time()
+        for i in range(self.n_modes):
+            for j, block in enumerate(self.degenerate_space):
+                if i in block:
+                    self.sym_block_id[i] = j 
+                    break
+            
+            assert self.sym_block_id[i] >= 0, "Error, something went wrong during the symmetrization"
+        t2 = time.time()
+
+        if verbose:
+            print("Time to create the block_id array: {} s".format(t2-t1))
+
+
+
+
+        # Ns, dumb, dump = np.shape(pol_symmetries)
         
-        # Now we can pull out the translations
-        trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
-        self.symmetries = np.zeros( (Ns, self.n_modes, self.n_modes), dtype = TYPE_DP)
-        ptmp = pol_symmetries[:, :,  ~trans_mask] 
-        self.symmetries[:,:,:] = ptmp[:, ~trans_mask, :]
+        # # Now we can pull out the translations
+        # trans_mask = CC.Methods.get_translations(pols, super_structure.get_masses_array())
+        # self.symmetries = np.zeros( (Ns, self.n_modes, self.n_modes), dtype = TYPE_DP)
+        # ptmp = pol_symmetries[:, :,  ~trans_mask] 
+        # self.symmetries[:,:,:] = ptmp[:, ~trans_mask, :]
 
-        # Get the degeneracy
-        w = w[~trans_mask]
-        N_deg = np.ones(len(w), dtype = np.intc)
-        start_deg = -1
-        deg_space = [ [x] for x in range(self.n_modes)]
-        for i in range(1, len(w)):
-            if np.abs(w[i-1] - w[i]) < __EPSILON__ :
-                N_deg[i] = N_deg[i-1] + 1
+        # # Get the degeneracy
+        # w = w[~trans_mask]
+        # N_deg = np.ones(len(w), dtype = np.intc)
+        # start_deg = -1
+        # deg_space = [ [x] for x in range(self.n_modes)]
+        # for i in range(1, len(w)):
+        #     if np.abs(w[i-1] - w[i]) < __EPSILON__ :
+        #         N_deg[i] = N_deg[i-1] + 1
 
-                if start_deg == -1:
-                    start_deg = i - 1
+        #         if start_deg == -1:
+        #             start_deg = i - 1
 
-                for j in range(start_deg, i):
-                    N_deg[j] = N_deg[i]
-                    deg_space[j].append(i)
-                    deg_space[i].append(j)
-            else:
-                start_deg = -1
+        #         for j in range(start_deg, i):
+        #             N_deg[j] = N_deg[i]
+        #             deg_space[j].append(i)
+        #             deg_space[i].append(j)
+        #     else:
+        #         start_deg = -1
 
 
-        self.N_degeneracy = N_deg
-        self.degenerate_space = deg_space
+        #self.N_degeneracy = N_deg
+        #self.degenerate_space = deg_space
 
     def prepare_input_files(self, root_name = "tdscha", n_steps = 100, start_from_scratch = True, directory="."):
         """
@@ -634,7 +664,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         All the other data contain 2d arrays or more sophisticated data.
         """
 
-        Nsyms, _, __ = self.symmetries.shape
+        Nsyms, _,_ = np.shape(self.symmetries[0])
 
         json_data = {"T" : self.T, 
                      "n_steps" : n_steps,
@@ -645,6 +675,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                          "n_configs" : int(self.N),
                          "n_modes" : int(self.n_modes),
                          "n_syms" : Nsyms,
+                         "n_blocks" : len(self.symmetries),
                          "perturbation_modulus" : self.perturbation_modulus,
                          "reverse" : self.reverse_L,
                          "shift" : self.shift_value} }
@@ -666,6 +697,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
             # Save 1D arrays
             np.savetxt(root_fname + ".ndegs", self.N_degeneracy, fmt = "%d")
+            np.savetxt(root_fname + ".blockid", self.sym_block_id, fmt = "%d")
             np.savetxt(root_fname + ".masses", self.m)
             np.savetxt(root_fname + ".freqs", self.w)
             np.savetxt(root_fname + ".rho", self.rho)
@@ -678,25 +710,19 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             np.savetxt(root_fname + ".psi", self.psi)
 
             # Prepare the symmetry variables for the C code
-            deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
-            i = 0
-            i_mode = 0
-            j_mode = 0
-            #print("Mapping degeneracies:", np.sum(n_degeneracies))
-            while i_mode < self.n_modes:
-                #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
-                deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
-                j_mode += 1
-                i += 1
-                if j_mode == self.N_degeneracy[i_mode]:
-                    i_mode += 1
-                    j_mode = 0
-            np.savetxt(root_fname + ".degs", deg_space_new, fmt = "%d")
+            for i in range(len(self.symmetries)):
+                np.savetxt(root_fname + ".block{:d}".format(i), self.degenerate_space[i], fmt = "%d")
 
 
-            # Save all the symmetries
-            for i in range(Nsyms):
-                np.savetxt(root_fname + ".syms{:d}".format(i), self.symmetries[i, :, :])
+                ns, b1, b2 = self.symmetries[i].shape
+                with open(root_fname + ".symsb{:d}".format(i), "w") as fp:
+                    for isym in range(ns):
+                        for k1 in range(b1):
+                            for k2 in range(b2):
+                                fp.write(" {:22.16f}".format(self.symmetries[i][isym, k1, k2]))
+                            fp.write("\n")
+                        fp.write("\n")
+
 
 
     def load_from_input_files(self, root_name = "tdscha", directory="."):
@@ -1435,30 +1461,33 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             apply_d4 = 0
 
         # Prepare the symmetry variables for the C code
-        deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
-        i = 0
-        i_mode = 0
-        j_mode = 0
-        #print("Mapping degeneracies:", np.sum(n_degeneracies))
-        while i_mode < self.n_modes:
-            #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
-            deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
-            j_mode += 1
-            i += 1
-            if j_mode == self.N_degeneracy[i_mode]:
-                i_mode += 1
-                j_mode = 0
+        # deg_space_new = np.zeros(np.sum(self.N_degeneracy), dtype = np.intc)
+        # i = 0
+        # i_mode = 0
+        # j_mode = 0
+        # #print("Mapping degeneracies:", np.sum(n_degeneracies))
+        # while i_mode < self.n_modes:
+        #     #print("cross_modes: ({}, {}) | deg_i = {}".format(i_mode, j_mode, n_degeneracies[i_mode]))
+        #     deg_space_new[i] = self.degenerate_space[i_mode][j_mode]
+        #     j_mode += 1
+        #     i += 1
+        #     if j_mode == self.N_degeneracy[i_mode]:
+        #         i_mode += 1
+        #         j_mode = 0
 
 
         # Compute the perturbed averages (the time consuming part is HERE)
         #print("Entering in get pert...")
-        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, 
-                                          self.symmetries, self.N_degeneracy, deg_space_new, 
+        n_syms, _, _ = np.shape(self.symmetries[0])
+        #print("DEG:")
+        #print(self.degenerate_space)
+        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
+                                          self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
                                           f_pert_av, d2v_pert_av)
 
-        print("D2V:")
-        np.set_printoptions(threshold = 10)
-        print(d2v_pert_av[:10, :10])#print("Out get pert")
+        #print("D2V:")
+        #np.set_printoptions(threshold = 10000)
+        #print(d2v_pert_av[:10, :10])#print("Out get pert")
 
         #print("<f> pert = {}".format(f_pert_av))
         #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
@@ -1573,13 +1602,13 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             current = current + self.n_modes - i
 
 
-        print("First element of pert_Y:", pert_Y[0,0])
-        print("Y_w = ", Y_w)
-        print("All pert Y:")
-        print(pert_Y)
+        # print("First element of pert_Y:", pert_Y[0,0])
+        # print("Y_w = ", Y_w)
+        # print("All pert Y:")
+        # print(pert_Y)
 
-        print("Final psi:")
-        print(final_psi[self.n_modes: self.n_modes + 10])
+        # print("Final psi:")
+        # print(final_psi[self.n_modes: self.n_modes + 10])
 
 
         #print("Output:", final_psi)
@@ -1903,10 +1932,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 arnoldi_matrix = self.arnoldi_matrix,
                                 reverse = self.reverse_L,
                                 shift = self.shift_value,
-                                symmetries = self.symmetries,
-                                N_degeneracy = self.N_degeneracy,
-                                initialized = self.initialized,
-                                degenerate_space = self.degenerate_space,
                                 perturbation_modulus = self.perturbation_modulus,
                                 q_vectors = self.q_vectors)
             
@@ -3664,7 +3689,6 @@ Max number of iterations: {}
             L_q = self.L_linop.matvec(psi_q)
             p_L = self.L_linop.rmatvec(psi_p) # psi_p is normalized (this must be considered when computing c coeff) 
 
-            print("L_q: ", L_q[self.n_modes: self.n_modes + 10])
             t2 = time.time()
 
             if debug:
@@ -4447,7 +4471,7 @@ def FastApplyD4ToDyn(X, Y, rho, w, T, input_dyn, symmetries, n_degeneracies, deg
        dtype = np.float32
     if mode == CPU:
        dtype = np.float64
-
+get_
     For details on the mode, look at the parameters list
 
     Parameters
