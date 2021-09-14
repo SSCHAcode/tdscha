@@ -91,7 +91,7 @@ Does the calculation include fourth order? {}
 The directory to save the status is {}
 The prefix for the status name is {}
 
-""".format(SAVE_PREFIX, SAVE_FOLDER
+""".format(SAVE_PREFIX, SAVE_FOLDER,
            ORIGINAL_DYN, NQIRR, TEMPERATURE, FINAL_DYN,
            ENSEMBLE_DIR, N_CONFIGS, POPULATION_ID,
            LANCZOS_STEPS, USE_THIRD_ORDER, USE_FOURTH_ORDER,
