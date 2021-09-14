@@ -6,6 +6,7 @@ modules.
 
 import numpy as np 
 import time
+import sys, os
 
 # Supports both pypar and mpi4py
 __PYPAR__ = False 
