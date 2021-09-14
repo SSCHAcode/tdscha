@@ -23,7 +23,7 @@ class Lanczos {
     double *w, *nbose, *rho;
     int * N_degeneracy, *blocks_ids,  **good_deg_space;
 
-    double *X, *Y, *psi,  *symmetries;
+    double *X, *Y, *psi,  **symmetries;
 
 
     double *a, *b, *c;

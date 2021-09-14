@@ -189,7 +189,7 @@ void OMP_ApplyD3ToVector(const double * X, const double * Y, const double * rho,
     //}
 
     if (DEB) {
-      printf("File %s, Line %d: Got the new X\n", __FILE__, __LINE__, N_eff);
+      printf("File %s, Line %d: Got the new X\n", __FILE__, __LINE__);
       fflush(stdout);
     }
     
@@ -548,7 +548,7 @@ void MPI_D3_FT(const double * X, const double * Y, const double * rho, const dou
 	if (DEB) printf("Division: %d in %d ranks, with %d remainer\n",
 		count*size, size, remainer);
 
-	printf("Fast D3 FT Computation | rank %d computes from %u to %u\n", rank, start, stop);
+	printf("Fast D3 FT Computation | rank %d computes from %llu to %llu\n", rank, start, stop);
 	fflush(stdout);
 
 	clock_t d3_timing = 0, sym_timing = 0;
@@ -565,7 +565,7 @@ void MPI_D3_FT(const double * X, const double * Y, const double * rho, const dou
 		a = (mpi_index/N_modes) / N_modes;
 
 		if (DEB_L) {
-			printf("RANK %d, index = %d (%d, %d). a = %d, b = %d, c = %d\n",
+			printf("RANK %d, index = %lld (%lld, %lld). a = %d, b = %d, c = %d\n",
 				rank, mpi_index, start, stop, a, b, c);
 		}
 
@@ -852,7 +852,7 @@ void MPI_D4_FT(const double * X, const double * Y, const double * rho, const dou
 	}
 
 
-	printf("Fast D4 FT Computation | rank %d computes from %u to %u\n", rank, start, stop);
+	printf("Fast D4 FT Computation | rank %d computes from %llu to %llu\n", rank, start, stop);
 	fflush(stdout);
 
 	unsigned long long int mpi_index;
@@ -1844,7 +1844,7 @@ void get_d2v_dR2_from_R_pert(const double * X, const double * Y, const double * 
 }
 
 // D4 contribution
-double get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2_out) {
+void get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * w, const double * Y1, double T, int n_modes, int n_configs, double * w_is, double * d2v_dR2_out) {
 	int i, mu, nu;
 
 	double weight;
@@ -2059,7 +2059,7 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(f_av_tmp, f_average, n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu)
 		f_average[mu] = f_av_tmp[mu];
@@ -2232,7 +2232,7 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(f_av_tmp, f_average, n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu)
 		f_average[mu] = f_av_tmp[mu];
@@ -2405,7 +2405,7 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2577,7 +2577,7 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2602,7 +2602,7 @@ void get_d2v_dR2_from_R_pert_sym( double * X,  double * Y,  double * w,  double 
 
 
 // D4 contribution
-double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                    double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
 								   double * d2v_dR2_out) {
 	int i, j, k, mu, nu;
@@ -2717,7 +2717,7 @@ double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2744,7 +2744,7 @@ double get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 
 
 // D4 contribution
-double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                    double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * d2v_dR2_out) {
 	int i, j, k, mu, nu;
@@ -2855,7 +2855,7 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 	// Sum back the computation from different processors
 	#ifdef _MPI
 	MPI_Allreduce(d2v_tmp, d2v_dR2, n_modes*n_modes, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-	#endif _MPI
+	#endif 
 	#ifndef _MPI
 	for (mu = 0; mu < n_modes; ++mu) {
 		for (nu = 0; nu < n_modes; ++nu)
@@ -2884,7 +2884,7 @@ double get_d2v_dR2_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 
 
 // Deprecated
-double get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) {
+void get_d2v_dR2_pert(double * X, double * Y, double *w, double * weights, double * w_is, double T, int n_modes, int n_configs, double * d2v_dR2) {
 	int i, mu, nu;
 
 	double N_eff = 0;

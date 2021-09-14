@@ -1,6 +1,7 @@
 CPP := mpic++
 CC := mpicc
-FLAGS :=  -g  -O3 #(Causes a seg. fault)
+FLAGS :=   -O3 #(Causes a seg. fault)
+OPTFLAG := #-O2
 DFLAGS := -D_MPI
 MPI_FLAGS := 
 LIBS := 
@@ -11,7 +12,7 @@ tdscha-lanczos.x: $(OBJECTS)
 	$(CPP) $(FLAGS) $(MPI_FLAGS) $(OBJECTS) $(DFLAGS) -o tdscha-lanczos.x $(LIBS)
 
 LanczosFunctions.o: LanczosFunctions.c LanczosFunctions.h
-	$(CPP) $(FLAGS) $(MPI_FLAGS) $(DFLAGS) -c LanczosFunctions.c -o LanczosFunctions.o
+	$(CPP) $(FLAGS) $(OPTFLAG) $(MPI_FLAGS) $(DFLAGS) -c LanczosFunctions.c -o LanczosFunctions.o
 
 Utils.o: Utils.cpp Utils.hpp
 	$(CPP) $(FLAGS) $(MPI_FLAGS) $(DFLAGS) -c Utils.cpp -o Utils.o

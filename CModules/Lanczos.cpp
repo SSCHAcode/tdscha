@@ -21,18 +21,19 @@ Lanczos::~Lanczos() {
     free(w);
 
     free(N_degeneracy);
-    free(degenerate_space);
+    free(blocks_ids);
 
     // Free good_deg_space
-    for (int i = 0; i < n_modes; ++i){
+    for (int i = 0; i < n_blocks; ++i){
         free (good_deg_space[i]);
+        free(symmetries[i]);
     }
     free(good_deg_space);
+    free(symmetries);
 
     free(X);
     free(Y);
     free(psi);
-    free(symmetries);
 
     free(Qbasis);
     free(Pbasis);
@@ -176,11 +177,11 @@ void Lanczos::setup_from_input(string rootname) {
     // Get the length of the degenerate space
     good_deg_space = (int**) malloc(sizeof(int*) * n_blocks);
     symmetries = (double**) malloc(sizeof(double*) * n_blocks);
-    for (int i = 0; i < n_blocks ++i) {
+    for (int i = 0; i < n_blocks; ++i) {
         good_deg_space[i] = (int*) calloc(sizeof(int), N_degeneracy[i]);
         symmetries[i] = (double*) calloc(sizeof(double), n_syms * N_degeneracy[i] * N_degeneracy[i]);
 
-        file.open(rootname + ".block" + to_string(i))
+        file.open(rootname + ".block" + to_string(i));
         if (file.is_open()) {
             for (int j = 0; j < N_degeneracy[i]; ++j) {
                 file >> good_deg_space[i][j];
@@ -188,7 +189,7 @@ void Lanczos::setup_from_input(string rootname) {
         }
         file.close();
 
-        file.open(rootname + ".symsb" + to_string(i))
+        file.open(rootname + ".symsb" + to_string(i));
         if (file.is_open()) {
             for (int j = 0; j < n_syms*N_degeneracy[i]*N_degeneracy[i]; ++j) {
                 file >> symmetries[i][j];
@@ -359,8 +360,8 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
 
     if (! ignore_v3) {
-        get_f_average_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, f_pert_av);
-        get_d2v_dR2_from_R_pert_sym(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
+        get_f_average_from_Y_pert_sym_fast(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, blocks_ids, f_pert_av);
+        get_d2v_dR2_from_R_pert_sym_fast(X, Y, w, R1, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, blocks_ids, d2v_pert_av);
     }
 
     // cout << endl;
@@ -375,7 +376,7 @@ void Lanczos::apply_anharmonic(double * final_psi, bool transpose) {
 
     if (! ignore_v4) {
         // This subroutine gives seg. fault if optimized with -O3
-        get_d2v_dR2_from_Y_pert_sym(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, d2v_pert_av);
+        get_d2v_dR2_from_Y_pert_sym_fast(X, Y, w, Y1_new, T, n_modes, N, rho, symmetries, n_syms, N_degeneracy, good_deg_space, blocks_ids, d2v_pert_av);
     }
 
 
