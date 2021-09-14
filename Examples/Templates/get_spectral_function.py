@@ -17,6 +17,13 @@ N_FREQS = 10000
 # Lanczos status file
 DATA_FILE = "data/tdscha_lanczos_STEP5.npz"
 
+# If you submitted with the tdscha-lanczos.x
+# Copy all the files inside the directory
+LOAD_FROM_EXECUTABLE = False
+DIRECTORY = "submit_on_cluster"
+PREFIX = "tdscha_lanczos"
+
+
 
 # HERE THE SCRIPT
 
@@ -28,7 +35,11 @@ w_ry = w / CC.Units.RY_TO_CM
 
 # Load the lanczos
 lanczos = DL.Lanczos()
-lanczos.load_status(DATA_FILE)
+
+if not LOAD_FROM_EXECUTABLE:
+    lanczos.load_status(DATA_FILE)
+else:
+    lanczos.load_from_input_files(PREFIX, DIRECTORY)
 
 # Get the dynamical green function
 green_function = lanczos.get_green_function_continued_fraction(w_ry)
