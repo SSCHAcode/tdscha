@@ -40,12 +40,12 @@ jobs:
         pip install mpi4py numpy matplotlib scipy spglib
         
         git clone https://github.com/SSCHAcode/CellConstructor.git
-        cd CellConstructor && python setup.py install && cd ..
+        cd cellconstructor && python setup.py install --user && cd ..
         
         git clone https://github.com/SSCHAcode/python-sscha.git
-        cd python-sscha && python setup.py install && cd ..
+        cd python-sscha && python setup.py install --user && cd ..
         
-        MPICC=mpicc python setup.py install
+        MPICC=mpicc python setup.py install --user
         
         cd CModules; make; cd ..
     - name: Test with pytest
