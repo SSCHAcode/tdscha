@@ -265,8 +265,10 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             f *= Ensemble.Bohr
 
         # Subtract the SSCHA GRADIENT on average position
-        # In this way the calculation works even if the system is not in equilibrium
-        f[:, :] -= np.tile(f_mean, (self.N, 1))
+        # In this way the calculation works even if the system is not in equilibrium 
+        # In this version of the code this is done directly on when we compute the averages 
+        # That allows for evaluating this term with higher statistical accuracy.
+        #f[:, :] -= np.tile(self.f_mean, (self.N, 1))
 
 
         # Perform the mass rescale to get the tilde variables

@@ -1912,7 +1912,7 @@ void get_d2v_dR2_from_Y_pert(const double * X, const double * Y, const double * 
 // ----------------------------------------------------------------------------------------------
 // HERE THE PERTURBATION WITH SYMMETRIES EXPLICITLY
 
-void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_f_average_from_Y_pert_sym( double * X,  double * Y, double * f_mean, double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                     double * w_is,  double * symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space,
 								   double * f_average) {
 	int i, j, k, mu, nu;
@@ -2071,13 +2071,23 @@ void get_f_average_from_Y_pert_sym( double * X,  double * Y,  double * w,  doubl
 		f_average[mu] /= N_eff * N_sym;
 	}
 
+	// Subtract the contribution of f_mean
+	// Which is neeaded if we are outside equilibrium (i.e. the gradient on the position is not zero)
+	double ups_inv_ups_pert = 0;
+	for (mu = 0; mu < n_modes; ++mu) {
+		ups_inv_ups_pert -= Y1[mu * n_modes + mu] / (2 * f_psi(w[mu], T));
+	}
+	for (mu = 0; mu < n_modes; ++mu) {
+		f_average[mu] -= ups_inv_ups_pert * f_mean[mu];
+	}
+
 	// Free the memory
 	free(displacement);
 	free(force);
 	free(f_av_tmp);
 }
 
-void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  double * Y1, double T, int n_modes, int n_configs, 
+void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y, double * f_mean, double * w,  double * Y1, double T, int n_modes, int n_configs, 
                                          double * w_is,  double ** symmetries, int N_sym,  int * N_degeneracy, int ** degenerate_space, int * blocks_ids,
 								         double * f_average) {
 	int i, j, k, mu, nu;
@@ -2242,7 +2252,18 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 	// Apply the normalization
 	for (mu = 0; mu < n_modes; ++mu) {
 		f_average[mu] /= N_eff * N_sym;
+	}	
+	
+	// Subtract the contribution of f_mean
+	// Which is neeaded if we are outside equilibrium (i.e. the gradient on the position is not zero)
+	double ups_inv_ups_pert = 0;
+	for (mu = 0; mu < n_modes; ++mu) {
+		ups_inv_ups_pert -= Y1[mu * n_modes + mu] / (2 * f_psi(w[mu], T));
 	}
+	for (mu = 0; mu < n_modes; ++mu) {
+		f_average[mu] -= ups_inv_ups_pert * f_mean[mu];
+	}
+
 
 	// Free the memory
 	free(displacement);
