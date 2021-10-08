@@ -23,15 +23,15 @@ FINAL_TEMPERATURE = None
 
 # The ensemble data
 ENSEMBLE_DIR = "../IceEnsembleTest" # Directory of the ensemble
-N_CONFIGS = 10000 # Number of configurations
+N_CONFIGS = 500 # Number of configurations
 POPULATION_ID = 2 # Population of the ensemble
 LOAD_BIN = False # If true, load a binary ensemble
 
 # Here the input of the TDSCHA calculation
-LANCZOS_STEPS = 100 # Number of Lanczos step
+LANCZOS_STEPS = 300 # Number of Lanczos step
 USE_THIRD_ORDER = True  # Use the third order in the calculation
 USE_FOURTH_ORDER = True # Use the fourth order (2x computational cost)
-SAVE_FOLDER = "submit_on_cluster" # The folder in which the data are saved
+SAVE_FOLDER = "submit_on_cluster_500" # The folder in which the data are saved
 SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 
 # You need to choose the response to which perturbation to compute.

@@ -26,6 +26,9 @@ int main(int argc, char * argv[]) {
     Lanczos *lanc = new Lanczos(root_name);
     lanc->run();
     delete lanc;
+
+    MPI_finalize();
+    return EXIT_SUCCESS;
 }
 
 

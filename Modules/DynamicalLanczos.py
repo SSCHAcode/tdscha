@@ -236,18 +236,18 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         f -= ensemble.sscha_forces.reshape(self.N, 3 * self.nat)
 
         # Get the average force
-        f_mean = ensemble.get_average_forces(get_error = False)
+        self.f_mean = ensemble.get_average_forces(get_error = False)
 
         # Perform the symmetrization of the average force
         qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
         qe_sym.SetupQPoint()
-        qe_sym.SymmetrizeVector(f_mean)
+        qe_sym.SymmetrizeVector(self.f_mean)
 
         # Reproduce the average force on the full supercell
-        f_mean = np.tile(f_mean, (np.prod(ensemble.current_dyn.GetSupercell()), 1)).ravel()
+        self.f_mean = np.tile(self.f_mean, (np.prod(ensemble.current_dyn.GetSupercell()), 1)).ravel()
 
         # Transpform in Bohr
-        f_mean *= Ensemble.Bohr
+        self.f_mean *= Ensemble.Bohr
         
         # Subtract also the average force to clean more the stochastic noise
         #av_force = ensemble.get_average_forces(get_error = False).ravel()
@@ -266,7 +266,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         # Subtract the SSCHA GRADIENT on average position
         # In this way the calculation works even if the system is not in equilibrium
-        print(np.shape(f), np.shape(f_mean))
         f[:, :] -= np.tile(f_mean, (self.N, 1))
 
 
