@@ -78,7 +78,7 @@ def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols
 
     # TODO: CHECK THE SIGN
     psi_right[:n_modes] = -standard_response
-    psi_left[:n_modes] = -standard_response
+    psi_left[:n_modes] = standard_response
 
     n_a = np.zeros(np.shape(w_a), dtype = TYPE_DP)
     n_b = np.zeros(np.shape(w_a), dtype = TYPE_DP)
@@ -94,22 +94,17 @@ def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols
     psi_right[start_A :] = 2 * (n_a + 1) * n_a * w_a  / (2 * n_a + 1)    
     psi_right[start_A :] += 2 * (n_b + 1) * n_b * w_b  / (2 * n_b + 1)    
 
+    psi_left[start_Y : start_A] = -(2*n_a + 1)*(2*n_b + 1) / (8 * w_a * w_b)
+
     for i, xa in enumerate(new_i_a):
         xb = new_i_b[i]
 
         psi_right[start_Y + i] *= dZ_munu[xa, xb]
         psi_right[start_A + i] *= dZ_munu[xa, xb]
-
-    # TODO: GET THE PSI LEFT (WHICH MUST BE COMPUTED)
-
+        psi_left[start_Y + i]  *= dZ_munu[xa, xb]
 
 
-
-
-
-
-    raise NotImplementedError("Error, not yet implemented.")
-
+    return psi_right, psi_left
 
 def get_Z_av(ensemble, effective_charges):
     """
