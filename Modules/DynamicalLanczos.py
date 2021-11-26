@@ -124,6 +124,7 @@ class Lanczos(object):
         self.X = []
         self.Y = []
         self.psi = []
+        self.psi_l = []
         self.eigvals = None
         self.eigvects = None
         # In the custom lanczos mode
@@ -156,6 +157,7 @@ class Lanczos(object):
         self.f_tilde = None
 
         self.sym_block_id = None
+
 
 
         # Setup the attribute control
@@ -299,6 +301,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #print("LEN PSI:", len_psi)
 
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        self.psi_l = np.zeros_like(self.psi)
 
         # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
         def L_transp(psi):
@@ -365,6 +368,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         len_psi = self.n_modes
         len_psi += self.n_modes * (self.n_modes + 1)
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        self.psi_l = np.zeros_like(self.psi)
 
 
         # Prepare the solution of the Lanczos algorithm
@@ -402,6 +406,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         len_psi = self.n_modes
         len_psi += self.n_modes * (self.n_modes + 1)
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        self.psi_l = np.zeros_like(self.psi)
         
         self.prepare_symmetrization(no_sym = not use_symmetries)
         self.initialized = True
@@ -902,6 +907,7 @@ File {} not found. S norm not loaded.
         m_on = np.sqrt(self.m) ** masses_exp
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
         self.psi[:self.n_modes] = new_v
+        self.psi_l[:] = self.psi
 
         self.perturbation_modulus = new_v.dot(new_v)
 
@@ -923,6 +929,7 @@ File {} not found. S norm not loaded.
 
         self.psi[:] = 0
         self.psi[index] = 1 
+        self.psi_l[:] = self.psi
         self.perturbation_modulus = 1
 
         
@@ -3637,6 +3644,8 @@ Max number of iterations: {}
             self.s_norm = []
             first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
             self.basis_Q.append(first_vector)
+            if self.psi_l is not None:
+                first_vector = self.psi_l / np.sqrt(self.psi_l.dot(self.psi_l))
             self.basis_P.append(first_vector)
             self.s_norm.append(1)
         else:
@@ -3664,7 +3673,7 @@ Max number of iterations: {}
         psi_p = self.basis_P[-1]
 
         if debug:
-            print("Q basis:", self.basis_Q)
+            print("Q basis:", self.basis_Q)def run_FT
             print("P basis:", self.basis_P)
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)

@@ -5,7 +5,7 @@ import sscha, sscha.Ensemble as Ensemble
 import numpy as np
 
 
-def get_ir_perturbation(light_in, light_out, ensemble, effective_charges, w_pols = None):
+def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols):
     """
     GET THE IR PERTURBATION
     =======================
@@ -26,13 +26,59 @@ def get_ir_perturbation(light_in, light_out, ensemble, effective_charges, w_pols
             They are the d^2 E / dR deps
             Where R is the atomic Cartesian coordinate and correspond to first and last index.
             eps is the electric field, and correspond to the medium index.
-        w_pols : (w, pols)
-            Optional. If given, avoid the diagonalization of the current dynamical matrix
+        frequencies : ndarray(n_modes)
+            The frequencies of the active frequencies. 
+        pols : ndarray(3n_atoms, n_modes)
+            The polarization vectors
+
+
+    Results
+    -------
+        psi_right, psi_left : ndarray
+            The two vectors of the response function.
+            psi_right is the perturbation (p in the Monacelli Mauri PRB, 2021)
+            psi_left is the response (q in the Monacelli Mauri PRB, 2021)
     """
+
+    Z_av = get_Z_av(ensemble, effective_charges)
+    dZ_dR_av = get_dZ_dR(ensemble, effective_charges)
+
+    # Contract the effective charges with the two dypole moments
+    Z_av_new = np.einsum("a, ab -> b", light_in, Z_av)
+    dZ_dR_av_new = np.einsum("a, abc -> bc", light_in, dZ_dR_av)
+
+    supercell_structure = ensemble.current_dyn.structure.generate_supercell(ensemble.current_dyn.GetSupercell())
+    mass = np.tile(supercell_structure.get_masses_array(), (3, 1)).T.ravel()
+
+    standard_response = np.einsum("a, ab -> b", Z_av_new / np.sqrt(mass), pols)
+
+    dZ_over_M = dZ_dR_av_new / np.outer( np.sqrt(mass), np.sqrt(mass))
+    dZ_munu = np.einsum("ab, ai, bj -> ij", dZ_over_M, pols, pols)
+
+
+    # Prepare the symmetric representation of ReA and Y
+    n_modes = len(frequencies)
+    i_a = np.tile(np.arange(n_modes), (n_modes,1)).ravel()
+    i_b = np.tile(np.arange(n_modes), (n_modes,1)).T.ravel()
+
+    new_i_a = np.array([i_a[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+    new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+    
+    w_a = frequencies[new_i_a]
+    w_b = frequencies[new_i_b]
+
+    N_w2 = len(w_a)
+    
+
+
+
+
+
+
     raise NotImplementedError("Error, not yet implemented.")
 
 
-def get_M_av(ensemble, effective_charges):
+def get_Z_av(ensemble, effective_charges):
     """
     Get the average of the effective charges over the ensemble
     """
@@ -60,7 +106,7 @@ Error, the number of effective charges ({})
     return av_eff
 
 
-def get_dM_dR(ensemble, effective_charges, w_pols = None):
+def get_dZ_dR(ensemble, effective_charges, w_pols = None):
     """
     COMPUTE THE DERIVATIVE OF THE DIPOLE MOMENT
     ===========================================
