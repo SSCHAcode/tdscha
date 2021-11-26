@@ -2,7 +2,10 @@ import tdscha
 import cellconstructor as CC
 import sscha, sscha.Ensemble as Ensemble
 
+from tdscha.DynamicalLanczos import __RyToK__
 import numpy as np
+
+from tdscha.DynamicalLanczos import TYPE_DP
 
 
 def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols):
@@ -57,6 +60,7 @@ def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols
 
 
     # Prepare the symmetric representation of ReA and Y
+    T = ensemble.current_T
     n_modes = len(frequencies)
     i_a = np.tile(np.arange(n_modes), (n_modes,1)).ravel()
     i_b = np.tile(np.arange(n_modes), (n_modes,1)).T.ravel()
@@ -68,7 +72,36 @@ def get_ir_perturbation(light_in, ensemble, effective_charges, frequencies, pols
     w_b = frequencies[new_i_b]
 
     N_w2 = len(w_a)
-    
+
+    psi_right = np.zeros(n_modes + 2 * N_w2, dtype = TYPE_DP)
+    psi_left = np.zeros(n_modes + 2 * N_w2, dtype = TYPE_DP)
+
+    # TODO: CHECK THE SIGN
+    psi_right[:n_modes] = -standard_response
+    psi_left[:n_modes] = -standard_response
+
+    n_a = np.zeros(np.shape(w_a), dtype = TYPE_DP)
+    n_b = np.zeros(np.shape(w_a), dtype = TYPE_DP)
+    if T > 0:
+        n_a = 1 / (np.exp( w_a / np.double(T / __RyToK__)) - 1)
+        n_b = 1 / (np.exp( w_b / np.double(T / __RyToK__)) - 1)
+
+    # Get the places where the perturbations start
+    start_Y = n_modes
+    start_A = n_modes + N_w2
+
+    psi_right[start_Y : start_A] = 2 * w_a / (2*n_a + 1) + 2 * w_b / (2*n_b + 1)
+    psi_right[start_A :] = 2 * (n_a + 1) * n_a * w_a  / (2 * n_a + 1)    
+    psi_right[start_A :] += 2 * (n_b + 1) * n_b * w_b  / (2 * n_b + 1)    
+
+    for i, xa in enumerate(new_i_a):
+        xb = new_i_b[i]
+
+        psi_right[start_Y + i] *= dZ_munu[xa, xb]
+        psi_right[start_A + i] *= dZ_munu[xa, xb]
+
+    # TODO: GET THE PSI LEFT (WHICH MUST BE COMPUTED)
+
 
 
 
