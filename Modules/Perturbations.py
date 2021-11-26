@@ -32,6 +32,33 @@ def get_ir_perturbation(light_in, light_out, ensemble, effective_charges, w_pols
     raise NotImplementedError("Error, not yet implemented.")
 
 
+def get_M_av(ensemble, effective_charges):
+    """
+    Get the average of the effective charges over the ensemble
+    """
+
+    assert len(effective_charges) == ensemble.N, """
+Error, the number of effective charges ({})
+       does not match with the ensemble size ({}).
+""".format(len(effective_charges), ensemble.N)
+
+    # Create the effective charge array
+    dyn = ensemble.current_dyn
+
+    n_rand = ensemble.N
+    nat = dyn.structure.N_atoms
+    nat_sc = nat * np.prod(dyn.GetSupercell())
+    new_eff_charge = np.zeros((n_rand, 3 * nat_sc, 3), dtype = np.double, order = "F")
+
+    for i in range(n_rand):
+        new_eff_charge[i, :, :] = np.einsum("abc ->bac", effective_charges[i]).reshape((3, 3*nat_sc)).T
+    
+    N_effective = np.sum(ensemble.rho)
+    av_eff = np.einsum("iab, i", new_eff_charge, ensemble.rho) / N_effective
+
+    # TODO: Apply symmetries
+    return av_eff
+
 
 def get_dM_dR(ensemble, effective_charges, w_pols = None):
     """
