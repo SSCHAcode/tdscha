@@ -266,7 +266,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         # Subtract the SSCHA GRADIENT on average position
         # In this way the calculation works even if the system is not in equilibrium
-        print(np.shape(f), np.shape(f_mean))
+        #print(np.shape(f), np.shape(f_mean))
         f[:, :] -= np.tile(f_mean, (self.N, 1))
 
 
@@ -787,6 +787,21 @@ File {} not found. basis_P not loaded.
 File {} not found. S norm not loaded.
 """.format(snorm_file)
             warnings.warn(warnmsg)
+
+        # Load the Json file with other general variables
+        with open(os.path.join(directory, root_name + ".json"), "r") as fp:
+            json_data = json.load(fp)
+
+        self.perturbation_modulus = json_data["data"]["perturbation_modulus"]
+        self.T = json_data["T"]
+        self.ignore_harmonic = json_data["ignore_v2"]
+        self.ignore_v3 = json_data["ignore_v3"]
+        self.ignore_v4 = json_data["ignore_v4"]
+        self.N = json_data["data"]["n_configs"]
+        self.n_modes = json_data["data"]["n_modes"]
+        self.reverse_L = json_data["data"]["reverse"]
+        self.shift_value = json_data["data"]["shift"]
+
 
 
 
