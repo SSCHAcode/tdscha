@@ -134,12 +134,25 @@ Error, the number of effective charges ({})
     return av_eff
 
 
-def get_dZ_dR(ensemble, effective_charges, w_pols = None):
+def get_dZ_dR(ensemble, effective_charges, mean_eff_charge, w_pols = None):
     """
     COMPUTE THE DERIVATIVE OF THE DIPOLE MOMENT
     ===========================================
 
     Using the effective charges, we compute the derivative of the dipole moment
+
+    Parameters
+    ----------
+        ensemble : sscha.Ensemble.Ensemble
+            The SSCHA ensemble
+        effective_charges: list
+            List of the effective charges, each one must be a ndarray
+            of size  (nat, 3, 3). The middle index indicates the electric field.
+        mean_eff_charge: ndarray(size = (nat, 3, 3))
+            The average effective charge.
+        w_pols : tuple
+            frequencies and polarization vectors of the current dynamical matrix
+            if given, avoids to dyagonalize the dynamical matrix once again.
     """
 
     assert len(effective_charges) == ensemble.N, """
@@ -165,7 +178,7 @@ Error, the number of effective charges ({})
     new_eff_charge = np.zeros((n_rand, 3 * nat_sc, 3), dtype = np.double, order = "F")
 
     for i in range(n_rand):
-        new_eff_charge[i, :, :] = np.einsum("abc ->bac", effective_charges[i]).reshape((3, 3*nat_sc)).T
+        new_eff_charge[i, :, :] = np.einsum("abc ->bac", effective_charges[i] - mean_eff_charge).reshape((3, 3*nat_sc)).T
     
     N_effective = np.sum(ensemble.rho)
 

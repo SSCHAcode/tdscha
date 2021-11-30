@@ -30,6 +30,7 @@ import sscha_HP_odd
 import cellconstructor.Settings as Parallel
 from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
+import tdscha.Perturbations as Perturbations
 
 # Define a generic type for the double precision.
 TYPE_DP = np.double
@@ -834,6 +835,10 @@ File {} not found. S norm not loaded.
         In this subroutine we prepare the lanczos algorithm for the computation of the
         infrared spectrum signal.
 
+        NOTE: This subroutine only computes the standard IR (one-phonon contribution)
+              To get the full IR signal, including multiple phonon excitations, 
+              use prepare_ir_complete()
+
         Parameters
         ----------
             effective_charges : ndarray(size = (n_atoms, 3, 3), dtype = np.double)
@@ -867,6 +872,32 @@ File {} not found. S norm not loaded.
         # Get the gamma effective charge
         new_zeff = np.tile(z_eff.ravel(), n_supercell)
         self.prepare_perturbation(new_zeff, masses_exp = -1)
+
+    def prepare_ir_complete(self, light_polarization = np.array([1,0,0], dtype = np.double), effective_charges = []):
+        """
+        COMPUTE IR WITH VARIABLE EFFECTIVE CHARGES
+        ==========================================
+
+        This method perform the lanczos with the perturbation as in PRB 103 (10), 104305, 2021, eq 98 and 99.
+        Differently from prepare_ir, this method takes into account the multi-phonon excitation of light, 
+        which are possible whenever the effective charges depend on the atomic coordinates.
+
+        Parameters
+        ----------
+            light_polarization : ndarray(size = 3, dtype = np.double)
+                The light polarization
+            effective_charges : list
+                List of effective charges
+        """
+        self.reset()
+
+        perturbation, responce = Perturbations.get_ir_perturbation(light_polarization, self.ensemble, effective_charges, self.w, self.pols)
+
+
+        self.psi[:] = perturbation
+        self.psi_l[:] = response
+
+        
 
 
     def prepare_perturbation(self, vector, masses_exp = 1):
@@ -3673,7 +3704,7 @@ Max number of iterations: {}
         psi_p = self.basis_P[-1]
 
         if debug:
-            print("Q basis:", self.basis_Q)def run_FT
+            print("Q basis:", self.basis_Q)
             print("P basis:", self.basis_P)
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)

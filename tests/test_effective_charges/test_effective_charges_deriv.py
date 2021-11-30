@@ -19,6 +19,8 @@ def test_effective_charges_derivative(verbose = False):
     dyn.structure.coords[0,0] = 0
     dyn.structure.coords[1,0] = dyn.structure.unit_cell[0,0] / 2
 
+    mean_eff_charge = get_effective_charges([dyn.structure])[0]
+
 
     np.random.seed(0)
     N_RANDOM = 400
@@ -47,7 +49,7 @@ def test_effective_charges_derivative(verbose = False):
         # Get the effective charges
         eff_charges = get_effective_charges(ensemble.structures)
         z_av = tdscha.Perturbations.get_Z_av(ensemble, eff_charges)
-        dz_dR_av = tdscha.Perturbations.get_dZ_dR(ensemble, eff_charges)
+        dz_dR_av = tdscha.Perturbations.get_dZ_dR(ensemble, eff_charges, mean_eff_charge)
 
         z0[i] = z_av[0, 0]
         dz_dR[i] = dz_dR_av[0, 0, 0]
@@ -62,7 +64,7 @@ def test_effective_charges_derivative(verbose = False):
         plt.plot(_x_bohr_, dz_dR, label = "anal grad")
         plt.legend()
         plt.tight_layout()
-        plt.show()
+
 
     grad = np.gradient(z0, _x_bohr_)
     assert np.max(np.abs(dz_dR - grad)[1:-1]) < 8
@@ -130,9 +132,10 @@ def test_eff_charges_with_calc(plot = False):
 
     if plot:
         plt.plot(_x_, eff)
-        plt.show()
+
         
 
 if __name__ == "__main__":
     test_effective_charges_derivative(True)
     test_eff_charges_with_calc(True)    
+    plt.show()
