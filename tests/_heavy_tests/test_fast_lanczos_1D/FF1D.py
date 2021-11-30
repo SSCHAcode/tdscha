@@ -84,7 +84,7 @@ class ToyModel1D(calc.Calculator):
         
         
 def test_toy_model():
-    calc = ToyModel2D()
+    calc = ToyModel1D()
 
     # Define a simple system
     atoms = ase.atoms.Atoms("H2", [(0,0,0), (0,0,0)])
