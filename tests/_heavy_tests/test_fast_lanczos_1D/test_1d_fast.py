@@ -272,7 +272,7 @@ def DynamicalSSCHA(func,w_array, x0, phi0, _x_, full_spectral = False, m = 1, sm
     
     print("d3 = {}".format(d3))
     print("d4 = {}".format(d4))
-    print("sym_pal = {} | test = {}".format(sym_pal, sqrt(1 / (2*w))))
+    print("sym_pal = {} | test = {}".format(sym_pal, np.sqrt(1 / (2*w))))
     
     print("w2 = {} | w3 = {} | w4 = {}".format(d2, d3 * sym_pal, d4*sym_pal**2))
     #d4 = 0
