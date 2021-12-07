@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 
 # INPUT VARIABLES -------------------
 FREQ_START = 0 # cm-1
-FREQ_END = 100 # cm-1
+FREQ_END = 1000 # cm-1
 N_FREQS = 10000
 
 # Lanczos status file
