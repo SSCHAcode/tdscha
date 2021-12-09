@@ -200,7 +200,7 @@ data = \
  'cc_on_x64': True,
  'cc_on_x86': False,
  'feature_is_cached': True,
- 'feature_min': {'SSE2', 'SSE', 'SSE3'},
+ 'feature_min': {'SSE', 'SSE3', 'SSE2'},
  'feature_supported': {'AVX': {'flags': ['-mavx'],
                                'headers': ['immintrin.h'],
                                'implies': ['SSE42'],

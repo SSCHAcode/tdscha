@@ -17,9 +17,11 @@ NQIRR = 1  # Number of irreducible q points of the dynamical matrix
 FINAL_DYN = "../IceEnsembleTest/dyn_population2_"
 
 # Temperature (in K) used to generate the ensemble
-TEMPERATURE = 0
+TEMPERATURE = 100
 # Temperature for the Lanczos calculation (If None the same as TEMPERATURE)
 FINAL_TEMPERATURE = None
+
+USE_WIGNER = False
 
 # The ensemble data
 ENSEMBLE_DIR = "../IceEnsembleTest" # Directory of the ensemble
@@ -28,11 +30,16 @@ POPULATION_ID = 2 # Population of the ensemble
 LOAD_BIN = False # If true, load a binary ensemble
 
 # Here the input of the TDSCHA calculation
-LANCZOS_STEPS = 2 # Number of Lanczos step
+LANCZOS_STEPS = 100 # Number of Lanczos step
 USE_THIRD_ORDER = True  # Use the third order in the calculation
 USE_FOURTH_ORDER = True # Use the fourth order (2x computational cost)
 SAVE_EACH = 5 # Save the result each tot steps (for restart)
-SAVE_FOLDER = "data" # The folder in which the data are saved
+
+if not USE_WIGNER:
+    SAVE_FOLDER = "data" # The folder in which the data are saved
+else:
+    SAVE_FOLDER = 'data_wigner' # The folder in which the data are saved
+    
 SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 
 # You need to choose the response to which perturbation to compute.
@@ -40,7 +47,7 @@ SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 # Mode ids are ordered as the respective frequencies in the supercell
 # (excluding translations)
 
-MODE_PERTURBATION_ID = 3
+MODE_PERTURBATION_ID = 1
 # 0 => The lowest energy mode of the final sscha matrix (excluding translations)
 
 
@@ -121,6 +128,7 @@ print("Prepare the Lanczos...")
 lanczos = DL.Lanczos(ens)
 lanczos.ignore_v3 = not USE_THIRD_ORDER
 lanczos.ignore_v4 = not USE_FOURTH_ORDER
+lanczos.use_wigner = USE_WIGNER
 lanczos.init()
 
 
@@ -152,9 +160,17 @@ lanczos.prepare_mode(MODE_PERTURBATION_ID)
 # light_polarization_out = np.array([1,0,0])
 # lanczos.prepare_raman(light_polarization_in, light_polarization_out)
 
+t1 = time.time()
 
 # Run the calculation
 print("Running...")
 lanczos.run_FT(LANCZOS_STEPS, save_dir = SAVE_FOLDER,
                prefix = SAVE_PREFIX,
                save_each = SAVE_EACH)
+
+t2 = time.time()
+print('Total time required in sec {}'.format(t2 - t1))
+
+
+
+
