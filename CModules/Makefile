@@ -1,4 +1,4 @@
-CPP := mpic++
+CPP := mpicxx.mpich
 CC := mpicc
 FLAGS :=   -O3 #(Causes a seg. fault)
 OPTFLAG := #-O2

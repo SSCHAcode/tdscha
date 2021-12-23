@@ -3664,10 +3664,10 @@ Max number of iterations: {}
             self.c_coeffs = list(self.c_coeffs)
             #self.arnoldi_matrix = list(self.arnoldi_matrix)
 
-            if len(self.basis_Q) != i_step + 1:
-                print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
-                print("Error, the krilov basis dimension should be 1 more than the number of steps")
-                raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
+            #if len(self.basis_Q) != i_step + 1:
+            #    print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
+            #    print("Error, the krilov basis dimension should be 1 more than the number of steps")
+            #    raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
 
         assert len(self.basis_Q) == len(self.basis_P), "Something wrong when restoring the Lanczos."
         assert len(self.s_norm) == len(self.basis_P), "Something wrong when restarting the Lanczos."
@@ -3928,6 +3928,12 @@ or if the acoustic sum rule is not satisfied.
                 self.b_coeffs.append(b_coeff)
                 self.c_coeffs.append(c_coeff)
                 self.s_norm.append(s_norm)
+
+                # Check if we have more than 4 vectors, discard the first one
+                if len(self.basis_Q) > 4:
+                    self.basis_Q.pop(0)
+                    self.basis_P.pop(0)
+                    self.s_norm.pop(0)
 
             t2 = time.time()
 
