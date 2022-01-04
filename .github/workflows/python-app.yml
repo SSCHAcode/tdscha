@@ -41,8 +41,8 @@ jobs:
         pip install mpi4py numpy matplotlib scipy spglib --user
         
         git clone https://github.com/SSCHAcode/CellConstructor.git
-        cd cellconstructor && sudo python setup.py install && cd ..
-        rm -r cellconstructor
+        cd CellConstructor && sudo python setup.py install && cd ..
+        rm -r CellConstructor
         
         git clone https://github.com/SSCHAcode/python-sscha.git
         cd python-sscha && sudo python setup.py install && cd ..
