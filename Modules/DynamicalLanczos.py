@@ -548,7 +548,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         if no_sym or self.unwrapped:
             self.symmetries = [np.ones( (1,1,1), dtype = np.double)] * self.n_modes
             self.N_degeneracy = np.ones(self.n_modes, dtype = np.intc)
-            self.degenerate_space = [[i] for i in range(self.n_modes)]
+            self.degenerate_space = [np.array([i], dtype = np.intc) for i in range(self.n_modes)]
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
 
