@@ -11,8 +11,10 @@ from cycler import cycler
 import cellconstructor as CC
 import cellconstructor.Phonons
 
-import sscha, sscha.DynamicalLanczos
+import sscha
 import sscha.Ensemble
+
+import tdscha, tdscha.DynamicalLanczos as DL
 
 # Get from command line the last lanczos step
 if not len(sys.argv) in [2, 3]:
@@ -36,7 +38,7 @@ if not os.path.exists(fname):
 data = []
 nat = 0
 print ("Reading the lanczos file...")
-data = sscha.DynamicalLanczos.Lanczos()
+data = DL.Lanczos()
 data.load_status(fname)
 nat = data.nat
 N_iters = len(data.a_coeffs) - 1

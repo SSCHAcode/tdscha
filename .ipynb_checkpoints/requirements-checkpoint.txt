@@ -1,0 +1,8 @@
+setuptools
+numpy
+scipy
+ase
+spglib
+cellconstructor
+python-sscha
+mpi4py

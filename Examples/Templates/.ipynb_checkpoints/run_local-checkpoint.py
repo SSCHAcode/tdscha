@@ -21,6 +21,9 @@ TEMPERATURE = 100
 # Temperature for the Lanczos calculation (If None the same as TEMPERATURE)
 FINAL_TEMPERATURE = None
 
+MODE_PERTURBATION_ID = 10
+# 0 => The lowest energy mode of the final sscha matrix (excluding translations)
+
 USE_WIGNER = False
 
 # The ensemble data
@@ -30,15 +33,12 @@ POPULATION_ID = 2 # Population of the ensemble
 LOAD_BIN = False # If true, load a binary ensemble
 
 # Here the input of the TDSCHA calculation
-LANCZOS_STEPS = 100 # Number of Lanczos step
+LANCZOS_STEPS = 10 # Number of Lanczos step
 USE_THIRD_ORDER = True  # Use the third order in the calculation
 USE_FOURTH_ORDER = True # Use the fourth order (2x computational cost)
 SAVE_EACH = 5 # Save the result each tot steps (for restart)
 
-if not USE_WIGNER:
-    SAVE_FOLDER = "data" # The folder in which the data are saved
-else:
-    SAVE_FOLDER = 'data_wigner' # The folder in which the data are saved
+SAVE_FOLDER = "data_md_{}".format(MODE_PERTURBATION_ID) # The folder in which the data are saved
     
 SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 
@@ -46,9 +46,6 @@ SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 # By default, we compute only the perturabtion along one mode.
 # Mode ids are ordered as the respective frequencies in the supercell
 # (excluding translations)
-
-MODE_PERTURBATION_ID = 1
-# 0 => The lowest energy mode of the final sscha matrix (excluding translations)
 
 
 # NOTE: If you want to compute IR or Raman,
@@ -131,34 +128,33 @@ lanczos.ignore_v4 = not USE_FOURTH_ORDER
 lanczos.use_wigner = USE_WIGNER
 lanczos.init()
 
+# # Here we prepare the perturbation.
+# # We have 3 possible kinds of perturbations:
+# #   1) A single mode (default)
+# #   2) Raman
+# #   3) IR
+# #
+# # If you want Raman or IR, uncomment the relative sections
+# # and comment the one of the single mode.
+# # NOTE: Only one perturbation at time is calculated.
+# print("Preparing the perturbation...")
+# print("Selected mode ID: {} | w = {} cm-1. Check if this is what you expect.".format(MODE_PERTURBATION_ID, lanczos.w[MODE_PERTURBATION_ID] * CC.Units.RY_TO_CM))
 
-# Here we prepare the perturbation.
-# We have 3 possible kinds of perturbations:
-#   1) A single mode (default)
-#   2) Raman
-#   3) IR
-#
-# If you want Raman or IR, uncomment the relative sections
-# and comment the one of the single mode.
-# NOTE: Only one perturbation at time is calculated.
-print("Preparing the perturbation...")
-print("Selected mode ID: {} | w = {} cm-1. Check if this is what you expect.".format(MODE_PERTURBATION_ID, lanczos.w[MODE_PERTURBATION_ID] * CC.Units.RY_TO_CM))
-
-# Here the single mode code (comment if you want IR or RAMAN)
+# # Here the single mode code (comment if you want IR or RAMAN)
 lanczos.prepare_mode(MODE_PERTURBATION_ID)
 
-# Here the IR perturbation (uncomment)
-# NOTE: you need the effective charges inside the final dynamical matrix.
-# # Select the polarization of the light (cartesian coordinates)
-# light_polarization = np.array([1,0,0])
-# lanczos.prepare_ir(light_polarization)
+# # Here the IR perturbation (uncomment)
+# # NOTE: you need the effective charges inside the final dynamical matrix.
+# # # Select the polarization of the light (cartesian coordinates)
+# # light_polarization = np.array([1,0,0])
+# # lanczos.prepare_ir(light_polarization)
 
-# Here the Raman perturbation (uncomment)
-# NOTE: you need the Raman Tensor inside the final dynamical matrix.
-## Select the incoming and outcoming light polarization
-# light_polarization_in = np.array([1,0,0])
-# light_polarization_out = np.array([1,0,0])
-# lanczos.prepare_raman(light_polarization_in, light_polarization_out)
+# # Here the Raman perturbation (uncomment)
+# # NOTE: you need the Raman Tensor inside the final dynamical matrix.
+# ## Select the incoming and outcoming light polarization
+# # light_polarization_in = np.array([1,0,0])
+# # light_polarization_out = np.array([1,0,0])
+# # lanczos.prepare_raman(light_polarization_in, light_polarization_out)
 
 t1 = time.time()
 

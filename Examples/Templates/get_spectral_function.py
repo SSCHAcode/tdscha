@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # INPUT VARIABLES -------------------
 FREQ_START = 0   # cm-1
 FREQ_END = 1000 # cm-1
-N_FREQS = 10000
+N_FREQS = 9000
 
 USE_WINGER = False
 
@@ -20,7 +20,7 @@ USE_WINGER = False
 if not USE_WINGER:
     DATA_FILE = "data/tdscha_lanczos_STEP100.npz"
 else:
-    DATA_FILE = "data_wigner/tdscha_lanczos_STEP50.npz"
+    DATA_FILE = "data_wigner/tdscha_lanczos_STEP100.npz"
 
 # If you submitted with the tdscha-lanczos.x
 # Copy all the files inside the directory
@@ -71,8 +71,8 @@ plt.figure(dpi = 150)
 plt.xlabel("Frequency [cm-1]")
 plt.ylabel("- Im(G) / Re(G)")
 plt.title("Spectral function \n Static freqeuncy = {} cm-1".format(static_frequency))
-plt.plot(w, -np.imag(green_function), label = '-Im(G)')
-plt.plot(w, +np.real(green_function),'--', label = '+Re(G)')
+plt.plot(w, -np.imag(green_function)/np.abs(np.imag(green_function)).max(), label = '-Im(G)')
+plt.plot(w, +np.real(green_function)/np.abs(np.real(green_function)).max(),'--', label = '+Re(G)')
 plt.legend()
 
 plt.tight_layout()

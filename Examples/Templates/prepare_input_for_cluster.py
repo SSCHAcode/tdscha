@@ -105,6 +105,16 @@ print(INFO)
 # Load the dynamical matrix
 dyn = CC.Phonons.Phonons(ORIGINAL_DYN, NQIRR)
 final_dyn = CC.Phonons.Phonons(FINAL_DYN, NQIRR)
+t1 = time.time()
+
+# Run the calculation
+print("Running...")
+lanczos.run_FT(LANCZOS_STEPS, save_dir = SAVE_FOLDER,
+               prefix = SAVE_PREFIX,
+               save_each = SAVE_EACH)
+
+t2 = time.time()
+print('Total time required in sec {}'.format(t2 - t1))
 
 # Load the ensemble
 print("Loading the ensemble...")
