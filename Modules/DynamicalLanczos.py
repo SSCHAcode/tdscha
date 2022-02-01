@@ -2056,12 +2056,25 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 pert_Y  *= sym_mask 
                 pert_RA *= sym_mask
         else:
-#             print('[WIGNER]: anharmonic a(1)' b(1)')
+            print("[WIGNER]: anharmonic a(1)' b(1)'")
             # We are using Wigner equations
+            # Prepare a mask for double counting
+            mult_mat = np.ones(shape = (self.n_modes, self.n_modes))
+#             i_a = np.tile(np.arange(self.n_modes), (self.n_modes,1)).ravel()
+#             i_b = np.tile(np.arange(self.n_modes), (self.n_modes,1)).T.ravel()
+            
+#             mask_up = i_a > i_b
+#             mask_down = i_a < i_b
+            
+#             # In this way we put a factor of 2 on the upper and lower tringle of the matrix
+#             mult_mat.ravel()[mask_up] = 2
+#             mult_mat.ravel()[mask_down] = 2
+    
             # Propagation for a'^(1)
-            pert_Y  = np.einsum('ab, ab -> ab', +np.sqrt(-0.5 * chi_minus), d2v_pert_av)
+            pert_Y  = np.einsum('ab, ab -> ab', +np.sqrt(-0.5 * chi_minus), d2v_pert_av) * mult_mat
             # Propagation for b'^(1)
-            pert_RA = np.einsum('ab, ab -> ab', -np.sqrt(+0.5 * chi_plus),  d2v_pert_av)
+            pert_RA = np.einsum('ab, ab -> ab', -np.sqrt(+0.5 * chi_plus),  d2v_pert_av) * mult_mat
+        
             
 #         print('pert_R = ')
 #         print(f_pert_av)
@@ -2301,7 +2314,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         This function applies the L operator to the specified target vector.
         The target vector is first copied into the local psi, and the computed.
-        This function will overwrite the current psi with the specified
+        NOTE: This function will overwrite the current psi with the specified
         target.
 
         Parameters
@@ -2353,13 +2366,13 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             # Harmonic evolution
             output = self.apply_L1()
         else:
-            # Harmonic evolution at finite temperature
+            #HARMONIC evolution at finite temperature
             output = self.apply_L1_FT(transpose)
         t2 = timer()
 
         # Apply the quick_lanczos
         if fast_lanczos and (not self.ignore_v3):
-            # AnHarmonic evolution finite temperature
+            # AN-HARMONIC evolution finite temperature
             output += self.apply_anharmonic_FT(transpose)
             t3 = timer()
             t4 = t3
@@ -3831,7 +3844,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
         """
         GET THE FULL L OPERATOR FOR DEBUG WIGNER
         ========================================
-        Use this method to test if the symmetric Wigner representation works.
+        Use this method to test if the change of variables that defines the symmetric Wigner representation works.
         
         Note: make sure that self.use_wigner is Fasle so when we compute the Green function
         we get the correct sign in front of omega in the contnued fraction.
@@ -4601,7 +4614,7 @@ Max number of iterations: {}
                 L_q = self.L_linop.matvec(psi_q)
                 p_L = self.L_linop.rmatvec(psi_p)
                 # USE ONLY WHEN WE ARE SURE THAT L is SYMMETRIC
-                # p_L = np.copy(L_q)
+#                 p_L = np.copy(L_q)
                 
             t2 = time.time()
 
