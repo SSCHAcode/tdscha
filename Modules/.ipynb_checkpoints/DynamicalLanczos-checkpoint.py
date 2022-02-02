@@ -1462,7 +1462,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
     
     def get_chi_minus(self):
         r"""
-        Get the X^- equilibrium tensor in the Wigner formalism.
+        Get the chi^- equilibrium tensor in the Wigner formalism.
         
         :: math .
             \tilde{\chi}^{-}_{\mu\nu} = \frac{\hbar\left[\omega_\alpha - \omega_\beta\right]\left[n_\alpha - n_\beta\right]}{2\omega_\alpha\omega_\beta}
@@ -1482,7 +1482,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         n = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
         
         if self.T > __EPSILON__:
-            n = 1.0 / (np.exp(w * 157887.32400374097 / self.T) - 1.0)
+            n = 1.0 / (np.exp(w * 157887.32400374097 /self.T) - 1.0)
         
         chi_minus = (w - w.T) * (n - n.T) /(2. * w * w.T)
         
@@ -1491,7 +1491,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
     
     def get_chi_plus(self):
         r"""
-        Get the X^+ equilibrium tensor in the Wigner formalism.
+        Get the chi^+ equilibrium tensor in the Wigner formalism.
         
         :: math .
             \tilde{\chi}^{+}_{\mu\nu} = \frac{\hbar\left[\omega_\alpha + \omega_\beta\right]\left[1 + n_\alpha + n_\beta\right]}{2\omega_\alpha\omega_\beta}
@@ -1511,7 +1511,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         n = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
         
         if self.T > __EPSILON__:
-            n = 1.0 / (np.exp(w * 157887.32400374097 / self.T) - 1.0)
+            n = 1.0 / (np.exp(w * 157887.32400374097 /self.T) - 1.0)
         
         chi_plus = (w + w.T) * (1 + n + n.T) /(2. * w * w.T)
         
@@ -2056,24 +2056,12 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 pert_Y  *= sym_mask 
                 pert_RA *= sym_mask
         else:
-            print("[WIGNER]: anharmonic a(1)' b(1)'")
+#             print("[WIGNER]: anharmonic a(1)' b(1)'")
             # We are using Wigner equations
-            # Prepare a mask for double counting
-            mult_mat = np.ones(shape = (self.n_modes, self.n_modes))
-#             i_a = np.tile(np.arange(self.n_modes), (self.n_modes,1)).ravel()
-#             i_b = np.tile(np.arange(self.n_modes), (self.n_modes,1)).T.ravel()
-            
-#             mask_up = i_a > i_b
-#             mask_down = i_a < i_b
-            
-#             # In this way we put a factor of 2 on the upper and lower tringle of the matrix
-#             mult_mat.ravel()[mask_up] = 2
-#             mult_mat.ravel()[mask_down] = 2
-    
             # Propagation for a'^(1)
-            pert_Y  = np.einsum('ab, ab -> ab', +np.sqrt(-0.5 * chi_minus), d2v_pert_av) * mult_mat
+            pert_Y  = np.einsum('ab, ab -> ab', +np.sqrt(-0.5 * chi_minus), d2v_pert_av)
             # Propagation for b'^(1)
-            pert_RA = np.einsum('ab, ab -> ab', -np.sqrt(+0.5 * chi_plus),  d2v_pert_av) * mult_mat
+            pert_RA = np.einsum('ab, ab -> ab', -np.sqrt(+0.5 * chi_plus),  d2v_pert_av)
         
             
 #         print('pert_R = ')
@@ -4455,6 +4443,52 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             self.L_linop = scipy.sparse.linalg.LinearOperator(L_operator.shape, matvec = matvec, rmatvec = rmatvec)
         
         return L_operator
+    
+    
+    
+    
+    def mask_dot_wigner(self):
+        """
+        Builds a mask in order to do a symmetric Lanczos.
+        
+        The Lanczos is symmetric in the basis where we store all the matrices, so
+        when we run a Lanczos in all the scalar product we need to take into account
+        a double counting for the dependent indeces
+        
+        Returns:
+        --------
+            -double_mask: nd.array with size = n_modes + n_modes * (n_modes + 1)
+        """
+        # Prepare the result
+        double_mask = np.ones((self.n_modes + self.n_modes * (self.n_modes + 1)))
+        
+        # Where a'(1) and b'(1) starts
+        start_a = self.n_modes
+        start_b = self.n_modes + (self.n_modes * (self.n_modes + 1))//2
+        
+        # Get the indep indices
+        i_a = np.tile(np.arange(self.n_modes), (self.n_modes,1)).ravel()
+        i_b = np.tile(np.arange(self.n_modes), (self.n_modes,1)).T.ravel()
+
+        # Avoid the exchange of indices
+        new_i_a = np.array([i_a[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        
+        print('new_i_b')
+        print(new_i_b)
+        print('new_i_a')
+        print(new_i_a)
+        
+        # Where we have dep indices insert a 2 for double ocunting
+        double_mask[start_a: start_b][new_i_b < new_i_a] = 2
+        double_mask[start_b:][new_i_b < new_i_a] = 2
+        
+        print('mask')
+        print(new_i_b < new_i_a)
+        print(double_mask[start_a: start_b])
+        print(double_mask[start_b:])
+        
+        return double_mask
 
 
             
@@ -4493,9 +4527,10 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
         """
-
         # Check if the symmetries has been initialized
         if not self.initialized:
+            if verbose:
+                print('Not initialized. Now we symmetrize\n')
             self.prepare_symmetrization()
 
         # Check if the psi vector is prepared
@@ -4547,6 +4582,7 @@ Max number of iterations: {}
             self.basis_Q = []
             self.basis_P = []
             self.s_norm = []
+            # Normalize the first vector
             first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
             self.basis_Q.append(first_vector)
             self.basis_P.append(first_vector)
@@ -4567,7 +4603,7 @@ Max number of iterations: {}
                 raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
 
         assert len(self.basis_Q) == len(self.basis_P), "Something wrong when restoring the Lanczos."
-        assert len(self.s_norm) == len(self.basis_P), "Something wrong when restarting the Lanczos."
+        assert len(self.s_norm) == len(self.basis_P), "Something wrong when restoring the Lanczos."
         assert len(self.b_coeffs) == len(self.c_coeffs), "Something wrong when restoring the Lanczos. {} {}".format(len(self.b_coeffs), len(self.c_coeffs))
 
 
@@ -4610,7 +4646,6 @@ Max number of iterations: {}
             else:
                 if verbose:
                     print("The Wigner representation is used!\n")
-                # In this case L is symmetric
                 L_q = self.L_linop.matvec(psi_q)
                 p_L = self.L_linop.rmatvec(psi_p)
                 # USE ONLY WHEN WE ARE SURE THAT L is SYMMETRIC
