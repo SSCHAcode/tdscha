@@ -3809,8 +3809,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             a = self.a_coeffs[i] * sign - sign * self.shift_value
             b = self.b_coeffs[i] * sign
             c = b
-            # Non-symmetric Lanczos for the standard code
-            if len(self.c_coeffs) == len(self.b_coeffs): # and not self.use_wigner
+            if len(self.c_coeffs) == len(self.b_coeffs): 
                 c = self.c_coeffs[i] * sign
                
             if not self.use_wigner:
@@ -4447,7 +4446,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
     
     
     
-    def mask_dot_wigner(self):
+    def mask_dot_wigner(self, debug = False):
         """
         Builds a mask in order to do a symmetric Lanczos.
         
@@ -4473,26 +4472,32 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
         # Avoid the exchange of indices
         new_i_a = np.array([i_a[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
         new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
-        
-        print('new_i_b')
-        print(new_i_b)
-        print('new_i_a')
-        print(new_i_a)
+           
+        if debug:
+            print('start_a = ', start_a)
+            print('start_b = ', start_b)
+            print('new_i_b')
+            print(new_i_b)
+            print('new_i_a')
+            print(new_i_a)
         
         # Where we have dep indices insert a 2 for double ocunting
         double_mask[start_a: start_b][new_i_b < new_i_a] = 2
         double_mask[start_b:][new_i_b < new_i_a] = 2
         
-        print('mask')
-        print(new_i_b < new_i_a)
-        print(double_mask[start_a: start_b])
-        print(double_mask[start_b:])
+        if debug:
+            print('mask dot prod for R(1) = ')
+            print(double_mask[:start_a])
+            print("mask dot prod for a'(1) = ")
+            print(double_mask[start_a: start_b])
+            print("mask dot prod for b'(1) = ")
+            print(double_mask[start_b:])
         
         return double_mask
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS"):
+    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -4500,6 +4505,11 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
         This method performs the biconjugate Lanczos algorithm to find
         the sequence of a and b and c coefficients that are the tridiagonal representation 
         of the L matrix to be inverted.
+        
+        NOTE: when we use the Wigner formalism the Lanczos matrix is symmetric in the vector space where all the elements
+        of the tensors are considered (also those that are related by symmetry). Since the application of L
+        is done in the reduced space where we discart these elements we have to take into
+        account this by multiplying by two the off diagonal components in the scalar products.
 
         Parameters
         ----------
@@ -4526,6 +4536,8 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
                 If true prints a lot of more info about the Lanczos
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
+            run_simm : bool
+                If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product
         """
         # Check if the symmetries has been initialized
         if not self.initialized:
@@ -4551,6 +4563,9 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
         if save_dir is not None:
             if not os.path.exists(save_dir):
                 makedirs(save_dir)
+                
+        if run_simm and not self.use_wigner:
+            raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True!')
 
         # Get the current step
         i_step = len(self.a_coeffs)
@@ -4572,8 +4587,9 @@ Starting from step %d
 Should I ignore the third order effect? {}
 Should I ignore the fourth order effect? {}
 Should I use the Wigner formalism? {}
+Should I use a standard Lanczos? {}
 Max number of iterations: {}
-""".format(self.ignore_v3, self.ignore_v4, self.use_wigner, n_iter)
+""".format(self.ignore_v3, self.ignore_v4, self.use_wigner, run_simm, n_iter)
             print(OPTIONS)
 
 
@@ -4616,6 +4632,12 @@ Max number of iterations: {}
             print("P basis:", self.basis_P)
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
+            
+        if run_simm:
+            if verbose:
+                print('Running the standard Lanczos algorithm')
+            # Getting the mask product for the Wigner implementation
+            mask_dot = self.mask_dot_wigner(debug)
 
         
         next_converged = False
@@ -4634,24 +4656,31 @@ Max number of iterations: {}
                 if flush_output:
                     sys.stdout.flush()
 
-            # Apply the matrix L
+            # Application of L
             t1 = time.time()
-            
             if not self.use_wigner:
                 if verbose:
-                    print("The standard representation is used!\n")
+                    print("Running the BICONJUGATE Lanczos with standard representation!\n")
                 L_q = self.L_linop.matvec(psi_q)
                 # psi_p is normalized (this must be considered when computing c coeff) 
                 p_L = self.L_linop.rmatvec(psi_p) 
             else:
                 if verbose:
                     print("The Wigner representation is used!\n")
+                # Get the application on psi_q
                 L_q = self.L_linop.matvec(psi_q)
-                p_L = self.L_linop.rmatvec(psi_p)
-                # USE ONLY WHEN WE ARE SURE THAT L is SYMMETRIC
-#                 p_L = np.copy(L_q)
-                
+                if run_simm:
+                    # This is done because we are running the standard Lanczos
+                    if verbose:
+                        print("Running the STANDARD Lanczos with Wigner!\n")
+                    p_L = np.copy(L_q)
+                else:
+                    # This should be done only if we use the ANALYTICAL WIGENR MATRIX
+                    if verbose:
+                        print("Running the BICONJUGATE Lanczos with Wigner analytic!\n")
+                    p_L = self.L_linop.rmatvec(psi_p)   
             t2 = time.time()
+            # End of L application
 
             if debug:
                 print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q))))
@@ -4670,7 +4699,10 @@ Max number of iterations: {}
                 print("p_norm: {}".format(p_norm))
 
             # Get the a coefficient
-            a_coeff = psi_p.dot(L_q) * p_norm
+            if not run_simm:
+                a_coeff = psi_p.dot(L_q) * p_norm
+            else:
+                a_coeff = psi_p.dot(L_q * mask_dot) * p_norm
 
             # Check if something whent wrong
             if np.isnan(a_coeff):
@@ -4704,19 +4736,31 @@ or if the acoustic sum rule is not satisfied.
                 sk -= self.b_coeffs[-1] * self.basis_P[-2] * (old_p_norm / p_norm)
 
             # Get the normalization of sk 
-            s_norm = np.sqrt(sk.dot(sk))
+            if not run_simm:
+                s_norm = np.sqrt(sk.dot(sk))
+            else:
+                s_norm = np.sqrt(sk.dot(sk * mask_dot))
+                
             sk_tilde = sk / s_norm # This normalization regularizes the lanczos
             s_norm *= p_norm # Add the p normalization of L^t p that was divided from the s_k
             
-            b_coeff = np.sqrt( rk.dot(rk) )
-            c_coeff = (sk_tilde.dot(rk / b_coeff)) * s_norm 
+            if not run_simm:
+                b_coeff = np.sqrt(rk.dot(rk))
+                c_coeff = (sk_tilde.dot(rk / b_coeff)) * s_norm 
+            else:
+                b_coeff = np.sqrt(rk.dot(rk * mask_dot))
+                c_coeff = (sk_tilde.dot((rk / b_coeff) * mask_dot)) * s_norm 
 
+            
             if debug:
                 print("new p norm: {}".format(s_norm / c_coeff))
                 print("old_p_norm: {}".format(old_p_norm))
 
                 print("Modulus of rk: {}".format(b_coeff))
-                print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
+                if not run_simm:
+                    print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk))))
+                else:
+                    print("Modulus of sk: {}".format(np.sqrt(sk.dot(sk * mask_dot))))
 
                 if verbose:
                     print("Direct computation resulted in:")
@@ -4746,10 +4790,13 @@ or if the acoustic sum rule is not satisfied.
 
 
             # AFTER THIS p_norm refers to the norm of P in the previous step as psi_p has been updated
-
             if debug:
-                print("1) Check c = ", psi_q.dot(p_L) * p_norm)
-                print("2) Check b = ", psi_p.dot(L_q) * s_norm / c_coeff)
+                if not run_simm:
+                    print("1) Check c = ", psi_q.dot(p_L) * p_norm)
+                    print("2) Check b = ", psi_p.dot(L_q) * s_norm / c_coeff)
+                else:
+                    print("1) Check c = ", psi_q.dot(p_L * mask_dot) * p_norm)
+                    print("2) Check b = ", psi_p.dot(L_q * mask_dot) * s_norm / c_coeff)
 
             if debug:
                 # Check the tridiagonality
@@ -4760,17 +4807,30 @@ or if the acoustic sum rule is not satisfied.
                     else:
                         pp_norm = self.s_norm[k]
 
-                    print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, pp_norm* self.basis_P[k].dot(L_q), k, pp_norm))
+                    if not run_simm:
+                        print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, pp_norm * self.basis_P[k].dot(L_q), k, pp_norm))
+                    else:
+                        print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, pp_norm * self.basis_P[k].dot(L_q * mask_dot), k, pp_norm))
+                        
                 pp_norm = s_norm / c_coeff
-                print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, pp_norm* psi_p.dot(L_q), k+1, pp_norm))
+                if not run_simm:
+                    print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, pp_norm * psi_p.dot(L_q), k+1, pp_norm))
+                else:
+                    print("p_{:d} L q_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, pp_norm * psi_p.dot(L_q * mask_dot), k+1, pp_norm))
 
 
                 # Check the tridiagonality
                 print()
                 print("Transposed:".format(len(self.basis_P), len(self.s_norm)))
-                for k in range(len(self.basis_Q)):
-                    print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, p_norm* self.basis_Q[k].dot(p_L), k, p_norm))
-                print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, p_norm* psi_q.dot(p_L), k+1, p_norm))
+                if not run_simm:
+                    for k in range(len(self.basis_Q)):
+                        print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, p_norm* self.basis_Q[k].dot(p_L), k, p_norm))
+                    print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, p_norm* psi_q.dot(p_L), k+1, p_norm))
+                else:
+                    for k in range(len(self.basis_Q)):
+                        print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(k, len(self.basis_P)-1, p_norm* self.basis_Q[k].dot(p_L * mask_dot), k, p_norm))
+                    print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, p_norm* psi_q.dot(p_L * mask_dot), k+1, p_norm))
+                    
 
 
             t1 = time.time()
@@ -4782,10 +4842,17 @@ or if the acoustic sum rule is not satisfied.
             new_p = psi_p.copy()
 
             if debug:
-                norm_q = np.sqrt(new_q.dot(new_q))
-                norm_p = np.sqrt(new_p.dot(new_p))
-                print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))
-                print("current p dot q = {} (should be 1)".format(new_q.dot(new_p) * s_norm / c_coeff))
+                if not run_simm:
+                    norm_q = np.sqrt(new_q.dot(new_q))
+                    norm_p = np.sqrt(new_p.dot(new_p))
+                    print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))
+                    print("current p dot q = {} (should be 1)".format(new_q.dot(new_p) * s_norm / c_coeff))
+                else:
+                    norm_q = np.sqrt(new_q.dot(new_q * mask_dot))
+                    norm_p = np.sqrt(new_p.dot(new_p * mask_dot))
+                    print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))
+                    print("current p dot q = {} (should be 1)".format(new_q.dot(new_p * mask_dot) * s_norm / c_coeff))
+                    
 
                 # Check the Gram-Schmidt
                 print("GS orthogonality check: (should all be zeros)")
@@ -4795,12 +4862,16 @@ or if the acoustic sum rule is not satisfied.
                         pp_norm = self.s_norm[k] / self.c_coeffs[k-1]
                     else:
                         pp_norm = self.s_norm[k]
-                        
-                    q_dot_pold = self.basis_P[k].dot(new_q) * pp_norm
-                    p_dot_qold = self.basis_Q[k].dot(new_p) * pp_norm
+                     
+                    if not run_simm:
+                        q_dot_pold = self.basis_P[k].dot(new_q) * pp_norm
+                        p_dot_qold = self.basis_Q[k].dot(new_p) * pp_norm
+                    else:
+                        q_dot_pold = self.basis_P[k].dot(new_q * mask_dot) * pp_norm
+                        p_dot_qold = self.basis_Q[k].dot(new_p * mask_dot) * pp_norm
                     print("{:4d}) {:16.8e} | {:16.8e}".format(k, q_dot_pold, p_dot_qold))
 
-
+            # TODO: in this for cycle we need to add mask dot
             for k_orth in range(n_rep_orth):
                 ortho_q = 0
                 ortho_p = 0
