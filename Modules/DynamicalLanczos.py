@@ -3954,6 +3954,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             # Chi for the independent indeces
             L2_minus = - (2 * (n_a - n_b) * (w_a - w_b)) /(w_a * w_b * (2 * n_a + 1) *  (2 * n_b + 1)) 
             L2_plus  = + (2 * (1 + n_a + n_b) * (w_a + w_b)) /(w_a * w_b * (2 * n_a + 1) *  (2 * n_b + 1)) 
+            # X for the independent indices
             X = ((2 * n_a + 1) *  (2 * n_b + 1))/8
 
             # The shape of these tensors is (N_w2, n_modes) considering double counting
@@ -3983,7 +3984,53 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
              
    
         if not self.ignore_v4:
-            raise NotImplementedError('The symmetrizaiton on d4 is not implemented for debug Wigner')
+#             raise NotImplementedError('The symmetrizaiton on d4 is not implemented for debug Wigner')
+            # Get the full D4 tensor in the polarization basis
+            # it should be symmetric under permutations of the indices
+            d4 =  np.einsum("ia, ib, ic, id -> abcd", X_ups, X_ups, X_ups, Y_weighted)
+            d4 += np.einsum("ia, ib, ic, id -> abcd", X_ups, X_ups, Y_weighted, X_ups)
+            d4 += np.einsum("ia, ib, ic, id -> abcd", X_ups, Y_weighted, X_ups, X_ups)
+            d4 += np.einsum("ia, ib, ic, id -> abcd", Y_weighted, X_ups, X_ups, X_ups)
+            d4 /= - 4 * N_eff
+
+            if verbose:
+                np.save("d4_modes_nosym.npy", d4)
+            if symmetrize:
+                raise NotImplementedError('The symmetrizaiton on d4 is not implemented')
+
+            # Get the independent first two indep indices
+            d4_small_space1 = np.zeros((N_w2, self.n_modes, self.n_modes), dtype = np.double)
+            d4_small_space1[:,:,:] = d4[new_i_a, new_i_b, :, :]
+
+            # Get the independent second two indep indices
+            d4_small_space = np.zeros((N_w2, N_w2), dtype = np.double)
+            d4_small_space[:,:] = d4_small_space1[:, new_i_a, new_i_b]
+            
+            if verbose:
+                print("D4 of the following elements:")
+                print(new_i_a)
+                print(new_i_b)
+                print("D4 in the reduced space")
+                print(d4_small_space)
+                print("D4 complete")
+                print(d4)
+                
+            # Add the matrix elements
+            L2_minus_d4_X = np.einsum('a, ab, b -> ab', L2_minus, d4_small_space, X * extra_count_w)
+            L2_plus_d4_X  = np.einsum('a, ab, b -> ab', L2_plus, d4_small_space, X * extra_count_w)
+            
+            # Interaction of a(1)-a(1)
+            L_operator[start_Y:start_A, start_Y:start_A] += L2_minus_d4_X
+            
+            # Interaction of b(1)-b(1)
+            L_operator[start_A:, start_A:] += L2_plus_d4_X
+            
+            # Interaction of a(1)-b(1)
+            L_operator[start_Y:start_A, start_A:] += -L2_minus_d4_X
+            
+            # Interaction of b(1)-a(1)
+            L_operator[start_A:, start_Y:start_A] += -L2_plus_d4_X
+            
                 
         if verbose:
             print("L DEBUG WIGNER superoperator computed.")
@@ -4563,10 +4610,19 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
         if save_dir is not None:
             if not os.path.exists(save_dir):
                 makedirs(save_dir)
-                
+         
+        # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
-            raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True!')
+            raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True and make sure that you are not using the analytic L!')
+            
+            
+        # Getting the mask product for the Wigner implementation
+        if run_simm:
+            if verbose:
+                print('Running the standard Lanczos algorithm with Wigner')
+            mask_dot = self.mask_dot_wigner(debug)
 
+        
         # Get the current step
         i_step = len(self.a_coeffs)
 
@@ -4599,7 +4655,11 @@ Max number of iterations: {}
             self.basis_P = []
             self.s_norm = []
             # Normalize the first vector
-            first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
+            if not run_simm:
+                first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
+            else:
+                # Crucial if we study anharmonic effects in anharmonic IR/Raman
+                first_vector = self.psi / np.sqrt(self.psi.dot(self.psi * mask_dot))
             self.basis_Q.append(first_vector)
             self.basis_P.append(first_vector)
             self.s_norm.append(1)
@@ -4632,12 +4692,6 @@ Max number of iterations: {}
             print("P basis:", self.basis_P)
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
-            
-        if run_simm:
-            if verbose:
-                print('Running the standard Lanczos algorithm')
-            # Getting the mask product for the Wigner implementation
-            mask_dot = self.mask_dot_wigner(debug)
 
         
         next_converged = False
@@ -4675,7 +4729,7 @@ Max number of iterations: {}
                         print("Running the STANDARD Lanczos with Wigner!\n")
                     p_L = np.copy(L_q)
                 else:
-                    # This should be done only if we use the ANALYTICAL WIGENR MATRIX
+                    # This should be done only if we use the ANALYTICAL WIGNER MATRIX
                     if verbose:
                         print("Running the BICONJUGATE Lanczos with Wigner analytic!\n")
                     p_L = self.L_linop.rmatvec(psi_p)   
@@ -4683,8 +4737,13 @@ Max number of iterations: {}
             # End of L application
 
             if debug:
-                print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q))))
-                print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L))))
+                if not run_simm:
+                    print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q))))
+                    print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L))))
+                else:
+                    print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q * mask_dot))))
+                    print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L * mask_dot))))
+                    
 
 
             #if verbose:
@@ -4740,10 +4799,13 @@ or if the acoustic sum rule is not satisfied.
                 s_norm = np.sqrt(sk.dot(sk))
             else:
                 s_norm = np.sqrt(sk.dot(sk * mask_dot))
-                
-            sk_tilde = sk / s_norm # This normalization regularizes the lanczos
-            s_norm *= p_norm # Add the p normalization of L^t p that was divided from the s_k
+               
+            # This normalization regularizes the lanczos
+            sk_tilde = sk / s_norm 
+            # Add the p normalization of L^t p that was divided from the s_k
+            s_norm *= p_norm 
             
+            # Get the b and c coeffs
             if not run_simm:
                 b_coeff = np.sqrt(rk.dot(rk))
                 c_coeff = (sk_tilde.dot(rk / b_coeff)) * s_norm 
@@ -4832,7 +4894,6 @@ or if the acoustic sum rule is not satisfied.
                     print("q_{:d} L^T p_{:d} = {} | p_{:d} norm = {}".format(len(self.basis_P), len(self.basis_P)-1, p_norm* psi_q.dot(p_L * mask_dot), k+1, p_norm))
                     
 
-
             t1 = time.time()
 
 
@@ -4845,7 +4906,7 @@ or if the acoustic sum rule is not satisfied.
                 if not run_simm:
                     norm_q = np.sqrt(new_q.dot(new_q))
                     norm_p = np.sqrt(new_p.dot(new_p))
-                    print("Norm of q = {} and p = {} before Gram-Schmidt".format(norm_q, norm_p))
+                    print("Norm of q = {} and p = {} BEFORE Gram-Schmidt".format(norm_q, norm_p))
                     print("current p dot q = {} (should be 1)".format(new_q.dot(new_p) * s_norm / c_coeff))
                 else:
                     norm_q = np.sqrt(new_q.dot(new_q * mask_dot))
