@@ -38,14 +38,14 @@ jobs:
                              mpich libopenmpi-dev libgl1-mesa-glx  libglib2.0-0 \
                              libboost-all-dev
                              
-        pip install mpi4py numpy matplotlib scipy spglib --user
+        pip install -r requirements.txt --user
         
         git clone https://github.com/SSCHAcode/CellConstructor.git
-        cd CellConstructor && sudo python setup.py install && cd ..
+        cd CellConstructor && python setup.py install --user && cd ..
         rm -r CellConstructor
         
         git clone https://github.com/SSCHAcode/python-sscha.git
-        cd python-sscha && sudo python setup.py install && cd ..
+        cd python-sscha && python setup.py install --user && cd ..
         rm -r python-sscha
         
         MPICC=mpicc python setup.py install --user
