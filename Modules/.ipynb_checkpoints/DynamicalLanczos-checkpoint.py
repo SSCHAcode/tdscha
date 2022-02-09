@@ -3749,13 +3749,13 @@ Max number of iterations: {}
         Parameters
         ----------
             w_array : ndarray
-                The list of frequencies in which you want to compute the green function
+                The list of frequencies in RY in which you want to compute the green function
             use_terminator : bool
                 If true (default) a standard terminator is used.
             last_average : int
                 How many a and b coefficients are averaged to evaluate the terminator?
             smearing : float
-                The smearing parameter. If none
+                The smearing parameter in RY. If none
         """
         n_iters = len(self.a_coeffs)
 
@@ -4647,7 +4647,7 @@ Should I use a standard Lanczos? {}
 Max number of iterations: {}
 """.format(self.ignore_v3, self.ignore_v4, self.use_wigner, run_simm, n_iter)
             print(OPTIONS)
-
+        
 
         # If this is the current step initialize the algorithm
         if i_step == 0:
@@ -4693,7 +4693,6 @@ Max number of iterations: {}
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
 
-        
         next_converged = False
         
         # Here starts the Lanczos
