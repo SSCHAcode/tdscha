@@ -308,6 +308,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.rho = rho
         self.N_eff = np.sum(self.rho)
 
+        # Mass rescaled quantities
         self.u_tilde = u
         self.f_tilde = f
 
@@ -911,11 +912,135 @@ File {} not found. S norm not loaded.
         assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
         assert ec_size[1] == ec_size[2] == 3
 
+        # shape = (N_at_uc, 3)
         z_eff = np.einsum("abc, b", ec, pol_vec)
 
         # Get the gamma effective charge
         new_zeff = np.tile(z_eff.ravel(), n_supercell)
         self.prepare_perturbation(new_zeff, masses_exp = -1)
+        
+        
+    def prepare_anharmonic_ir(self, directory = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = True):
+        """
+        PREPARE THE PSI VECTOR FOR ANHARMONIC IR SPECTRUM CALCULATION
+        =============================================================
+        
+        This works only with the Wigner representation. Prepare the psi vector
+        for the calculation of IR spectrum considering non harmonic effective charges.
+        Two phonons effect can be included as well.
+        
+        Parameters:
+        -----------
+            -directory: the directory where to find the effective charges for all configurations,
+            -pol_vec_light: the polarization of in-out light
+            -add_two_ph: bool, if True two phonon processes are included in the calculation
+        """
+        print()
+        print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
+        print('Directory with eff charges = {}'.format(directory))
+        print('Are we considering two ph effects = {}'.format(add_two_ph))
+        print()
+
+        if not self.use_wigner:
+            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
+            
+        # Number of atoms in the supercell
+        N_atoms_sc = (self.n_modes + 3)//3
+    
+        # The effective charges for all the configurations (N_configs, N_at_sc, 3, 3)
+        eff = np.zeros((self.N, N_atoms_sc, 3, 3))
+
+        # This is the part where we read the eff charges
+        # TODO this has to be generalized?
+        for z in range(500):
+            name = os.path.join(directory , 'ph_'+str(z)+'.out')
+            g = open(name)
+            x = [l.split() for l in g.readlines()]
+            g.close()
+            j=0
+            for i in range(len(x)):
+                if len(x[i]) != 0:
+                    if x[i][0] == 'Ex':
+                        for k in range(3):
+                            eff[z,j,0,k] = float(x[i][k+2])
+                            eff[z,j,1,k] = float(x[i+1][k+2])
+                            eff[z,j,2,k] = float(x[i+2][k+2])
+                        j += 1
+                       
+                    
+        # Check if has the correct size 
+        ec_size = np.shape(eff)
+        MSG = """
+        Error, effective charges of the wrong shape: {}
+        """.format(ec_size)
+        assert len(ec_size) == 4, MSG
+        assert ec_size[1] * ec_size[2] == self.n_modes + 3
+        assert ec_size[2] == ec_size[3] == 3
+        
+        # FIRST DERIVATIVE OF THE DIPOLE
+        # Project along the direction of light polarization, (N_configs, N_at_sc, 3)
+        z_eff = np.einsum("iabc, b -> iac", eff, pol_vec_light)
+
+        # FIRST DERIVATIVE OF THE DIPOLE
+        # Average of effective charges on the ensemble (N_at_sc, 3)
+        pert_R = np.einsum('i, iab -> ab', self.rho, z_eff) /np.sum(self.rho)
+
+        # Now rescale by the mass and go in polarizaiton basis
+        print(self.psi)
+        self.prepare_perturbation(pert_R.ravel(), masses_exp = -1)
+        print('per mod = {}'.format(self.perturbation_modulus))
+        print('a-b sector = {}'.format(self.psi[self.n_modes:]))
+        
+        if add_two_ph:
+            print('Getting the two phonon contribution')
+            # SECOND DERIVATIVE OF THE DIPOLE
+            # Polarization vectors over mass, shape = (N_at_sc, 3*N_at_sc - 3)
+            pols_mass = np.einsum('a, am -> am', np.sqrt(self.m)**-1, self.pols)
+            # The mass rescaled projected effective charges in polarization basis
+            Z = np.einsum('am, ia -> im ', pols_mass, z_eff.ravel().reshape((self.N, self.n_modes + 3)))
+
+            # Eigeivnalues of Upsilon mass rescaled, shape = (3*N_at_sc - 3)
+            xi2_inv = f_ups(self.w, self.T)
+            # The mass rescaled displacements in polarization basis divided by xi2
+            u_xi2 = np.einsum('im, m -> im', self.X, xi2_inv)
+
+            # Get the reweighted average of the second derivative
+            d2_X = np.einsum('i, in, im -> nm', self.rho, u_xi2, Z) /np.sum(self.rho)
+            # Symmetrize the result
+            d2_X = 0.5 * (d2_X + d2_X.T)
+
+            # Get chi_minus and chi_plus tensors
+            chi_minus = self.get_chi_minus()
+            chi_plus  = self.get_chi_plus()
+
+            # Get the pertubations on a'^(1) b'^(1)
+            pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), d2_X)
+            pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , d2_X)
+
+            # Now fill the psi vector
+            # Now get the perturbation for a'^(1)
+            current = self.n_modes
+            for i in range(self.n_modes):
+                self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
+                current = current + self.n_modes - i
+
+            # Now get the pertrubation for b'^(1)
+            for i in range(self.n_modes):
+                self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
+                current = current + self.n_modes - i
+
+            # Add the mask dot taking into account symmetric elements
+            mask_dot = self.mask_dot_wigner()
+            # Update the pertubation modulus
+            self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
+            
+            print('per mod = {}'.format(self.perturbation_modulus))
+            print('a-b sector = {}'.format(self.psi[self.n_modes:]))
+            print()
+            
+        return
+        
+        
 
 
     def prepare_perturbation(self, vector, masses_exp = 1):
@@ -930,12 +1055,15 @@ File {} not found. S norm not loaded.
         The vector can be obtained contracting it with the polarization vectors.
         The contraction can be on the numerator or on the denumerator, depending on the
         observable.
+        
+        NOTE: This function prepares the pertubation ONLY in the R sector
+        Both IR and Raman has masses_exp = -1
 
         .. math ::
 
-            v_\mu = \sum_a v_a e_\mu^a \cdot \sqrt{m_a}
+            v_\mu = \sum_a v_a e_\mu^a \cdot \sqrt{m_a} 
 
-            v_\mu = \sum_a v_a \frac{e_\mu^a}{  \sqrt{m_a}}
+            v_\mu = \sum_a v_a \frac{e_\mu^a}{  \sqrt{m_a}} 
 
         Parameters
         ----------
@@ -957,11 +1085,15 @@ File {} not found. S norm not loaded.
         # By doing this we are neglecting the dependece of Eff. Charges/Raman tensor on the postion 
         self.psi[:self.n_modes] = new_v
 
+        # THIS IS OK IN THE WIGNER REPRESENTATION BECAUSE
+        # THE PERTUBATION ENTERS ONLY IN THE R SECTOR
         self.perturbation_modulus = new_v.dot(new_v)
 
         if self.symmetrize:
             self.symmetrize_psi()
 
+            
+            
     def prepare_mode(self, index):
         """
         Prepare the perturbation on a single phonon mode.
@@ -4521,6 +4653,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
         new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
            
         if debug:
+            print()
             print('start_a = ', start_a)
             print('start_b = ', start_b)
             print('new_i_b')
@@ -4539,6 +4672,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             print(double_mask[start_a: start_b])
             print("mask dot prod for b'(1) = ")
             print(double_mask[start_b:])
+            print()
         
         return double_mask
 
