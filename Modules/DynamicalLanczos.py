@@ -869,7 +869,7 @@ File {} not found. S norm not loaded.
         Error, effective charges of the wrong shape: {}
         """.format(ec_size)
         assert len(ec_size) == 3, MSG
-        assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
+        #assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
         assert ec_size[1] == ec_size[2] == 3
 
         z_eff = np.einsum("abc, b", ec, pol_vec)
