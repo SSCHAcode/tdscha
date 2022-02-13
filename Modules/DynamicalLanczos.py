@@ -1902,6 +1902,30 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         
         return self.psi
 
+    def save_abc(self, file):
+        """
+        Save only the a, b, and c coefficients from the lanczos.
+        In this way the calculation cannot be restarted.
+        """
+
+        total_len = len(self.c_coeffs)
+
+        abc = np.zeros( (total_len, 3), dtype = np.double)
+        abc[:,0] = self.a_coeffs[:total_len]
+        abc[:,1] = self.b_coeffs
+        abc[:,2] = self.c_coeffs
+
+        np.savetxt(file, abc, header = "a; b; c")
+
+    def load_abc(self, file):
+        """
+        Load only the a, b, and c coefficients from the ".abc" file
+        """
+
+        abc = np.loadtxt(file)
+        self.a_coeffs = abc[:,0]
+        self.b_coeffs = abc[:,1]
+        self.c_coeffs = abc[:,2]
 
     def save_status(self, file):
         """
