@@ -3437,23 +3437,26 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 deg_julia = self.deg_julia,
                                 n_syms = self.n_syms)
             
-    def load_status(self, file):
+    def load_status(self, file, is_file_instance = False):
         """
         Load a previously saved status from the speficied npz file.
         The file must be saved with save_status.
+
+        If is_file_instance is True, the file is assumed to be already loaded with open(...)
         """
 
         # Force all the process to be here
         Parallel.barrier()
 
-        # Add the correct extension
-        if not ".npz" in file.lower():
-            file += ".npz"
+        if not is_file_instance:
+            # Add the correct extension
+            if not ".npz" in file.lower():
+                file += ".npz"
 
-        # Check if the provided file exists
-        if not os.path.exists(file):
-            print ("Error while loading %s file.\n" % file)
-            raise IOError("Error while loading %s" % file)
+            # Check if the provided file exists
+            if not os.path.exists(file):
+                print ("Error while loading %s file.\n" % file)
+                raise IOError("Error while loading %s" % file)
 
         data = {}
         # Read the data only with the master
