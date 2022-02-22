@@ -195,16 +195,14 @@ class Lanczos(object):
 
 
         # ========== END OF VARIABLE DEFINITION (EACH NEW DEFINITION FROM NOW ON RESULTS IN AN ERROR) =======
-
         self.dyn = ensemble.current_dyn.Copy() 
         superdyn = self.dyn.GenerateSupercellDyn(ensemble.supercell)
-        self.uci_structure = ensemble.current_dyn.structure.copy()
+        self.uci_structure   = ensemble.current_dyn.structure.copy()
         self.super_structure = superdyn.structure
 
         self.T = ensemble.current_T
 
         ws, pols = self.dyn.DiagonalizeSupercell()
-
 
         self.nat = superdyn.structure.N_atoms
         n_cell = np.prod(self.dyn.GetSupercell())
@@ -218,9 +216,12 @@ class Lanczos(object):
         self.m = np.tile(m, (3,1)).T.ravel()
 
         # Remove the translations
-        trans_mask = CC.Methods.get_translations(pols, m)
-
-        good_mask = ~trans_mask
+        if not ensemble.ignore_small_w:
+            trans_mask = CC.Methods.get_translations(pols, m)
+            good_mask  = ~trans_mask
+        else:
+            trans_mask = np.abs(ws) < CC.Phonons.__EPSILON_W__
+            good_mask  = ~trans_mask
         
         # If requested, isolate only the specified modes.
         if select_modes is not None:
@@ -920,7 +921,7 @@ File {} not found. S norm not loaded.
         self.prepare_perturbation(new_zeff, masses_exp = -1)
         
         
-    def prepare_anharmonic_ir(self, directory = None, effective_charges = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = True):
+    def prepare_anharmonic_ir(self, directory = None, effective_charges = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False):
         """
         PREPARE THE PSI VECTOR FOR ANHARMONIC IR SPECTRUM CALCULATION
         =============================================================
@@ -937,40 +938,41 @@ File {} not found. S norm not loaded.
             -effective_charges: nd.array, the effective charges for all configurations.
                  Indices are: NUmber of configuration, number of atoms in the super cell,
                  electric field component, atomic coordinate. 
-            -pol_vec_light: nd.array, the polarization of in-out light
+            -pol_vec_light: nd.array, the polarization of in-out light. default is x
             -add_two_ph: bool, if True two phonon processes are included in the calculation
         """
-        if not self.use_wigner:
+        if not self.use_wigner and add_two_ph:
             raise NotImplementedError('The two phonon processes are implemented only in Wigner')
             
-        if directory is None:
-            raise ValueError('Must specify the directory where the effective charges are stored!')
+        if directory is None and effective_charges is None:
+            raise ValueError('Must specify the directory where the effective charges are stored or pass the effective charges!')
             
         print()
         print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
         print('Directory with eff charges = {}'.format(directory))
-        print('Are we considering two ph effects = {}'.format(add_two_ph))
+        print('Are we considering two ph effects? = {}'.format(add_two_ph))
         print()
             
         # Number of atoms in the supercell
-        N_atoms_sc = (self.n_modes + 3)//3
+#         N_atoms_sc = (self.n_modes + 3) //3
+        print(self.nat)
     
-        # The effective charges for all the configurations (N_configs, N_at_sc, E_field_comp, 3)
-        eff = np.zeros((self.N, N_atoms_sc, 3, 3))
+        # The effective charges for each configuration (N_configs, N_at_sc, E_field_comp, 3)
+        eff = np.zeros((self.N, self.nat, 3, 3))
 
         # This is the part where we read the eff charges
         # TODO this has to be generalized!
         if effective_charges is None:
             Ex, Ey, Ez = 0, 1, 2
             for conf in range(self.N):
-                # Read the file
+                # Read the file for configuaration conf
                 name_file = os.path.join(directory , 'ph_'+str(conf)+'.out')
                 _file_ = open(name_file)
                 lines = [lines_file.split() for lines_file in _file_.readlines()]
                 _file_.close()
                 
                 # The atomic index
-                atom=0
+                atom = 0
                 # Read the lines
                 for i in range(len(lines)):
                     if len(lines[i]) != 0:
@@ -981,7 +983,7 @@ File {} not found. S norm not loaded.
                                 eff[conf, atom, Ez, cart_coord] = float(lines[i + 2][cart_coord + 2])
                             atom += 1
         else:
-            assert effective_charges.shape == eff.shape, 'The effective charges in input have the wrong dimensions!'
+            assert effective_charges.shape == eff.shape, 'The effective charges in input have the wrong shape. required {}'.format(eff.shape)
             eff = effective_charges
                        
                    
@@ -991,7 +993,7 @@ File {} not found. S norm not loaded.
         Error, effective charges of the wrong shape: {}
         """.format(ec_size)
         assert len(ec_size) == 4, MSG
-        assert ec_size[1] * ec_size[2] == self.n_modes + 3, MSG
+        assert ec_size[1] * ec_size[2] == self.nat * 3, MSG
         assert ec_size[2] == ec_size[3] == 3, MSG
         
         # FIRST DERIVATIVE OF THE DIPOLE
@@ -1005,16 +1007,15 @@ File {} not found. S norm not loaded.
         # Now rescale by the mass and go in polarizaiton basis
         self.prepare_perturbation(d1_M.ravel(), masses_exp = -1)
         print('Pertubation modulus = {}'.format(self.perturbation_modulus))
-        print('a-b sector = {}'.format(self.psi[self.n_modes:]))
         
         if add_two_ph:
-            print('Getting the two phonon contribution')
+            print('Getting the two phonon contribution..')
             # SECOND DERIVATIVE OF THE DIPOLE
             # Polarization vectors over mass, shape = (N_at_sc, n_modes)
             pols_mass = np.einsum('a, am -> am', np.sqrt(self.m)**-1, self.pols)
             
             # The mass rescaled projected effective charges in polarization basis, shape = (N_configs, n_modes)
-            Z = np.einsum('am, ia -> im ', pols_mass, z_eff.ravel().reshape((self.N, self.n_modes + 3)))
+            z_pols_mass = np.einsum('am, ia -> im ', pols_mass, z_eff.ravel().reshape((self.N, self.nat * 3)))
 
             # Eigeivnalues of Upsilon mass rescaled, shape = (n_modes)
             xi2_inv = f_ups(self.w, self.T)
@@ -1023,11 +1024,10 @@ File {} not found. S norm not loaded.
             u_xi2 = np.einsum('im, m -> im', self.X, xi2_inv)
             
             # Add the effective charges, shape = (N_configs, n_modes, n_modes)
-            u_xi2_Z = np.einsum('in , im -> inm', u_xi2, Z)
+            u_xi2_Z = np.einsum('in , im -> inm', u_xi2, z_pols_mass)
 
             # Get the reweighted average of the second derivative, shape = (n_modes, n_modes)
             d2_M = np.einsum('i, inm -> nm', self.rho, u_xi2_Z) /np.sum(self.rho)
-            # Symmetrize the result
             d2_M = 0.5 * (d2_M + d2_M.T)
             
             # Get chi_minus and chi_plus tensors
@@ -1043,7 +1043,6 @@ File {} not found. S norm not loaded.
             assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
             assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
             
-
             # Now get the perturbation for a'^(1)
             current = self.n_modes
             for i in range(self.n_modes):
@@ -1057,7 +1056,7 @@ File {} not found. S norm not loaded.
 
             # Add the mask dot taking into account symmetric elements
             mask_dot = self.mask_dot_wigner()
-            # Update the pertubation modulus
+            # Overwrite the pertubation modulus
             self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
             
             print('Perturbation modulus after adding two ph contributions = {}'.format(self.perturbation_modulus))
@@ -1107,7 +1106,7 @@ File {} not found. S norm not loaded.
         # Convert the vector in the polarization space
         m_on = np.sqrt(self.m) ** masses_exp
         new_v = np.einsum("a, a, ab -> b", m_on, vector, self.pols)
-        # By doing this we are neglecting the dependece of Eff. Charges/Raman tensor on the postion 
+        # By doing this we are neglecting two phonon effects
         self.psi[:self.n_modes] = new_v
 
         # THIS IS OK IN THE WIGNER REPRESENTATION BECAUSE
@@ -1129,12 +1128,70 @@ File {} not found. S norm not loaded.
             index : int
                 The index of the mode in the supercell. Starting from 0 (lowest frequency, excluding acoustic modes at Gamma) 
         """
-        
         self.reset()
 
         self.psi[:] = 0
         self.psi[index] = 1 
         self.perturbation_modulus = 1
+        
+        
+    
+    def prepare_two_ph(self, a, b):
+        """
+        Prepare the psi vector for a two phonon response.
+        Available only in Winger.
+
+        Parameters:
+        ----------
+            a, b: int indices of the modes (acustic are excluded).
+        """
+        if not self.use_wigner:
+            raise NotImplementedError('The two phonon response is available only in Wigner')
+            
+        if a > self.n_modes or b > self.n_modes:
+            raise ValueError('The a-b indices must be smaller than {}'.format(self.n_modes))
+            
+        print()
+        print('PREPARE THE TWO PHONON PERTUBATION')
+        print('Indices selected a = {} b = {}'.format(a,b))
+        print()
+            
+        self.reset()
+        self.psi[:] = 0
+        
+        # Get chi minus and chi plus, shape = (n_modes, n_modes)
+        chi_plus  = self.get_chi_plus()
+        chi_minus = self.get_chi_minus()
+        
+        # The matrix for the second derivatives
+        mat_modes = np.zeros((self.n_modes, self.n_modes))
+        
+        mat_modes[a,b] = 0.5
+        mat_modes[b,a] = 0.5
+        
+        # Get the pertbations
+        pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), mat_modes)
+        pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , mat_modes)
+        
+        
+        # Now get the perturbation for a'^(1)
+        current = self.n_modes
+        for i in range(self.n_modes):
+            self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
+            current = current + self.n_modes - i
+
+        # Now get the pertrubation for b'^(1)
+        for i in range(self.n_modes):
+            self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
+            current = current + self.n_modes - i
+
+        # Add the mask dot taking into account symmetric elements
+        mask_dot = self.mask_dot_wigner()
+        
+        # Update the pertubation modulus
+        self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
+        
+        return
 
         
 
@@ -4770,13 +4827,15 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
          
         # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
-            raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True and make sure that you are not using the analytic L!')
+            raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True and make sure that you are not using the analytic wigner L!')
             
             
         # Getting the mask product for the Wigner implementation
         if run_simm:
             if verbose:
                 print('Running the standard Lanczos algorithm with Wigner')
+                print('Getting the mask dot product')
+                print()
             mask_dot = self.mask_dot_wigner(debug)
 
         
@@ -4811,11 +4870,10 @@ Max number of iterations: {}
             self.basis_Q = []
             self.basis_P = []
             self.s_norm = []
-            # Normalize the first vector
+            # Normalize the first vector in the Standard or Wigner representation
             if not run_simm:
                 first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
             else:
-                # Crucial if we study anharmonic effects in anharmonic IR/Raman
                 first_vector = self.psi / np.sqrt(self.psi.dot(self.psi * mask_dot))
             self.basis_Q.append(first_vector)
             self.basis_P.append(first_vector)
@@ -4824,7 +4882,7 @@ Max number of iterations: {}
             # Convert everything in a list
             self.basis_Q = list(self.basis_Q)
             self.basis_P = list(self.basis_P)
-            self.s_norm = list(self.s_norm)
+            self.s_norm  = list(self.s_norm)
             self.a_coeffs = list(self.a_coeffs)
             self.b_coeffs = list(self.b_coeffs)
             self.c_coeffs = list(self.c_coeffs)
@@ -4837,7 +4895,7 @@ Max number of iterations: {}
 
         assert len(self.basis_Q) == len(self.basis_P), "Something wrong when restoring the Lanczos."
         assert len(self.s_norm) == len(self.basis_P), "Something wrong when restoring the Lanczos."
-        assert len(self.b_coeffs) == len(self.c_coeffs), "Something wrong when restoring the Lanczos. {} {}".format(len(self.b_coeffs), len(self.c_coeffs))
+        assert len(self.b_coeffs) == len(self.c_coeffs), "Something wrong when restoring the Lanczos. len b = {} len c = {}".format(len(self.b_coeffs), len(self.c_coeffs))
 
 
         # Select the two vectors for the biconjugate Lanczos iterations
@@ -4850,6 +4908,7 @@ Max number of iterations: {}
             print("S norm:", self.s_norm)
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
 
+        # Convergence flag
         next_converged = False
         
         # Here starts the Lanczos
@@ -4877,16 +4936,19 @@ Max number of iterations: {}
             else:
                 if verbose:
                     print("The Wigner representation is used!\n")
+                    print()
                 # Get the application on psi_q
                 L_q = self.L_linop.matvec(psi_q)
                 if run_simm:
                     # This is done because we are running the standard Lanczos
                     if verbose:
-                        print("Running the STANDARD Lanczos with Wigner!\n")
+                        print()
+                        print("Running the SYMMETRIC Lanczos with Wigner!\n")
                     p_L = np.copy(L_q)
                 else:
-                    # This should be done only if we use the ANALYTICAL WIGNER MATRIX
+                    # THIS SHOULD BE DONE ONLY WITH THE ANALYTICAL WIGNER MATRIX
                     if verbose:
+                        print()
                         print("Running the BICONJUGATE Lanczos with Wigner analytic!\n")
                     p_L = self.L_linop.rmatvec(psi_p)   
             t2 = time.time()
@@ -4900,8 +4962,6 @@ Max number of iterations: {}
                     print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q * mask_dot))))
                     print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L * mask_dot))))
                     
-
-
             #if verbose:
             #    print("Time to apply the full L: %d s" % (t2 -t1))
 
@@ -4956,7 +5016,7 @@ or if the acoustic sum rule is not satisfied.
             else:
                 s_norm = np.sqrt(sk.dot(sk * mask_dot))
                
-            # This normalization regularizes the lanczos
+            # This normalization regularizes the Lanczos
             sk_tilde = sk / s_norm 
             # Add the p normalization of L^t p that was divided from the s_k
             s_norm *= p_norm 
@@ -4971,7 +5031,7 @@ or if the acoustic sum rule is not satisfied.
 
             
             if debug:
-                print("new p norm: {}".format(s_norm / c_coeff))
+                print("new_p_norm: {}".format(s_norm / c_coeff))
                 print("old_p_norm: {}".format(old_p_norm))
 
                 print("Modulus of rk: {}".format(b_coeff))
@@ -4985,6 +5045,8 @@ or if the acoustic sum rule is not satisfied.
                     print("     |  a = {}".format(a_coeff))
                     print("     |  b = {}".format(b_coeff))
                     print("     |  c = {}".format(c_coeff))
+                    if run_simm:
+                        print("     |  |b-c| = {}".format(np.abs(b_coeff - c_coeff)))
 
             # Check the convergence
             self.a_coeffs.append(a_coeff)
@@ -5163,6 +5225,7 @@ or if the acoustic sum rule is not satisfied.
 
 
             if not converged:
+                # Add the new q and p vectors
                 self.basis_Q.append(new_q)
                 self.basis_P.append(new_p)
                 psi_q = new_q.copy()
@@ -5180,9 +5243,10 @@ or if the acoustic sum rule is not satisfied.
                 print("Time to perform the Gram-Schmidt and retrive the coefficients: %d s" % (t2-t1))
                 print()
                 print("a_%d = %.8e" % (i, self.a_coeffs[-1]))
-                
                 print("b_%d = %.8e" % (i, self.b_coeffs[-1]))
                 print("c_%d = %.8e" % (i, self.c_coeffs[-1]))
+                if run_simm:
+                    print("|b_%d - c_%d| = %.8e" % (i, i, np.abs(self.b_coeffs[-1] - self.c_coeffs[-1])))
                 print()
             
             # Save the step
