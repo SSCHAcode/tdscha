@@ -2,7 +2,7 @@
 # Please make changes to the code generator             (distutils/ccompiler_opt.py)
 hash = 3870397123
 data = \
-{'cache_infile': True,
+{'cache_infile': False,
  'cache_me': {"('cc_test_flags', ['-O3'])": True,
               "('cc_test_flags', ['-Werror'])": True,
               "('cc_test_flags', ['-march=native'])": True,
@@ -119,7 +119,7 @@ data = \
                                              '-msse4.2'],
               "('feature_flags', 'SSSE3')": ['-msse', '-msse2', '-msse3',
                                              '-mssse3'],
-              "('feature_flags', {'SSE', 'SSE3', 'SSE2'})": ['-msse', '-msse2',
+              "('feature_flags', {'SSE2', 'SSE', 'SSE3'})": ['-msse', '-msse2',
                                                              '-msse3'],
               "('feature_is_supported', 'AVX', 'force_flags', None)": True,
               "('feature_is_supported', 'AVX2', 'force_flags', None)": True,
@@ -182,7 +182,7 @@ data = \
  'cc_on_x64': True,
  'cc_on_x86': False,
  'feature_is_cached': True,
- 'feature_min': {'SSE', 'SSE3', 'SSE2'},
+ 'feature_min': {'SSE2', 'SSE', 'SSE3'},
  'feature_supported': {'AVX': {'flags': ['-mavx'],
                                'headers': ['immintrin.h'],
                                'implies': ['SSE42'],
@@ -286,7 +286,7 @@ data = \
                                'headers': ['x86intrin.h'],
                                'implies': ['AVX'],
                                'interest': 9}},
- 'hit_cache': True,
+ 'hit_cache': False,
  'parse_baseline_flags': ['-msse', '-msse2', '-msse3'],
  'parse_baseline_names': ['SSE', 'SSE2', 'SSE3'],
  'parse_dispatch_names': ['SSSE3', 'SSE41', 'POPCNT', 'SSE42', 'AVX', 'F16C',

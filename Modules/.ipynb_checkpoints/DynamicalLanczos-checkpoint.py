@@ -183,7 +183,10 @@ class Lanczos(object):
         
         # Set to True if we want to use the Wigner equations
         self.use_wigner = use_wigner
-
+        
+        # This flag is usefull to work with 1D or 2D systems
+        # Default is False meaning that we ignore only translational modes
+        self.ignore_small_w = False
 
         # Setup the attribute control
         self.__total_attributes__ = [item for item in self.__dict__.keys()]
@@ -220,6 +223,7 @@ class Lanczos(object):
             trans_mask = CC.Methods.get_translations(pols, m)
             good_mask  = ~trans_mask
         else:
+            self.ignore_small_w = True
             trans_mask = np.abs(ws) < CC.Phonons.__EPSILON_W__
             good_mask  = ~trans_mask
         
@@ -252,12 +256,12 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #for iq, q in enumerate(q_list):
         #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
         
-
         # Ignore v3 or v4. You can set them for testing
         # This is no longer implemented in the fast Lanczos
         self.ignore_v3 = False
         self.ignore_v4 = False
 
+        # The number of configurations
         self.N = ensemble.N
         rho = ensemble.rho.copy() 
         # Transform Angstrom -> Bohr
@@ -266,7 +270,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         f = ensemble.forces.reshape(self.N, 3 * self.nat).copy()
         f -= ensemble.sscha_forces.reshape(self.N, 3 * self.nat)
 
-        # Get the average force
+        # Get the average force in the unit cell, (N_at_uc, 3)
         f_mean = ensemble.get_average_forces(get_error = False)
 
         # Perform the symmetrization of the average force
@@ -285,6 +289,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #new_av_force = np.tile(av_force, (n_cell, 1)).ravel()
         
         #f -= np.tile(new_av_force, (self.N, 1)) 
+        
+        # Transform in Ry/Bohr
         f *= Ensemble.Bohr
 
         if unwrap_symmetries:
@@ -300,7 +306,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #print(np.shape(f), np.shape(f_mean))
         f[:, :] -= np.tile(f_mean, (self.N, 1))
 
-
         # Perform the mass rescale to get the tilde variables
         u *= np.tile(np.sqrt(self.m), (self.N, 1)) 
         f /= np.tile(np.sqrt(self.m), (self.N, 1)) 
@@ -313,13 +318,14 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.u_tilde = u
         self.f_tilde = f
 
+        # The dispalcements in BOHR mass resclaed and in polarization basis
         self.X = np.zeros((self.N, self.n_modes), order = order, dtype = TYPE_DP)
+        # The forces in RY/BOHR mass resclaed and in polarization basis
         self.Y = np.zeros((self.N, self.n_modes), order = order, dtype = TYPE_DP)
 
-        # Convert in the polarization space
+        # Convert in the polarization space the displacements and the forces
         self.X[:, :] = self.u_tilde.dot(self.pols) #.T.dot(self.u_tilde)
         self.Y[:, :] = self.f_tilde.dot(self.pols) #self.pols.T.dot(self.f_tilde)
-
 
         # Prepare the variable used for the working
         # The len of psi = N_modes + 0.5 * N_modes * (N_modes + 1) + 0.5 * N_modes * (N_modes + 1)
@@ -330,6 +336,9 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         len_psi += self.n_modes * (self.n_modes + 1)
         #print("N MODES:", self.n_modes)
         #print("LEN PSI:", len_psi)
+        
+        # In Wigner the variables are a'^(1) and b'^(1) 
+        # In Standard the variables are Y^(1) and ReA^(1)
         
         ##########################################################
         # Psi contains R^(1), Upsilon^(1)-a'^(1), ReA^(1)-b'^(1) #
@@ -921,7 +930,7 @@ File {} not found. S norm not loaded.
         self.prepare_perturbation(new_zeff, masses_exp = -1)
         
         
-    def prepare_anharmonic_ir(self, directory = None, effective_charges = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False):
+    def prepare_anharmonic_ir(self, ec = None, ec_eq = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False):
         """
         PREPARE THE PSI VECTOR FOR ANHARMONIC IR SPECTRUM CALCULATION
         =============================================================
@@ -934,67 +943,33 @@ File {} not found. S norm not loaded.
         
         Parameters:
         -----------
-            -directory: string, the directory where to find the effective charges for all configurations,
             -effective_charges: nd.array, the effective charges for all configurations.
-                 Indices are: NUmber of configuration, number of atoms in the super cell,
-                 electric field component, atomic coordinate. 
+                 Indices are: Number of configuration, number of atoms in the super cell,
+                 electric field component, atomic coordinate.
+            -effective_charges_eq: nd.array, the effective charges at equilibrium.
+                 Indices are: number of atoms in the unit cell,
+                 electric field component, atomic coordinate.   
             -pol_vec_light: nd.array, the polarization of in-out light. default is x
             -add_two_ph: bool, if True two phonon processes are included in the calculation
         """
         if not self.use_wigner and add_two_ph:
             raise NotImplementedError('The two phonon processes are implemented only in Wigner')
             
-        if directory is None and effective_charges is None:
-            raise ValueError('Must specify the directory where the effective charges are stored or pass the effective charges!')
+        if ec is None:
+            raise ValueError('Must specify the effective charges for all configurations!')
             
         print()
         print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
-        print('Directory with eff charges = {}'.format(directory))
+        print('==============================================')
         print('Are we considering two ph effects? = {}'.format(add_two_ph))
         print()
-            
-        # Number of atoms in the supercell
-#         N_atoms_sc = (self.n_modes + 3) //3
-        print(self.nat)
     
         # The effective charges for each configuration (N_configs, N_at_sc, E_field_comp, 3)
         eff = np.zeros((self.N, self.nat, 3, 3))
 
         # This is the part where we read the eff charges
-        # TODO this has to be generalized!
-        if effective_charges is None:
-            Ex, Ey, Ez = 0, 1, 2
-            for conf in range(self.N):
-                # Read the file for configuaration conf
-                name_file = os.path.join(directory , 'ph_'+str(conf)+'.out')
-                _file_ = open(name_file)
-                lines = [lines_file.split() for lines_file in _file_.readlines()]
-                _file_.close()
-                
-                # The atomic index
-                atom = 0
-                # Read the lines
-                for i in range(len(lines)):
-                    if len(lines[i]) != 0:
-                        if lines[i][0] == 'Ex':
-                            for cart_coord in range(3):
-                                eff[conf, atom, Ex, cart_coord] = float(lines[i][cart_coord + 2])
-                                eff[conf, atom, Ey, cart_coord] = float(lines[i + 1][cart_coord + 2])
-                                eff[conf, atom, Ez, cart_coord] = float(lines[i + 2][cart_coord + 2])
-                            atom += 1
-        else:
-            assert effective_charges.shape == eff.shape, 'The effective charges in input have the wrong shape. required {}'.format(eff.shape)
-            eff = effective_charges
-                       
-                   
-        # Check if has the correct size 
-        ec_size = np.shape(eff)
-        MSG = """
-        Error, effective charges of the wrong shape: {}
-        """.format(ec_size)
-        assert len(ec_size) == 4, MSG
-        assert ec_size[1] * ec_size[2] == self.nat * 3, MSG
-        assert ec_size[2] == ec_size[3] == 3, MSG
+        assert ec.shape == eff.shape, 'The effective charges in input have the wrong shape. The required is {}'.format(eff.shape)
+        eff = ec.copy()
         
         # FIRST DERIVATIVE OF THE DIPOLE
         # Project along the direction of light polarization, (N_configs, N_at_sc, 3)
@@ -1006,10 +981,30 @@ File {} not found. S norm not loaded.
 
         # Now rescale by the mass and go in polarizaiton basis
         self.prepare_perturbation(d1_M.ravel(), masses_exp = -1)
-        print('Pertubation modulus = {}'.format(self.perturbation_modulus))
+        print('Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
+        
+        if ec_eq is not None:
+            n_supercell = np.prod(self.dyn.GetSupercell())
+            ec_eq_size = np.shape(ec_eq)
+            MSG = """
+            Error, effective charges of the wrong shape: {}
+            """.format(ec_eq_size)
+            assert len(ec_eq_size) == 3, MSG
+            if not self.ignore_small_w:
+                assert ec_eq_size[0] * ec_eq_size[2] * n_supercell == self.n_modes + 3
+            assert ec_eq_size[1] == ec_eq_size[2] == 3
+            
+            # Eq effective charges, (N_at_uc, 3)
+            z_eff_eq = np.einsum("abc, b -> ac", ec_eq, pol_vec_light)
+            # Eq effective charges at gamma, (N_at_sc, 3)
+            z_eff_eq_gamma = np.tile(z_eff_eq.ravel(), n_supercell).reshape((self.nat, 3))
+            print()
+            print('Subtracting the equilibrium effective charges...')
+            # This should reduce the noise
+            z_eff -= z_eff_eq_gamma
         
         if add_two_ph:
-            print('Getting the two phonon contribution..')
+            print('Getting the two phonon contribution...')
             # SECOND DERIVATIVE OF THE DIPOLE
             # Polarization vectors over mass, shape = (N_at_sc, n_modes)
             pols_mass = np.einsum('a, am -> am', np.sqrt(self.m)**-1, self.pols)
@@ -1017,7 +1012,7 @@ File {} not found. S norm not loaded.
             # The mass rescaled projected effective charges in polarization basis, shape = (N_configs, n_modes)
             z_pols_mass = np.einsum('am, ia -> im ', pols_mass, z_eff.ravel().reshape((self.N, self.nat * 3)))
 
-            # Eigeivnalues of Upsilon mass rescaled, shape = (n_modes)
+            # Eigenvalues of Upsilon mass rescaled, shape = (n_modes)
             xi2_inv = f_ups(self.w, self.T)
             
             # The mass rescaled displacements in polarization basis divided by xi2, shape = (N_configs, n_modes)
@@ -1056,7 +1051,7 @@ File {} not found. S norm not loaded.
 
             # Add the mask dot taking into account symmetric elements
             mask_dot = self.mask_dot_wigner()
-            # Overwrite the pertubation modulus
+            # OVERWRITE the pertubation modulus considering the two phonon sector
             self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
             
             print('Perturbation modulus after adding two ph contributions = {}'.format(self.perturbation_modulus))
@@ -1167,12 +1162,11 @@ File {} not found. S norm not loaded.
         mat_modes = np.zeros((self.n_modes, self.n_modes))
         
         mat_modes[a,b] = 0.5
-        mat_modes[b,a] = 0.5
+        mat_modes[b,a] += 0.5
         
-        # Get the pertbations
+        # Get the pertbations on a' b'
         pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), mat_modes)
         pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , mat_modes)
-        
         
         # Now get the perturbation for a'^(1)
         current = self.n_modes
@@ -2656,7 +2650,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 shift = self.shift_value,
                                 perturbation_modulus = self.perturbation_modulus,
                                 q_vectors = self.q_vectors,
-                                use_wigner = self.use_wigner)
+                                use_wigner = self.use_wigner,
+                                ignore_small_w = self.ignore_small_w)
             
     def load_status(self, file):
         """
@@ -2720,6 +2715,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         self.s_norm = data["s_norm"]
         
         self.use_wigner = data["use_wigner"]
+        self.ignore_small_w = data["ignore_small_w"]
 
         if "reverse" in data.keys():
             self.reverse_L = data["reverse"]
@@ -4734,8 +4730,8 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
            
         if debug:
             print()
-            print('start_a = ', start_a)
-            print('start_b = ', start_b)
+            print("start_a'(1) = ", start_a)
+            print("start_b'(1) = ", start_b)
             print('new_i_b')
             print(new_i_b)
             print('new_i_a')
@@ -4930,6 +4926,7 @@ Max number of iterations: {}
             if not self.use_wigner:
                 if verbose:
                     print("Running the BICONJUGATE Lanczos with standard representation!\n")
+                    print()
                 L_q = self.L_linop.matvec(psi_q)
                 # psi_p is normalized (this must be considered when computing c coeff) 
                 p_L = self.L_linop.rmatvec(psi_p) 
@@ -4940,7 +4937,7 @@ Max number of iterations: {}
                 # Get the application on psi_q
                 L_q = self.L_linop.matvec(psi_q)
                 if run_simm:
-                    # This is done because we are running the standard Lanczos
+                    # This is done because we are running the symmetric Lanczos
                     if verbose:
                         print()
                         print("Running the SYMMETRIC Lanczos with Wigner!\n")
@@ -4961,9 +4958,6 @@ Max number of iterations: {}
                 else:
                     print("Modulus of L_q: {}".format(np.sqrt(L_q.dot(L_q * mask_dot))))
                     print("Modulus of p_L: {}".format(np.sqrt(p_L.dot(p_L * mask_dot))))
-                    
-            #if verbose:
-            #    print("Time to apply the full L: %d s" % (t2 -t1))
 
             # Get the normalization of p_k (with respect to s_k)
             c_old = 1
@@ -5150,7 +5144,7 @@ or if the acoustic sum rule is not satisfied.
                         p_dot_qold = self.basis_Q[k].dot(new_p * mask_dot) * pp_norm
                     print("{:4d}) {:16.8e} | {:16.8e}".format(k, q_dot_pold, p_dot_qold))
 
-            # Start the Granm Schmidt procedure        
+            # Start the Gram Schmidt procedure        
             for k_orth in range(n_rep_orth):
                 ortho_q = 0
                 ortho_p = 0
