@@ -919,7 +919,8 @@ File {} not found. S norm not loaded.
         Error, effective charges of the wrong shape: {}
         """.format(ec_size)
         assert len(ec_size) == 3, MSG
-        assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
+        if not self.ignore_small_w:
+            assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
         assert ec_size[1] == ec_size[2] == 3
 
         # shape = (N_at_uc, 3)
@@ -943,7 +944,8 @@ File {} not found. S norm not loaded.
         
         Parameters:
         -----------
-            -effective_charges: nd.array, the effective charges for all configurations.
+            -effective_charges: nd.array (N_configs, N_atoms_sc, E_comp, cart_comp),
+                 the effective charges for all configurations.
                  Indices are: Number of configuration, number of atoms in the super cell,
                  electric field component, atomic coordinate.
             -effective_charges_eq: nd.array, the effective charges at equilibrium.
@@ -1000,7 +1002,7 @@ File {} not found. S norm not loaded.
             z_eff_eq_gamma = np.tile(z_eff_eq.ravel(), n_supercell).reshape((self.nat, 3))
             print()
             print('Subtracting the equilibrium effective charges...')
-            # This should reduce the noise
+            # This should reduce the noise when computing the 2ph vertex
             z_eff -= z_eff_eq_gamma
         
         if add_two_ph:
@@ -2715,7 +2717,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         self.s_norm = data["s_norm"]
         
         self.use_wigner = data["use_wigner"]
-        self.ignore_small_w = data["ignore_small_w"]
+        try:
+            self.ignore_small_w = data["ignore_small_w"]
+        except:
+            self.ignore_small_w = False #data["ignore_small_w"]
 
         if "reverse" in data.keys():
             self.reverse_L = data["reverse"]
