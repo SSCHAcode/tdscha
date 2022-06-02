@@ -108,7 +108,8 @@ class Lanczos(object):
         #    order = "F"
 
         # HERE DEFINE ALL THE VARIABLES FOR THE Dynamical Lanczos
-    
+        self.verbose = True
+
         self.T = 0
         self.nat = 0
         self.m = []
@@ -1881,7 +1882,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 output += self.apply_L3_FT(transpose)
             t4 = timer()
 
-        print("Time to apply the full L: {}".format(t4 - t1))
+        if self.verbose:
+            print("Time to apply the full L: {}".format(t4 - t1))
         #print("Time to apply L2: {}".format(t3-t2))
         #print("Time to apply L3: {}".format(t4-t3))
 
@@ -3623,6 +3625,8 @@ Max number of iterations: {}
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
         """
+
+        self.verbose = verbose
 
         # Check if the symmetries has been initialized
         if not self.initialized:
