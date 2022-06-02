@@ -134,8 +134,8 @@ class Lanczos(object):
         #    order = "F"
 
         # HERE DEFINE ALL THE VARIABLES FOR THE Dynamical Lanczos
-    
         # The temperature
+        self.verbose = True
         self.T = 0
         # Number of atoms in the supercell
         self.nat = 0
@@ -3367,7 +3367,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         #         output += self.apply_L3_FT(transpose)
         #     t4 = timer()
 
-        print("Time to apply the full L: {}".format(t4 - t1))
+        if self.verbose:
+            print("Time to apply the full L: {}".format(t4 - t1))
         #print("Time to apply L2: {}".format(t3-t2))
         #print("Time to apply L3: {}".format(t4-t3))
 
@@ -5631,6 +5632,8 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             optimized : bool
                 If True we pop the vectors P and Q that we do not use during the Lanczos
         """
+
+        self.verbose = verbose
         # Check if the symmetries has been initialized
         if not self.initialized:
             if verbose:
