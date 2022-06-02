@@ -5588,7 +5588,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False, optimized = False):
+    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False, optimized = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -5609,6 +5609,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             save_dir : string
                 The directory in which you want to store the results step by step,
                 in order to do a preliminar analysis or restart the calculation later.
+                If None (default), the steps are not saved.
             save_each : int
                 If save dir is not None, the results are saved each N step, with N the value of save_each argument.
             verbose : bool
@@ -5657,7 +5658,7 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
         # If save_dir does not exist, create it
         if save_dir is not None:
             if not os.path.exists(save_dir):
-                makedirs(save_dir)
+                os.makedirs(save_dir)
          
         # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
