@@ -1,4 +1,4 @@
-#!/home/antonio/anaconda3/bin/python
+#!/usr/bin/python3
 
 import sys, os
 import sscha

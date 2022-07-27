@@ -1,4 +1,4 @@
-#!/home/antonio/anaconda3/bin/python
+#!/usr/bin/python3
 from __future__ import print_function
 from __future__ import division
 
