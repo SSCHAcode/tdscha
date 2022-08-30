@@ -226,23 +226,21 @@ class Lanczos(object):
 
         # ========== END OF VARIABLE DEFINITION (EACH NEW DEFINITION FROM NOW ON RESULTS IN AN ERROR) =======
         self.dyn = ensemble.current_dyn.Copy() 
-        superdyn = self.dyn.GenerateSupercellDyn(ensemble.supercell)
-        self.uci_structure   = ensemble.current_dyn.structure.copy()
-        self.super_structure = superdyn.structure
+        self.uci_structure = ensemble.current_dyn.structure.copy()
+        self.super_structure = self.dyn.structure.generate_supercell(self.dyn.GetSupercell())#superdyn.structure
 
         self.T = ensemble.current_T
 
         ws, pols = self.dyn.DiagonalizeSupercell(lo_to_split = lo_to_split)
 
-        self.nat = superdyn.structure.N_atoms
+        self.nat = self.super_structure.N_atoms
         n_cell = np.prod(self.dyn.GetSupercell())
 
         self.qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
         self.qe_sym.SetupQPoint()
 
         # Get the masses
-        m = superdyn.structure.get_masses_array()
-        # np.shape = (N_at_sc, 3) then ravel
+        m = self.super_structure.get_masses_array()
         self.m = np.tile(m, (3,1)).T.ravel()
 
         # Remove the translations
