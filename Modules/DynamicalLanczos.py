@@ -124,6 +124,7 @@ class Lanczos(object):
         self.X = []
         self.Y = []
         self.psi = []
+        self.psi_2 = []
         self.eigvals = None
         self.eigvects = None
         # In the custom lanczos mode
@@ -402,6 +403,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         len_psi = self.n_modes
         len_psi += self.n_modes * (self.n_modes + 1)
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        self.psi_2 = np.zeros(len_psi, dtype = TYPE_DP)
         
         self.prepare_symmetrization(no_sym = not use_symmetries)
         self.initialized = True
@@ -708,6 +710,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
 
             np.savetxt(root_fname + ".psi", self.psi)
+            np.savetxt(root_fname + ".psi_p", self.psi_2)
 
             # Prepare the symmetry variables for the C code
             for i in range(len(self.symmetries)):
@@ -805,7 +808,7 @@ File {} not found. S norm not loaded.
 
 
 
-    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
+    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0]),mixed = False ,pol_vec_in2 = None , pol_vec_out2 = None):
         """
         PREPARE LANCZOS FOR RAMAN SPECTRUM
         ==================================
@@ -832,11 +835,18 @@ File {} not found. S norm not loaded.
         n_supercell = np.prod(self.dyn.GetSupercell())
         new_raman_v = np.tile(raman_v.ravel(), n_supercell)
 
-        # Convert in the polarization basis and store the intensity
-        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        # If you want to compute mixed terms
+        if mixed:
+            raman_v2 = self.dyn.GetRamanVector(pol_vec_in2,pol_vec_out2)
 
+            new_raman_v2 = np.tile(raman_v2.ravel(), n_supercell)
 
-    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
+            # Convert in the polarization basis and store the intensity
+            self.prepare_perturbation(new_raman_v, masses_exp=-1,mixed=True,vector2=new_raman_v2)
+        else:
+            self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0]), mixed = False, pol_vec2 = None):
         """
         PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
         =================================================
@@ -876,10 +886,17 @@ File {} not found. S norm not loaded.
 
         # Get the gamma effective charge
         new_zeff = np.tile(z_eff.ravel(), n_supercell)
-        self.prepare_perturbation(new_zeff, masses_exp = -1)
+
+        if mixed:
+            z_eff2 = np.einsum("abc,b", ec, pol_vec2)
+            new_zeff2 = np.tile(z_eff2.ravel(), n_supercell)
+
+            self.prepare_perturbation(new_zeff, masses_exp = -1, mixed = True, vector2 = new_zeff2)
+        else:
+            self.prepare_perturbation(new_zeff, masses_exp = -1)
 
 
-    def prepare_perturbation(self, vector, masses_exp = 1):
+    def prepare_perturbation(self, vector, masses_exp = 1, mixed = False, vector2 = None):
         r"""
         This function prepares the calculation for the Green function
 
@@ -916,12 +933,22 @@ File {} not found. S norm not loaded.
         # Convert the vector in the polarization space
         m_on = np.sqrt(self.m) ** masses_exp
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
+        
         self.psi[:self.n_modes] = new_v
 
-        self.perturbation_modulus = new_v.dot(new_v)
+        
+
+        if mixed:
+            new_v2 = np.einsum("a,a,ab ->b", m_on,vector2,self.pols)
+            self.psi_2[:self.n_modes] = new_v2
+            self.perturbation_modulus = new_v.dot(new_v2)
+        else:
+            self.psi_2[:self.n_modes] = new_v
+            self.perturbation_modulus = new_v.dot(new_v)
 
         if self.symmetrize:
-            self.symmetrize_psi()
+            self.psi = self.symmetrize_psi(self.psi)
+            self.psi_2 = self.symmetrize_psi(self.psi_2)
 
     def prepare_mode(self, index):
         """
@@ -938,12 +965,14 @@ File {} not found. S norm not loaded.
 
         self.psi[:] = 0
         self.psi[index] = 1 
+        self.psi_2[:] = 0
+        self.psi_2[index] = 1
         self.perturbation_modulus = 1
 
         
 
 
-    def get_vector_dyn_from_psi(self):
+    def get_vector_dyn_from_psi(self,psi_function):
         """
         This function returns a standard vector and the dynamical matrix in cartesian coordinates
         
@@ -953,8 +982,11 @@ File {} not found. S norm not loaded.
         """
 
 
-        vector = self.psi[:self.n_modes]
-        dyn = self.psi[self.n_modes:].reshape((self.n_modes, self.n_modes))
+        #vector = self.psi[:self.n_modes]
+        #dyn = self.psi[self.n_modes:].reshape((self.n_modes, self.n_modes))
+
+        vector = psi_function[:self.n_modes]
+        dyn = psi_function[self.n_modes:].reshape((self.n_modes , self.n_modes))
 
         w_a = np.tile(self.w, (self.n_modes, 1))
         w_b = np.tile(self.w, (self.n_modes, 1)).T 
@@ -968,7 +1000,7 @@ File {} not found. S norm not loaded.
 
         return real_v, real_dyn 
     
-    def set_psi_from_vector_dyn(self, vector, dyn):
+    def set_psi_from_vector_dyn(self, vector, dyn, psi_function):
         """
         Set the psi vector from a given vector of positions [bohr] and a force constant matrix [Ry/bohr^2].
         Used to reset the psi after the symmetrization.
@@ -984,16 +1016,21 @@ File {} not found. S norm not loaded.
 
         new_dyn /= ( 2*(w_a + w_b) * np.sqrt(w_a*w_b*(w_a + w_b)))
 
-        self.psi[:self.n_modes] = new_v
-        self.psi[self.n_modes:] = new_dyn.ravel()
+        #self.psi[:self.n_modes] = new_v
+        #self.psi[self.n_modes:] = new_dyn.ravel()
 
-    def symmetrize_psi(self):
+        psi_function[:self.n_modes] = new_v
+        psi_function[self.n_modes:] = new_dyn.ravel()
+
+        return psi_function
+
+    def symmetrize_psi(self,psi_function):
         """
         Symmetrize the psi vector.
         """
         
         # First of all, get the vector and the dyn
-        vector, dyn = self.get_vector_dyn_from_psi()
+        vector, dyn = self.get_vector_dyn_from_psi(psi_function)
 
         print ("Vector before symmetries:")
         print (vector)
@@ -1014,7 +1051,7 @@ File {} not found. S norm not loaded.
         dyn = CC.Phonons.GetSupercellFCFromDyn(dyn_q, np.array(self.dyn.q_tot), self.uci_structure, self.super_structure)
 
         # Push everithing back into the psi
-        self.set_psi_from_vector_dyn(vector, dyn)
+        return self.set_psi_from_vector_dyn(vector, dyn, psi_function)
 
     def set_max_frequency(self, freq):
         """
@@ -3678,8 +3715,9 @@ Max number of iterations: {}
             self.basis_P = []
             self.s_norm = []
             first_vector = self.psi / np.sqrt(self.psi.dot(self.psi))
+            first_vector_p = self.psi_2 * np.sqrt(self.psi.dot(self.psi)) / ( self.psi.dot(self.psi_2)) 
             self.basis_Q.append(first_vector)
-            self.basis_P.append(first_vector)
+            self.basis_P.append(first_vector_p)
             self.s_norm.append(1)
         else:
             # Convert everything in a list

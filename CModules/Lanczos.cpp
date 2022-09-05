@@ -34,6 +34,7 @@ Lanczos::~Lanczos() {
     free(X);
     free(Y);
     free(psi);
+    free(psi_2);
 
     free(Qbasis);
     free(Pbasis);
@@ -98,6 +99,7 @@ void Lanczos::setup_from_input(string rootname) {
     nbose = (double*) malloc(sizeof(double) * n_modes);
     rho = (double *) malloc(sizeof(double) * N);
     psi = (double *) malloc(sizeof(double) * n_psi);
+    psi_2 = (double *) malloc(sizeof(double) * n_psi);
     blocks_ids = (int*) malloc(sizeof(int) * n_modes);
 
     //Ups1 = (double*) calloc(sizeof(double), n_modes*n_modes);
@@ -155,6 +157,14 @@ void Lanczos::setup_from_input(string rootname) {
     }
     file.close();
 
+    file.open(rootname + ".psi_p");
+    if (file.is_open()) {
+        string line;
+        for (int k = 0; k < n_psi; ++k) {
+            file >> psi_2[k];
+        }
+    }
+    file.close();
 
     // Now read the 2D arrays (TODO: read also previous steps)
     file.open(rootname + ".X.dat");
@@ -543,7 +553,9 @@ void Lanczos::run() {
     
     // Prepare the first vector computing the norm of psi
     double psi_norm = 0;
+    double psi_dot_psi2 = 0;
     for (int i = 0; i < n_psi; ++i) psi_norm += psi[i] * psi[i];
+    for (int i = 0; i < n_psi; ++i) psi_dot_psi2 += psi[i] * psi_2[i];
     psi_norm = sqrt(psi_norm);
 
 
@@ -556,7 +568,7 @@ void Lanczos::run() {
     if (i_step == 0) {
         for (int i = 0; i < n_psi; ++i) {
             Qbasis[i] = psi[i] / psi_norm;
-            Pbasis[i] = psi[i] / psi_norm;
+            Pbasis[i] = psi_2[i] * psi_norm / psi_dot_psi2;
         }
         snorm[0] = 1;
     } 
