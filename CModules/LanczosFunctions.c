@@ -2104,6 +2104,7 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 	// Prepare the temporaney force and displacement (after symmetry applicaiton)
 	double * force = (double*) calloc(sizeof(double), n_modes);
 	double * displacement = (double*) calloc(sizeof(double), n_modes);
+}
 
 	// Prepare everything for the parallemization
 	int size = 1, rank = 0;
