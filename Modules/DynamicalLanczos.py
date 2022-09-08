@@ -4766,7 +4766,7 @@ Max number of iterations: {}
         return -np.imag(spectral)
 
 
-    def get_green_function_continued_fraction(self, w_array, use_terminator = True, last_average = 1, smearing = 0):
+    def get_green_function_continued_fraction(self, w_array : np.ndarray[np.float64], use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0):
         r"""
         CONTINUED FRACTION GREEN FUNCTION
         =================================
@@ -5087,6 +5087,42 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             self.L_linop = scipy.sparse.linalg.LinearOperator(L_operator.shape, matvec = matvec, rmatvec = rmatvec)
         
         return L_operator
+
+    def get_static_frequency(self, smearing: np.float64 = 0) -> np.float64:
+        r"""
+        GET THE STATIC FREQUENCY
+        ========================
+
+        The static frequency of a specific perturbation can be obtained as the limit of the 
+        dynamical green function for w -> 0. 
+
+        .. math ::
+
+            \omega = \sqrt{\frac{1}{\Re G(\omega \rightarrow 0 + i\eta)}} 
+
+
+        where :math:`\eta` is the smearing for the static frequency calculation.
+        This frequency is the diagonal element of the free energy Hessian matrix acros the chosen perturbation.
+
+        If :math:`\omega` is imaginary, a negative value is returned.
+
+        Parameters
+        ----------
+            - smearing : float
+                The smearing in Ry of the calculation
+
+        Results
+        -------
+            - frequency : float
+                The frequency of the perturbation :math:`\omega`
+        """
+
+
+
+        gf = self.get_green_function_continued_fraction(np.array([0]), False, smearing = smearing)
+
+        w2 = 1 / np.real(gf)
+        return np.float64(np.sqrt(np.abs(w2)) * np.sign(w2))
 
     
     
