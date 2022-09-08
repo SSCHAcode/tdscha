@@ -44,6 +44,9 @@ try:
 except:
     pass
 
+# Try to import the julia module
+
+
 # Define a generic type for the double precision.
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
