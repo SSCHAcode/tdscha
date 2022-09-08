@@ -139,6 +139,7 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
         BLAS.gemm!('N', 'T', -weight, r1_aux, r2_aux, 1.0, d2v_dR2)
         BLAS.gemm!('N', 'T', -weight, r2_aux, r1_aux, 1.0, d2v_dR2)
 
+
         weight = - buffer_u' * buffer_f
         weight *= ω_is[i] / 4
 
@@ -160,7 +161,6 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
     f_ψ = (1 .+ 2 .* n_ω) ./ (2 .* ensemble.ω)
     f_Y =  2 .* ensemble.ω ./ (1 .+ 2 .* n_ω)
 
-
     f_average = zeros(T, n_modes)
 
     buffer_u = zeros(T, n_modes) 
@@ -174,6 +174,7 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
     for bigindex = start_index:end_index
         i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
         j = mod((bigindex - 1), n_symmetries) + 1
+
 
         mul!(forces, symmetries[j], view(ensemble.Y, :, i))
         mul!(displacements, symmetries[j], view(ensemble.X, :, i))
