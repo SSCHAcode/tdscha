@@ -2261,6 +2261,7 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 	double N_eff = 0;
 	double u_mu, u_nu;
 	
+	double sum = 0;
 
 	// Prepare the temporaney force and displacement (after symmetry applicaiton)
 	double * force = (double*) calloc(sizeof(double), n_modes);
@@ -2374,6 +2375,8 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 				weight += f_ups(w[mu], T) * R1[mu] * displacement[mu];
 			}
 
+			//printf("i = %d, j = %d, weight = %e\n", i, j, weight);
+
 			// Compute the d2V_dR2
 			for (mu = 0; mu < n_modes; ++mu) {
 				u_mu = f_ups(w[mu], T) * displacement[mu];
@@ -2399,6 +2402,10 @@ void get_d2v_dR2_from_R_pert_sym_fast( double * X,  double * Y,  double * w,  do
 					d2v_tmp[mu * n_modes + nu] -= u_mu * u_nu * weight * w_is[i] / 3;
 				}
 			}	
+
+			/*sum = 0;
+			for (mu = 0; mu < n_modes * n_modes; ++mu) sum += d2v_tmp[mu];
+			printf("Total sum: %e\n", sum);*/
 		}
 	}
 

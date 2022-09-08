@@ -32,6 +32,15 @@ from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
 
 # Try to import the julia module
+__JULIA_EXT__ = False
+try:
+    import julia, julia.Main
+
+    # Compile the tdscha code
+    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
+    __JULIA_EXT__ = True
+except:
+    pass
 
 
 # Define a generic type for the double precision.
@@ -70,6 +79,7 @@ def f_ups(w, T):
     return 2*w / (1 + 2 *n_w)
 
 # Modes for the calculation
+MODE_FAST_JULIA = 3
 MODE_FAST_MPI = 2
 MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
@@ -94,6 +104,7 @@ class Lanczos(object):
                       Use this just for testing
                    1) Fast C serial code
                    2) Fast C parallel (MPI)
+                   3) Fast Julia multithreading (only if julia is available)
             unwrap_symmetries : bool
                 If true (default), the ensemble is unwrapped to respect the symmetries.
                 This requires SPGLIB installed.
@@ -155,6 +166,8 @@ class Lanczos(object):
         self.L_linop = None
         self.M_linop = None
         self.unwrapped = False
+        self.sym_julia = None
+        self.deg_julia = None
 
         self.u_tilde = None
         self.f_tilde = None
@@ -576,6 +589,25 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
+
+
+        if self.mode is MODE_FAST_JULIA:
+            # Get the max length
+            max_val = 0
+            nsyms =  self.symmetries[0].shape[0]
+            nblocks = len(self.symmetries)
+            for s in self.symmetries:
+                m = s.shape[1]
+                if m > max_val:
+                    max_val = m
+            self.sym_julia = np.zeros((nblocks, nsyms, max_val, max_val), dtype = TYPE_DP)
+            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
+
+            # Now fill the array
+            for i, sblock in enumerate(self.symmetries):
+                nsym, c, _ = np.shape(sblock)
+                self.sym_julia[i, :, :c, :c] = sblock
+                self.deg_julia[i, :c] = self.degenerate_space[i]
 
         # Create the mapping between the modes and the block id.
         t1 = time.time()
@@ -1500,9 +1532,27 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         n_syms, _, _ = np.shape(self.symmetries[0])
         #print("DEG:")
         #print(self.degenerate_space)
-        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
-                                          self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
-                                          f_pert_av, d2v_pert_av)
+        if self.mode in (MODE_FAST_MPI, MODE_FAST_SERIAL): 
+            sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
+                                            self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
+                                            f_pert_av, d2v_pert_av)
+            print(np.sum(np.abs(d2v_pert_av)))
+        elif self.mode == MODE_FAST_JULIA:
+            print(self.Y.shape)
+            if not __JULIA_EXT__:
+                raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
+            
+            if self.sym_julia is None:
+                MSG="""
+Error, the initialization must be called AFTER you change mode to JULIA.
+"""
+                raise ValueError(MSG)
+
+            f_pert_av, d2v_pert_av = julia.Main.get_perturb_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                            self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id)
+            print(np.sum(np.abs(d2v_pert_av)))
+        else:
+            raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
         #print("D2V:")
         #np.set_printoptions(threshold = 10000)
