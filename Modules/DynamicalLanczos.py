@@ -1538,7 +1538,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                             f_pert_av, d2v_pert_av)
             print(np.sum(np.abs(d2v_pert_av)))
         elif self.mode == MODE_FAST_JULIA:
-            print(self.Y.shape)
             if not __JULIA_EXT__:
                 raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
             
@@ -1550,7 +1549,6 @@ Error, the initialization must be called AFTER you change mode to JULIA.
 
             f_pert_av, d2v_pert_av = julia.Main.get_perturb_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
                                             self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id)
-            print(np.sum(np.abs(d2v_pert_av)))
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 

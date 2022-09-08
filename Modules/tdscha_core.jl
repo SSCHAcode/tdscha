@@ -162,8 +162,9 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
 
     f_average = zeros(T, n_modes) 
 
-    buffer1 = zeros(T, n_modes)
+    buffer_u = zeros(T, n_modes)
     buffer_f = zeros(T, n_modes)
+    buffer_f1 = zeros(T, n_modes)
 
 
     Threads.@threads for i in 1:n_configs
@@ -175,15 +176,18 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
 
             mul!(forces, symmetries[j], view(ensemble.Y, :, i))
             mul!(displacements, symmetries[j], view(ensemble.X, :, i))
-            mul!(buffer, Y1, displacements)
-            buffer_f .= f_ψ .* forces
+            mul!(buffer_u, Y1, displacements)
+            buffer_f .= forces
+            buffer_f .*= f_ψ 
+            buffer_f1 .= f_Y .* displacements
 
-            weight = -displacements' * buffer / 2
-            f_average .+= (ω_is[i] * weight / 3) .* forces
+            weight = -displacements' * buffer_u / 2
+            weight *= ω_is[i] / 3
+            f_average .+= weight .* forces
 
-            weight = - buffer' * buffer_f  / 2
-
-            f_average .+= (ω_is[i] * weight * 2 / 3.) .* f_Y .* displacements
+            weight = - buffer_u' * buffer_f 
+            weight *= ω_is[i] / 3.
+            f_average .+= weight .* buffer_f1
         end  
     end 
 
@@ -212,10 +216,10 @@ function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho
     ensemble = Ensemble(X, Y, ω)
 
     # Get the average force
-    @time f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho)
-    @time d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho)
+    f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho)
+    d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho)
 
-    @time if apply_v4
+    if apply_v4
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho)
     end 
 
