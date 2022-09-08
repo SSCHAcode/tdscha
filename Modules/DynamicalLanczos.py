@@ -111,7 +111,8 @@ class Lanczos(object):
         #    order = "F"
 
         # HERE DEFINE ALL THE VARIABLES FOR THE Dynamical Lanczos
-    
+        self.verbose = True
+
         self.T = 0
         self.nat = 0
         self.m = []
@@ -173,23 +174,23 @@ class Lanczos(object):
         # ========== END OF VARIABLE DEFINITION (EACH NEW DEFINITION FROM NOW ON RESULTS IN AN ERROR) =======
 
         self.dyn = ensemble.current_dyn.Copy() 
-        superdyn = self.dyn.GenerateSupercellDyn(ensemble.supercell)
+        #superdyn = self.dyn.GenerateSupercellDyn(ensemble.supercell)
         self.uci_structure = ensemble.current_dyn.structure.copy()
-        self.super_structure = superdyn.structure
+        self.super_structure = self.dyn.structure.generate_supercell(self.dyn.GetSupercell())#superdyn.structure
 
         self.T = ensemble.current_T
 
         ws, pols = self.dyn.DiagonalizeSupercell(lo_to_split = lo_to_split)
 
 
-        self.nat = superdyn.structure.N_atoms
+        self.nat = self.super_structure.N_atoms
         n_cell = np.prod(self.dyn.GetSupercell())
 
         self.qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
         self.qe_sym.SetupQPoint()
 
         # Get the masses
-        m = superdyn.structure.get_masses_array()
+        m = self.super_structure.get_masses_array()
         self.m = np.tile(m, (3,1)).T.ravel()
 
         # Remove the translations
@@ -1884,7 +1885,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 output += self.apply_L3_FT(transpose)
             t4 = timer()
 
-        print("Time to apply the full L: {}".format(t4 - t1))
+        if self.verbose:
+            print("Time to apply the full L: {}".format(t4 - t1))
         #print("Time to apply L2: {}".format(t3-t2))
         #print("Time to apply L3: {}".format(t4-t3))
 
@@ -3591,7 +3593,7 @@ Max number of iterations: {}
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS"):
+    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS"):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -3607,6 +3609,7 @@ Max number of iterations: {}
             save_dir : string
                 The directory in which you want to store the results step by step,
                 in order to do a preliminar analysis or restart the calculation later.
+                If None (default), the steps are not saved.
             save_each : int
                 If save dir is not None, the results are saved each N step, with N the value of save_each argument.
             verbose : bool
@@ -3626,6 +3629,8 @@ Max number of iterations: {}
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
         """
+
+        self.verbose = verbose
 
         # Check if the symmetries has been initialized
         if not self.initialized:
@@ -3648,7 +3653,7 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
         # If save_dir does not exist, create it
         if save_dir is not None:
             if not os.path.exists(save_dir):
-                makedirs(save_dir)
+                os.makedirs(save_dir)
 
 
         # Get the current step

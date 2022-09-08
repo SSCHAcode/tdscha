@@ -38,7 +38,11 @@ data = []
 nat = 0
 print ("Reading the lanczos file...")
 data = DL.Lanczos()
-data.load_status(fname)
+
+if fname.endswith('.abc'):
+    data.load_abc(fname)
+else:
+    data.load_status(fname)
 nat = data.nat
 N_iters = len(data.a_coeffs) - 1
 

@@ -1,5 +1,5 @@
-CPP := mpic++
-CC := mpicc
+CPP := /usr/bin/mpic++
+CC := /usr/bin/mpicc
 FLAGS :=   -O3 #(Causes a seg. fault)
 OPTFLAG := #-O2
 DFLAGS := -D_MPI
