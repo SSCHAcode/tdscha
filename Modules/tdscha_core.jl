@@ -115,16 +115,21 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
 
     r1_aux = zeros(T, (n_modes, 1))
     r2_aux = zeros(T, (n_modes, 1))
+    buffer_f = zeros(T, n_modes)
+    buffer_u = zeros(T, n_modes)
+
 
     Threads.@threads for i in 1:n_configs
         for j in 1:n_symmetries
             # Compute the symmetrized forces and displacements
             mul!(forces, symmetries[j], view(ensemble.Y, :, i))
             mul!(displacements, symmetries[j], view(ensemble.X, :, i))
+            mul!(buffer_u, Y1, displacements)
+            buffer_f = f_ψ .* forces
 
-
-            weight = -displacements' * Y1 * displacements 
+            weight = -displacements' * buffer_u
             weight *= ω_is[i] / 8
+            
 
             r1_aux[:, 1] .= f_Y .* displacements
             r2_aux[:, 1] .= forces
@@ -132,9 +137,8 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
             BLAS.gemm!('N', 'T', -weight, r1_aux, r2_aux, 1.0, d2v_dR2)
             BLAS.gemm!('N', 'T', -weight, r2_aux, r1_aux, 1.0, d2v_dR2)
 
-            weight = - displacements' * Y1 * (f_ψ .* forces) 
-            weight -= (f_ψ .* forces)' * Y1 * displacements
-            weight *= ω_is[i] / 8
+            weight = - buffer_u' * buffer_f
+            weight *= ω_is[i] / 4
 
             BLAS.gemm!('N', 'T', -weight, r1_aux, r1_aux, 1.0, d2v_dR2)
         end
@@ -158,7 +162,8 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
 
     f_average = zeros(T, n_modes) 
 
-    buffer = zeros(T, n_modes)
+    buffer1 = zeros(T, n_modes)
+    buffer_f = zeros(T, n_modes)
 
 
     Threads.@threads for i in 1:n_configs
@@ -171,11 +176,12 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
             mul!(forces, symmetries[j], view(ensemble.Y, :, i))
             mul!(displacements, symmetries[j], view(ensemble.X, :, i))
             mul!(buffer, Y1, displacements)
+            buffer_f .= f_ψ .* forces
 
             weight = -displacements' * buffer / 2
-            f_average .+= ω_is[i] * weight / 3 .* forces
+            f_average .+= (ω_is[i] * weight / 3) .* forces
 
-            weight = - buffer' * (f_ψ .* forces)  / 2
+            weight = - buffer' * buffer_f  / 2
 
             f_average .+= (ω_is[i] * weight * 2 / 3.) .* f_Y .* displacements
         end  
