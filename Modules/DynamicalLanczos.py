@@ -2906,7 +2906,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                               f_pert_av, d2v_pert_av)
         # NEW JULIA
         elif self.mode == MODE_FAST_JULIA:
-            print('julia')
             if not __JULIA_EXT__:
                 raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
                 
@@ -2951,6 +2950,11 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             # Execute the get_f_d2v_proc on each processor in parallel.
             f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
             d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+=======
+
+            f_pert_av, d2v_pert_av = julia.Main.get_perturb_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                            self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id)
+>>>>>>> cfc8ab85 (Now it works and we can try a bit bigger system.)
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 

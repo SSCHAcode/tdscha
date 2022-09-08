@@ -175,7 +175,6 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
         i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
         j = mod((bigindex - 1), n_symmetries) + 1
 
-
         mul!(forces, symmetries[j], view(ensemble.Y, :, i))
         mul!(displacements, symmetries[j], view(ensemble.X, :, i))
         
@@ -192,6 +191,7 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
         weight = - buffer_u' * buffer_f 
         weight *= ω_is[i] / 3.
         f_average .+= weight .* buffer_f1
+
     end 
 
     return f_average/ ( n_symmetries * sum(ω_is))
