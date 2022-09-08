@@ -45,6 +45,15 @@ except:
     pass
 
 # Try to import the julia module
+__JULIA_EXT__ = False
+try:
+    import julia, julia.Main
+
+    # Compile the tdscha code
+    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
+    __JULIA_EXT__ = True
+except:
+    pass
 
 
 # Define a generic type for the double precision.
@@ -115,7 +124,7 @@ class Lanczos(object):
                       Use this just for testing
                    1) Fast C serial code
                    2) Fast C parallel (MPI)
-                   3) Fasr Julia multithreading
+                   3) Fast Julia multithreading (only if julia is available)
             unwrap_symmetries : bool
                 If true (default), the ensemble is unwrapped to respect the symmetries.
                 This requires SPGLIB installed.
@@ -668,6 +677,25 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 if m > max_val:
                     max_val = m
             self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
+            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
+
+            # Now fill the array
+            for i, sblock in enumerate(self.symmetries):
+                nsym, c, _ = np.shape(sblock)
+                self.sym_julia[i, :, :c, :c] = sblock
+                self.deg_julia[i, :c] = self.degenerate_space[i]
+
+
+        if self.mode is MODE_FAST_JULIA:
+            # Get the max length
+            max_val = 0
+            nsyms =  self.symmetries[0].shape[0]
+            nblocks = len(self.symmetries)
+            for s in self.symmetries:
+                m = s.shape[1]
+                if m > max_val:
+                    max_val = m
+            self.sym_julia = np.zeros((nblocks, nsyms, max_val, max_val), dtype = TYPE_DP)
             self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
 
             # Now fill the array
