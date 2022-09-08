@@ -2678,16 +2678,17 @@ void get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  do
 			// First the standard weight
 			for (mu = 0; mu < n_modes; ++mu) {
 				for(nu = 0; nu < n_modes; ++nu) {
-					weight -= displacement[mu] * displacement[nu] * Y1[mu * n_modes + nu] / 2;
+					weight -= displacement[mu] * displacement[nu] * Y1[mu * n_modes + nu];
 				}
 			}
+			weight *= w_is[i] / 8;
 
 			// Now the first part of the potential
 			for (mu = 0; mu < n_modes; ++mu) {
 				u_mu = f_ups(w[mu], T) * displacement[mu];
 				for(nu = 0; nu < n_modes; ++nu) {
-					d2v_tmp[mu * n_modes + nu] -= force[nu] * u_mu * weight * w_is[i] / 4; // Permutation symmetry
-					d2v_tmp[nu * n_modes + mu] -= force[nu] * u_mu * weight * w_is[i] / 4; // Permutation symmetry
+					d2v_tmp[mu * n_modes + nu] -= force[nu] * u_mu * weight; // Permutation symmetry
+					d2v_tmp[nu * n_modes + mu] -= force[nu] * u_mu * weight; // Permutation symmetry
 				}
 			}
 
@@ -2698,17 +2699,18 @@ void get_d2v_dR2_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  do
 				f_mu = f_psi(w[mu], T) * force[mu];
 				for(nu = 0; nu < n_modes; ++nu) {
 					f_nu = f_psi(w[nu], T) * force[nu];
-					weight -= f_mu * displacement[nu] * Y1[mu * n_modes + nu] / 4;
-					weight -= f_nu * displacement[mu] * Y1[mu * n_modes + nu] / 4;
+					weight -= f_mu * displacement[nu] * Y1[mu * n_modes + nu];
+					weight -= f_nu * displacement[mu] * Y1[mu * n_modes + nu];
 				}
 			}
+			weight *= w_is[i] / 8;
 
 			// Now the first part of the potential
 			for (mu = 0; mu < n_modes; ++mu) {
 				u_mu = f_ups(w[mu], T) * displacement[mu];
 				for(nu = 0; nu < n_modes; ++nu) {
 					u_nu = f_ups(w[nu], T) * displacement[nu];
-					d2v_tmp[mu * n_modes + nu] -= u_nu * u_mu * weight * w_is[i] / 2; // Permutation symmetry
+					d2v_tmp[mu * n_modes + nu] -= u_nu * u_mu * weight; // Permutation symmetry
 				}
 			}
 		}

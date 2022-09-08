@@ -31,6 +31,9 @@ import cellconstructor.Settings as Parallel
 from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
 
+# Try to import the julia module
+
+
 # Define a generic type for the double precision.
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
@@ -3255,7 +3258,7 @@ Max number of iterations: {}
         return -np.imag(spectral)
 
 
-    def get_green_function_continued_fraction(self, w_array : np.ndarray[np.float64], use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0):
+    def get_green_function_continued_fraction(self, w_array, use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0):
         """
         CONTINUED FRACTION GREEN FUNCTION
         =================================
