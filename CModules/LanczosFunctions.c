@@ -3,6 +3,8 @@
 
 #define DEB 0
 #define DEB_L 0
+#define USEBLAS 
+
 
 // These are used for debugging
 #define X_VAL 1534
@@ -2191,6 +2193,7 @@ void get_f_average_from_Y_pert_sym_fast( double * X,  double * Y,  double * w,  
 
 			// Compute the standard weight Y1
 			weight = 0;
+			// TODO, explot BLAS
 			for (mu = 0; mu < n_modes; ++mu) {
 				for (nu = 0; nu < n_modes; ++nu) {
 					weight -= displacement[mu] * displacement[nu] * Y1[mu * n_modes +  nu] / 2;
