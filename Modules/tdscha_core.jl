@@ -2,6 +2,7 @@
 
 using SparseArrays
 using LinearAlgebra
+using Distributed
 using LinearAlgebra.BLAS
 
 LinearAlgebra.BLAS.set_num_threads(1)
@@ -120,7 +121,7 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
     buffer_u = zeros(T, n_modes) 
 
 
-    Threads.@threads for bigindex = start_index:end_index
+    for bigindex = start_index:end_index
         i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
         j = mod((bigindex - 1), n_symmetries) + 1
     
@@ -167,6 +168,7 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
     buffer_u = zeros(T, n_modes) 
     buffer_f = zeros(T, n_modes) 
     buffer_f1 = zeros(T, n_modes) 
+
 
     @assert start_index <= end_index  "Error, start_index $start_index should be lower than end $end_index"
     @assert start_index >= 1 "Error, start_index $start_index should be bigger than 1"
@@ -273,5 +275,6 @@ function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, r
 
     return f_average
 end 
+
 
 

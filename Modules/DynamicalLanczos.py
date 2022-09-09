@@ -212,8 +212,7 @@ class Lanczos(object):
         self.sym_julia = None
         self.deg_julia = None
         self.n_syms = 1
-        
-        # The static displacements multiplied by the sqrt(masses)
+
         self.u_tilde = None
         # The static forces divided by the sqrt(masses)
         self.f_tilde = None
@@ -667,7 +666,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
         self.n_syms =  self.symmetries[0].shape[0]
         
-        
+
         if self.mode is MODE_FAST_JULIA:
             # Get the max length
             max_val = 0
@@ -677,25 +676,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 if m > max_val:
                     max_val = m
             self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
-            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
-
-            # Now fill the array
-            for i, sblock in enumerate(self.symmetries):
-                nsym, c, _ = np.shape(sblock)
-                self.sym_julia[i, :, :c, :c] = sblock
-                self.deg_julia[i, :c] = self.degenerate_space[i]
-
-
-        if self.mode is MODE_FAST_JULIA:
-            # Get the max length
-            max_val = 0
-            nsyms =  self.symmetries[0].shape[0]
-            nblocks = len(self.symmetries)
-            for s in self.symmetries:
-                m = s.shape[1]
-                if m > max_val:
-                    max_val = m
-            self.sym_julia = np.zeros((nblocks, nsyms, max_val, max_val), dtype = TYPE_DP)
             self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
 
             # Now fill the array
@@ -2904,7 +2884,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
                                               self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
                                               f_pert_av, d2v_pert_av)
-        # NEW JULIA
+        
         elif self.mode == MODE_FAST_JULIA:
             if not __JULIA_EXT__:
                 raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
@@ -2950,11 +2930,49 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             # Execute the get_f_d2v_proc on each processor in parallel.
             f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
             d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
-=======
 
-            f_pert_av, d2v_pert_av = julia.Main.get_perturb_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
-                                            self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id)
->>>>>>> cfc8ab85 (Now it works and we can try a bit bigger system.)
+
+            # Prepare the parallelization function
+            def get_f_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
+                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return f_pert_av
+            def get_d2v_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return d2v_dr2
+
+            # Divide the configurations and symmetries on different processors
+            # (Here we get the range of work for each process)
+            n_total = self.n_syms * self.N 
+
+            n_processors = Parallel.GetNProc()
+            count = n_total // n_processors
+            remainer = n_total % n_processors
+
+            indices = []
+            for rank in range(n_processors):
+
+                if rank < remainer:
+                    start = np.int64(rank * (count + 1))
+                    stop = np.int64(start + count + 1) 
+                else:
+                    start = np.int64(rank * count + remainer) 
+                    stop = np.int64(start + count) 
+                
+                indices.append( [start + 1, stop])
+        
+            # Execute the get_f_d2v_proc on each processor in parallel.
+            f_pert_av = Parallel.GoParallel(get_f_proc, indices, "+")
+            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+>>>>>>> 046a7f3d (Now the julia version works in parallel with the GoParallel function)
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
