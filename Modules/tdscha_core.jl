@@ -3,8 +3,12 @@
 using SparseArrays
 using LinearAlgebra
 using LinearAlgebra.BLAS
+<<<<<<< HEAD
 
 LinearAlgebra.BLAS.set_num_threads(1)
+=======
+#LinearAlgebra.BLAS.set_num_threads(1)
+>>>>>>> b2112185 (Removed the force thread)
 struct Ensemble{T<: AbstractFloat} 
     X:: Matrix{T}
     Y:: Matrix{T}
@@ -272,4 +276,5 @@ function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, r
 
     return f_average
 end 
+
 
