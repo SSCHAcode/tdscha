@@ -2,7 +2,9 @@
 
 using SparseArrays
 using LinearAlgebra
+using Distributed
 using LinearAlgebra.BLAS
+
 LinearAlgebra.BLAS.set_num_threads(1)
 struct Ensemble{T<: AbstractFloat} 
     X:: Matrix{T}
@@ -48,164 +50,163 @@ function create_sparse_matrix_from_symmetries(sym_info::SymmetriesInfo{T}) where
     return mysym
 end 
 
-function get_d2v_dR2_from_R_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, R1::Vector{T}, ω_is::Vector{T}) where {T<: AbstractFloat}
+function get_d2v_dR2_from_R_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, R1::Vector{T}, ω_is::Vector{T}, start_index::Int64, end_index::Int64) where {T<: AbstractFloat}
     n_modes = length(ensemble.ω)
     n_configs = size(ensemble.X, 2)
     n_symmetries = length(symmetries)
 
     forces = similar(ensemble.ω)
-    displacements = similar(forces)
+    displacements = similar(ensemble.ω)
     n_ω = temperature > 0 ? 1 ./ (exp.(ensemble.ω .* RY_TO_K / temperature) .- 1) : zeros(T, n_modes)
     f_ψ = (1 .+ 2 .* n_ω) ./ (2 .* ensemble.ω)
     f_Y =  2 .* ensemble.ω ./ (1 .+ 2 .* n_ω)
 
     # Define private buffers
-    d2v_dR2_s = [zeros(T, (n_modes, n_modes)) for i = 1:Threads.nthreads()]
-    r1_aux_s = [zeros(T, (n_modes, 1)) for i = 1:Threads.nthreads()]
-    r2_aux_s = [zeros(T, (n_modes, 1)) for i = 1:Threads.nthreads()]
+    d2v_dR2_s = zeros(T, (n_modes, n_modes))
+    r1_aux_s = zeros(T, (n_modes, 1)) 
+    r2_aux_s = zeros(T, (n_modes, 1)) 
 
     
-    Threads.@threads  for i in 1:n_configs
-        thread_id = Threads.threadid()
-        for j in 1:n_symmetries
-            # Compute the symmetrized forces and displacements
-            mul!(forces, symmetries[j], view(ensemble.Y, :, i))
-            mul!(displacements, symmetries[j], view(ensemble.X, :, i))
+    for bigindex = start_index:end_index
+        i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
+        j = mod((bigindex - 1), n_symmetries) + 1
+    
+        # Compute the symmetrized forces and displacements
+        mul!(forces, symmetries[j], view(ensemble.Y, :, i))
+        mul!(displacements, symmetries[j], view(ensemble.X, :, i))
 
-            r1_aux_s[thread_id][:, 1] .= f_Y .* displacements
-            r2_aux_s[thread_id][:, 1] .= forces
-            
-            
-            weight = view(r1_aux_s[thread_id], :,1)' * R1 
-            #println("i = $(i-1), j = $(j-1), weight = $weight")
+        r1_aux_s[:, 1] .= f_Y .* displacements
+        r2_aux_s[:, 1] .= forces
+        
+        
+        weight = view(r1_aux_s, :,1)' * R1 
+        #println("i = $(i-1), j = $(j-1), weight = $weight")
 
-            weight *= ω_is[i] / 3
+        weight *= ω_is[i] / 3
 
-            # Outer product between r1 and r2 (with symmetrization)
-            BLAS.gemm!('N', 'T', -weight, r1_aux_s[thread_id], r2_aux_s[thread_id], 1.0, d2v_dR2_s[thread_id])
-            BLAS.gemm!('N', 'T', -weight, r2_aux_s[thread_id], r1_aux_s[thread_id], 1.0, d2v_dR2_s[thread_id])
+        # Outer product between r1 and r2 (with symmetrization)
+        BLAS.gemm!('N', 'T', -weight, r1_aux_s, r2_aux_s, 1.0, d2v_dR2_s)
+        BLAS.gemm!('N', 'T', -weight, r2_aux_s, r1_aux_s, 1.0, d2v_dR2_s)
 
 
-            # The second part 
-            weight = (R1' * forces) * ω_is[i] / 3 
-            # Outer product between r1 and r1
-            BLAS.gemm!('N', 'T', -weight, r1_aux_s[thread_id], r1_aux_s[thread_id], 1.0, d2v_dR2_s[thread_id])
-
-            #println("Total sum: $(sum(d2v_dR2))")
-        end
+        # The second part 
+        weight = (R1' * forces) * ω_is[i] / 3 
+        # Outer product between r1 and r1
+        BLAS.gemm!('N', 'T', -weight, r1_aux_s, r1_aux_s, 1.0, d2v_dR2_s)
     end
 
     # Now reduce and rescale
-    d2v_dR2 = sum(d2v_dR2_s) ./ (n_symmetries * sum(ω_is))
-    return d2v_dR2
+    d2v_dR2_s ./= (n_symmetries * sum(ω_is))
+    return d2v_dR2_s
 end 
 
 
-function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, Y1::Matrix{T}, ω_is::Vector{T}) where {T<: AbstractFloat}
+function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, Y1::Matrix{T}, ω_is::Vector{T}, start_index::Int64, end_index::Int64) where {T<: AbstractFloat}
     n_modes = length(ensemble.ω)
     n_configs = size(ensemble.X, 2)
     n_symmetries = length(symmetries)
 
-    forces = [similar(ensemble.ω) for i = 1:Threads.nthreads()]
-    displacements = similar(forces)
+    forces = similar(ensemble.ω)
+    displacements = similar(ensemble.ω) 
     n_ω = temperature > 0 ? 1 ./ (exp.(ensemble.ω .* RY_TO_K / temperature) .- 1) : zeros(T, n_modes)
     f_ψ = (1 .+ 2 .* n_ω) ./ (2 .* ensemble.ω)
     f_Y =  2 .* ensemble.ω ./ (1 .+ 2 .* n_ω)
 
-    d2v_dR2 = zeros(T, (n_modes, n_modes))
+    d2v_dR2 = zeros(T, (n_modes, n_modes)) 
 
-    r1_aux = [zeros(T, (n_modes, 1)) for i = 1:Threads.nthreads()]
-    r2_aux = [zeros(T, (n_modes, 1)) for i = 1:Threads.nthreads()]
-    buffer_f = [zeros(T, n_modes) for i = 1:Threads.nthreads()]
-    buffer_u = [zeros(T, n_modes) for i = 1:Threads.nthreads()]
+    r1_aux = zeros(T, (n_modes, 1))
+    r2_aux = zeros(T, (n_modes, 1)) 
+    buffer_f = zeros(T, n_modes)
+    buffer_u = zeros(T, n_modes) 
 
 
-    Threads.@threads for i in 1:n_configs
-        id = Threads.threadid()
-        for j in 1:n_symmetries
-            # Compute the symmetrized forces and displacements
-            mul!(forces, symmetries[j], view(ensemble.Y, :, i))
-            mul!(displacements, symmetries[j], view(ensemble.X, :, i))
-            mul!(buffer_u[id], Y1, displacements)
-            buffer_f[id] = f_ψ .* forces
+    for bigindex = start_index:end_index
+        i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
+        j = mod((bigindex - 1), n_symmetries) + 1
+    
+        # Compute the symmetrized forces and displacements
+        mul!(forces, symmetries[j], view(ensemble.Y, :, i))
+        mul!(displacements, symmetries[j], view(ensemble.X, :, i))
+        mul!(buffer_u, Y1, displacements)
+        buffer_f = f_ψ .* forces
 
-            weight = -displacements' * buffer_u[id]
-            weight *= ω_is[i] / 8
-            
+        weight = -displacements' * buffer_u
+        weight *= ω_is[i] / 8
+        
 
-            r1_aux[:, 1] .= f_Y .* displacements
-            r2_aux[:, 1] .= forces
+        r1_aux[:, 1] .= f_Y .* displacements
+        r2_aux[:, 1] .= forces
 
-            BLAS.gemm!('N', 'T', -weight, r1_aux, r2_aux, 1.0, d2v_dR2)
-            BLAS.gemm!('N', 'T', -weight, r2_aux, r1_aux, 1.0, d2v_dR2)
+        BLAS.gemm!('N', 'T', -weight, r1_aux, r2_aux, 1.0, d2v_dR2)
+        BLAS.gemm!('N', 'T', -weight, r2_aux, r1_aux, 1.0, d2v_dR2)
 
-            weight = - buffer_u' * buffer_f
-            weight *= ω_is[i] / 4
+        weight = - buffer_u' * buffer_f
+        weight *= ω_is[i] / 4
 
-            BLAS.gemm!('N', 'T', -weight, r1_aux, r1_aux, 1.0, d2v_dR2)
-        end
+        BLAS.gemm!('N', 'T', -weight, r1_aux, r1_aux, 1.0, d2v_dR2)
     end
     return d2v_dR2 / (n_symmetries * sum(ω_is))
 end
 
 
 
-function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, Y1::Matrix{T}, ω_is::Vector{T}) where {T<: AbstractFloat}
+function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, Y1::Matrix{T}, ω_is::Vector{T}, start_index::Int64, end_index::Int64) where {T<: AbstractFloat}
     n_modes = length(ensemble.ω)
     n_configs = size(ensemble.X, 2)
     n_symmetries = length(symmetries)
 
-    forces = similar(ensemble.ω)
-    displacements = similar(forces)
+    forces = similar(ensemble.ω) 
+    displacements = similar(ensemble.ω) 
     n_ω = temperature > 0 ? 1 ./ (exp.(ensemble.ω .* RY_TO_K / temperature) .- 1) : zeros(T, n_modes)
     f_ψ = (1 .+ 2 .* n_ω) ./ (2 .* ensemble.ω)
     f_Y =  2 .* ensemble.ω ./ (1 .+ 2 .* n_ω)
-    # Compute f_psi
-
-    f_average = zeros(T, n_modes) 
-
-    buffer_u = zeros(T, n_modes)
-    buffer_f = zeros(T, n_modes)
-    buffer_f1 = zeros(T, n_modes)
 
 
-    Threads.@threads for i in 1:n_configs
-        for j in 1:n_symmetries
+    f_average = zeros(T, n_modes)
+
+    buffer_u = zeros(T, n_modes) 
+    buffer_f = zeros(T, n_modes) 
+    buffer_f1 = zeros(T, n_modes) 
+
+    @assert start_index <= end_index  "Error, start_index $start_index should be lower than end $end_index"
+    @assert start_index >= 1 "Error, start_index $start_index should be bigger than 1"
+    @assert end_index <= n_configs*n_symmetries  "Error, end_index cannot exceed $(n_modes*n_symmetries)"
+
+    for bigindex = start_index:end_index
+        i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
+        j = mod((bigindex - 1), n_symmetries) + 1
+        #for j in 1:n_symmetries
             # Get forces and threads
             #=
             trial
             =#
+        mul!(forces, symmetries[j], view(ensemble.Y, :, i))
+        mul!(displacements, symmetries[j], view(ensemble.X, :, i))
+        
+        mul!(buffer_u, Y1, displacements)
+        
+        buffer_f .= forces
+        buffer_f .*= f_ψ 
+        buffer_f1 .= f_Y .* displacements
 
-            mul!(forces, symmetries[j], view(ensemble.Y, :, i))
-            mul!(displacements, symmetries[j], view(ensemble.X, :, i))
-            mul!(buffer_u, Y1, displacements)
-            buffer_f .= forces
-            buffer_f .*= f_ψ 
-            buffer_f1 .= f_Y .* displacements
+        weight = -displacements' * buffer_u / 2
+        weight *= ω_is[i] / 3
+        f_average .+= weight .* forces
 
-            weight = -displacements' * buffer_u / 2
-            weight *= ω_is[i] / 3
-            f_average .+= weight .* forces
-
-            weight = - buffer_u' * buffer_f 
-            weight *= ω_is[i] / 3.
-            f_average .+= weight .* buffer_f1
-        end  
+        weight = - buffer_u' * buffer_f 
+        weight *= ω_is[i] / 3.
+        f_average .+= weight .* buffer_f1
     end 
 
-    f_average ./= n_symmetries * sum(ω_is)
-
-
-    return f_average
+    return f_average/ ( n_symmetries * sum(ω_is))
 end
-
 
 
 # This is the function that speaks with the python code
 function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho::Vector{T}, 
         R1::Vector{T}, Y1::Matrix{T}, temperature::T, apply_v4::Bool, symmetries::Array{T, 4}, 
         n_degeneracies::Vector{Int32}, 
-        degenerate_space::Matrix{Int32}, blocks::Vector{Int32}) where {T<:AbstractFloat}
+        degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
 
 
     # Prepare the symmetry sym_info
@@ -218,12 +219,65 @@ function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho
     ensemble = Ensemble(X, Y, ω)
 
     # Get the average force
-    f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho)
-    d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho)
+    println("F AV")
+    f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
 
+
+    println("D2 AV")
+    d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
+
+    println("D2 (v4)")
     if apply_v4
-        d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho)
+        d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end 
 
     return f_average, d2v_dr2
+end 
+
+
+function get_perturb_d2v_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho::Vector{T}, 
+    R1::Vector{T}, Y1::Matrix{T}, temperature::T, apply_v4::Bool, symmetries::Array{T, 4}, 
+    n_degeneracies::Vector{Int32}, 
+    degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
+
+
+# Prepare the symmetry sym_info
+sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
+
+# Convert to a sparse matrix for fast linear LinearAlgebra
+new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
+
+# Create the ensemble
+ensemble = Ensemble(X, Y, ω)
+
+d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
+
+if apply_v4
+    d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
+end 
+
+return d2v_dr2
+end 
+
+
+function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho::Vector{T}, 
+    R1::Vector{T}, Y1::Matrix{T}, temperature::T, apply_v4::Bool, symmetries::Array{T, 4}, 
+    n_degeneracies::Vector{Int32}, 
+    degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
+
+
+# Prepare the symmetry sym_info
+sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
+
+# Convert to a sparse matrix for fast linear LinearAlgebra
+new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
+
+# Create the ensemble
+ensemble = Ensemble(X, Y, ω)
+
+# Get the average force
+f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
+
+
+return f_average
 end 

@@ -168,6 +168,7 @@ class Lanczos(object):
         self.unwrapped = False
         self.sym_julia = None
         self.deg_julia = None
+        self.n_syms = 1
 
         self.u_tilde = None
         self.f_tilde = None
@@ -589,18 +590,18 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
+        self.n_syms =  self.symmetries[0].shape[0]
 
 
         if self.mode is MODE_FAST_JULIA:
             # Get the max length
             max_val = 0
-            nsyms =  self.symmetries[0].shape[0]
             nblocks = len(self.symmetries)
             for s in self.symmetries:
                 m = s.shape[1]
                 if m > max_val:
                     max_val = m
-            self.sym_julia = np.zeros((nblocks, nsyms, max_val, max_val), dtype = TYPE_DP)
+            self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
             self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
 
             # Now fill the array
@@ -1536,7 +1537,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
                                             self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
                                             f_pert_av, d2v_pert_av)
-            print(np.sum(np.abs(d2v_pert_av)))
         elif self.mode == MODE_FAST_JULIA:
             if not __JULIA_EXT__:
                 raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
@@ -1547,8 +1547,47 @@ Error, the initialization must be called AFTER you change mode to JULIA.
 """
                 raise ValueError(MSG)
 
-            f_pert_av, d2v_pert_av = julia.Main.get_perturb_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
-                                            self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id)
+
+            # Prepare the parallelization function
+            def get_f_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
+                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return f_pert_av
+            def get_d2v_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return d2v_dr2
+
+            # Divide the configurations and symmetries on different processors
+            # (Here we get the range of work for each process)
+            n_total = self.n_syms * self.N 
+
+            n_processors = Parallel.GetNProc()
+            count = n_total // n_processors
+            remainer = n_total % n_processors
+
+            indices = []
+            for rank in range(n_processors):
+
+                if rank < remainer:
+                    start = np.int64(rank * (count + 1))
+                    stop = np.int64(start + count + 1) 
+                else:
+                    start = np.int64(rank * count + remainer) 
+                    stop = np.int64(start + count) 
+                
+                indices.append( [start + 1, stop])
+        
+            # Execute the get_f_d2v_proc on each processor in parallel.
+            f_pert_av = Parallel.GoParallel(get_f_proc, indices, "+")
+            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
