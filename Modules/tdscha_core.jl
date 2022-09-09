@@ -3,12 +3,9 @@
 using SparseArrays
 using LinearAlgebra
 using LinearAlgebra.BLAS
-<<<<<<< HEAD
 
 LinearAlgebra.BLAS.set_num_threads(1)
-=======
-#LinearAlgebra.BLAS.set_num_threads(1)
->>>>>>> b2112185 (Removed the force thread)
+
 struct Ensemble{T<: AbstractFloat} 
     X:: Matrix{T}
     Y:: Matrix{T}
