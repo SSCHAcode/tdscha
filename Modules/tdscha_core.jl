@@ -65,7 +65,7 @@ function get_d2v_dR2_from_R_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
     r2_aux = zeros(T, (n_modes, 1))
 
     
-    Threads.@threads for i in 1:n_configs
+    Threads.@threads  for i in 1:n_configs
         for j in 1:n_symmetries
             # Compute the symmetrized forces and displacements
             mul!(forces, symmetries[j], view(ensemble.Y, :, i))
