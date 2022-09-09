@@ -175,11 +175,7 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
     for bigindex = start_index:end_index
         i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
         j = mod((bigindex - 1), n_symmetries) + 1
-        #for j in 1:n_symmetries
-            # Get forces and threads
-            #=
-            trial
-            =#
+
         mul!(forces, symmetries[j], view(ensemble.Y, :, i))
         mul!(displacements, symmetries[j], view(ensemble.X, :, i))
         
@@ -219,14 +215,9 @@ function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho
     ensemble = Ensemble(X, Y, ω)
 
     # Get the average force
-    println("F AV")
     f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
-
-
-    println("D2 AV")
     d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
 
-    println("D2 (v4)")
     if apply_v4
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end 
