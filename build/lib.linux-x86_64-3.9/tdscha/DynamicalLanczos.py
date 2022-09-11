@@ -673,7 +673,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #self.N_degeneracy = N_deg
         #self.degenerate_space = deg_space
 
-    def prepare_input_files(self, root_name = "tdscha", n_steps = 100, start_from_scratch = True, directory="."):
+    def prepare_input_files(self, root_name = "tdscha", n_steps = 100, start_from_scratch = True, directory=".", run_symm = False):
         """
         PREPARE INPUT FILES
         ===================
@@ -692,6 +692,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 If True the calculation is restarted from scratch.
             directory : string
                 Path to the directory on which the input files will be saved
+            run_symm : bool
+                True if we use the Wigner representation
 
         
         This file will prepare inside the directory the following input files.
@@ -724,6 +726,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                      "ignore_v3" : self.ignore_v3,
                      "ignore_v4" : self.ignore_v4,
                      "use_wigner" : self.use_wigner,
+                     "run_sym": run_symm,
                      "data" : {
                          "n_configs" : int(self.N),
                          "n_modes" : int(self.n_modes),
