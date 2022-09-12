@@ -96,7 +96,7 @@ setup( name = "tdscha",
        package_data={"": ["*.jl"]},
        install_requires = ["numpy", "ase", "scipy", "cellconstructor", "python-sscha"],
        ext_modules = [odd_HP],
-       scripts = ["scripts/plot_lanczos_convergence.py", "scripts/plot_hessian_convergence.py"],
+       scripts = ["scripts/*.py"],
        license = "GPLv3"
        )
                                                                                                                                                           
