@@ -232,22 +232,22 @@ function get_perturb_d2v_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T},
     degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
 
 
-# Prepare the symmetry sym_info
-sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
+    # Prepare the symmetry sym_info
+    sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
 
-# Convert to a sparse matrix for fast linear LinearAlgebra
-new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
+    # Convert to a sparse matrix for fast linear LinearAlgebra
+    new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
 
-# Create the ensemble
-ensemble = Ensemble(X, Y, ω)
+    # Create the ensemble
+    ensemble = Ensemble(X, Y, ω)
 
-d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
+    d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
 
-if apply_v4
-    d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
-end 
+    if apply_v4
+        d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
+    end 
 
-return d2v_dr2
+    return d2v_dr2
 end 
 
 
@@ -257,18 +257,18 @@ function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, r
     degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
 
 
-# Prepare the symmetry sym_info
-sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
+    # Prepare the symmetry sym_info
+    sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
 
-# Convert to a sparse matrix for fast linear LinearAlgebra
-new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
+    # Convert to a sparse matrix for fast linear LinearAlgebra
+    new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
 
-# Create the ensemble
-ensemble = Ensemble(X, Y, ω)
+    # Create the ensemble
+    ensemble = Ensemble(X, Y, ω)
 
-# Get the average force
-f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
+    # Get the average force
+    f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
 
 
-return f_average
+    return f_average
 end 
