@@ -85,6 +85,10 @@ MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
 
 
+def is_julia_enabled():
+    return __JULIA_EXT__
+
+
 class Lanczos(object):
     def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = False, select_modes = None):
         """
@@ -158,7 +162,6 @@ class Lanczos(object):
         self.N_degeneracy = None
         self.initialized = False
         self.perturbation_modulus = 1
-        self.q_vectors = None # The q vectors of each mode
         self.dyn = None
         self.uci_structure = None
         self.super_structure = None
@@ -235,8 +238,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         # Prepare the list of q point starting from the polarization vectors
         #q_list = CC.symmetries.GetQForEachMode(self.pols, self.uci_structure, self.super_structure, self.dyn.GetSupercell())
         # Store the q vectors in crystal space
-        bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
-        self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
+        #bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
+        #self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
         #for iq, q in enumerate(q_list):
         #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
         
@@ -533,7 +536,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         
 
 
-    def prepare_symmetrization(self, no_sym = False, verbose = True):
+    def prepare_symmetrization(self, no_sym = False, verbose = True, symmetries = None):
         """
         PREPARE THE SYMMETRIZATION
         ==========================
@@ -547,6 +550,9 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         ----------
             no_sym : bool
                 If True, the symmetries are neglected.
+            symmetries : list of 3x4 matrices
+                If None, spglib is employed to find the symmetries,
+                         otherwise, the symmetries here contained are employed.
         """
 
         self.initialized = True
@@ -570,13 +576,16 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
 
-
         t1 = time.time()
-        super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+        if symmetries is None:
+            super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+
+            if verbose:
+                print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
+        else:
+            super_symmetries = symmetries
         t2 = time.time()
 
-        if verbose:
-            print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
@@ -2063,8 +2072,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
                                 arnoldi_matrix = self.arnoldi_matrix,
                                 reverse = self.reverse_L,
                                 shift = self.shift_value,
-                                perturbation_modulus = self.perturbation_modulus,
-                                q_vectors = self.q_vectors)
+                                perturbation_modulus = self.perturbation_modulus)
             
     def load_status(self, file, is_file_instance = False):
         """
