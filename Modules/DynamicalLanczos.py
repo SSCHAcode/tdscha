@@ -162,7 +162,6 @@ class Lanczos(object):
         self.N_degeneracy = None
         self.initialized = False
         self.perturbation_modulus = 1
-        self.q_vectors = None # The q vectors of each mode
         self.dyn = None
         self.uci_structure = None
         self.super_structure = None
@@ -239,8 +238,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         # Prepare the list of q point starting from the polarization vectors
         #q_list = CC.symmetries.GetQForEachMode(self.pols, self.uci_structure, self.super_structure, self.dyn.GetSupercell())
         # Store the q vectors in crystal space
-        bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
-        self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
+        #bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
+        #self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
         #for iq, q in enumerate(q_list):
         #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
         
@@ -2072,8 +2071,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
                                 arnoldi_matrix = self.arnoldi_matrix,
                                 reverse = self.reverse_L,
                                 shift = self.shift_value,
-                                perturbation_modulus = self.perturbation_modulus,
-                                q_vectors = self.q_vectors)
+                                perturbation_modulus = self.perturbation_modulus)
             
     def load_status(self, file, is_file_instance = False):
         """
