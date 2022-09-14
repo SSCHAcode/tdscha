@@ -85,6 +85,10 @@ MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
 
 
+def is_julia_enabled():
+    return __JULIA_EXT__
+
+
 class Lanczos(object):
     def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = False, select_modes = None):
         """
@@ -533,7 +537,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         
 
 
-    def prepare_symmetrization(self, no_sym = False, verbose = True):
+    def prepare_symmetrization(self, no_sym = False, verbose = True, symmetries = None):
         """
         PREPARE THE SYMMETRIZATION
         ==========================
@@ -547,6 +551,9 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         ----------
             no_sym : bool
                 If True, the symmetries are neglected.
+            symmetries : list of 3x4 matrices
+                If None, spglib is employed to find the symmetries,
+                         otherwise, the symmetries here contained are employed.
         """
 
         self.initialized = True
@@ -570,13 +577,15 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
 
+        if symmetries is None:
+            t1 = time.time()
+            super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+            t2 = time.time()
 
-        t1 = time.time()
-        super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
-        t2 = time.time()
-
-        if verbose:
-            print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
+            if verbose:
+                print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
+        else:
+            super_symmetries = symmetries
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
