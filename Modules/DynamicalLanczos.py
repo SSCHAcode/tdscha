@@ -198,8 +198,6 @@ class Lanczos(object):
         self.N_degeneracy = None
         self.initialized = False
         self.perturbation_modulus = 1
-        self.q_vectors = None # The q vectors of each mode
-        # The Phonons object from the ensemble current_dyn
         self.dyn = None
         # Unit cell structure
         self.uci_structure = None
@@ -293,8 +291,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         # Prepare the list of q point starting from the polarization vectors
         #q_list = CC.symmetries.GetQForEachMode(self.pols, self.uci_structure, self.super_structure, self.dyn.GetSupercell())
         # Store the q vectors in crystal space
-        bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
-        self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
+        #bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
+        #self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
         #for iq, q in enumerate(q_list):
         #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
         
@@ -3519,12 +3517,12 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 reverse = self.reverse_L,
                                 shift = self.shift_value,
                                 perturbation_modulus = self.perturbation_modulus,
-                                q_vectors = self.q_vectors,
                                 use_wigner = self.use_wigner,
                                 ignore_small_w = self.ignore_small_w,
                                 sym_julia = self.sym_julia,
                                 deg_julia = self.deg_julia,
                                 n_syms = self.n_syms)
+
             
     def load_status(self, file, is_file_instance = False):
         """
@@ -3623,6 +3621,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         
         if "perturbation_modulus" in data.keys():
             self.perturbation_modulus = data["perturbation_modulus"]
+
+        if "q_vectors" in data.keys():
             self.q_vectors = data["q_vectors"]
 
         # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
