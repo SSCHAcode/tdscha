@@ -576,15 +576,16 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
 
+        t1 = time.time()
         if symmetries is None:
-            t1 = time.time()
             super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
-            t2 = time.time()
 
             if verbose:
                 print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
         else:
             super_symmetries = symmetries
+        t2 = time.time()
+
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
