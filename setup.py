@@ -96,7 +96,7 @@ setup( name = "tdscha",
        package_data={"": ["*.jl"]},
        install_requires = ["numpy", "ase", "scipy", "cellconstructor", "python-sscha"],
        ext_modules = [odd_HP],
-       scripts = ["scripts/*.py"],
+       scripts = [os.path.join("scripts", x) for x in os.listdir("scripts") if x.endswith(".py")],
        license = "GPLv3"
        )
                                                                                                                                                           

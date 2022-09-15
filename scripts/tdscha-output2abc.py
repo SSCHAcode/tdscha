@@ -1,4 +1,4 @@
-
+#!python
 import sys, os
 import numpy as np
 
@@ -59,6 +59,7 @@ len(a) = {}; len(b) = {}, len(c) = {}
 if __name__ == "__main__":
     if not len(sys.argv) == 3:
         print(MSG)
+        exit()
     
     if not os.path.exists(sys.argv[1]):
         raise IOError("""
