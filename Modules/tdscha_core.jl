@@ -121,7 +121,7 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
     buffer_u = zeros(T, n_modes) 
 
 
-    for bigindex = start_index:end_index
+    Threads.@threads for bigindex = start_index:end_index
         i = Int32(floor((bigindex - 1) / n_symmetries)) + 1
         j = mod((bigindex - 1), n_symmetries) + 1
     
