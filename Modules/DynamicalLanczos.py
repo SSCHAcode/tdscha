@@ -1842,6 +1842,7 @@ File {} not found. S norm not loaded.
         m_on = np.sqrt(self.m) ** masses_exp
         new_v = np.einsum("a, a, ab -> b", m_on, vector, self.pols)
         # By doing this we are neglecting two phonon effects
+
         self.psi[:self.n_modes] = new_v
 
         # THIS IS OK IN THE WIGNER REPRESENTATION BECAUSE
