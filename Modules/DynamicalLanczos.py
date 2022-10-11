@@ -961,6 +961,7 @@ File {} not found. S norm not loaded.
 
         # Convert the vector in the polarization space
         m_on = np.sqrt(self.m) ** masses_exp
+        print("SHAPE:", m_on.shape, vector.shape, self.pols.shape)
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
         self.psi[:self.n_modes] = new_v
 
