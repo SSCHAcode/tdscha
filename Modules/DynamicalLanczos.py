@@ -192,7 +192,7 @@ class Lanczos(object):
         self.M_linop = None
         self.unwrapped = False
         
-        # New stuff
+        # New stuff -> JULIA
         self.sym_julia = None
         self.deg_julia = None
         self.n_syms = 1
@@ -649,6 +649,25 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
+        self.n_syms =  self.symmetries[0].shape[0]
+        
+        
+        if self.mode is MODE_FAST_JULIA:
+            # Get the max length
+            max_val = 0
+            nblocks = len(self.symmetries)
+            for s in self.symmetries:
+                m = s.shape[1]
+                if m > max_val:
+                    max_val = m
+            self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
+            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
+
+            # Now fill the array
+            for i, sblock in enumerate(self.symmetries):
+                nsym, c, _ = np.shape(sblock)
+                self.sym_julia[i, :, :c, :c] = sblock
+                self.deg_julia[i, :c] = self.degenerate_space[i]
 
         # Create the mapping between the modes and the block id.
         t1 = time.time()
@@ -3033,7 +3052,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 perturbation_modulus = self.perturbation_modulus,
                                 q_vectors = self.q_vectors,
                                 use_wigner = self.use_wigner,
-                                ignore_small_w = self.ignore_small_w)
+                                ignore_small_w = self.ignore_small_w,
+                                sym_julia = self.sym_julia,
+                                deg_julia = self.deg_julia,
+                                n_syms = self.n_syms)
             
     def load_status(self, file):
         """
@@ -3091,6 +3113,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             self.c_coeffs = data["c_coeffs"]
         self.krilov_basis = data["krilov_basis"]
         self.arnoldi_matrix = data["arnoldi_matrix"]
+        
+        self.sym_julia = data["sym_julia"]
+        self.deg_julia = data["deg_julia"]
+        self.n_syms = data["n_syms"]
 
         self.basis_Q = data["basis_Q"]
         self.basis_P = data["basis_P"]

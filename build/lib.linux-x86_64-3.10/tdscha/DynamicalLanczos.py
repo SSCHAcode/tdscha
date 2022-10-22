@@ -32,6 +32,18 @@ from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
 import tdscha.Perturbations as perturbations
 
+
+# Try to import the julia module
+__JULIA_EXT__ = False
+try:
+    import julia, julia.Main
+
+    # Compile the tdscha code
+    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
+    __JULIA_EXT__ = True
+except:
+    pass
+
 # Define a generic type for the double precision.
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
@@ -73,10 +85,13 @@ def f_ups(w, T):
     return 2*w / (1 + 2 *n_w)
 
 # Modes for the calculation
+MODE_FAST_JULIA = 3
 MODE_FAST_MPI = 2
 MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
 
+def is_julia_enabled():
+    return __JULIA_EXT__
 
 class Lanczos(object):
     def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = False, select_modes = None, use_wigner = False):
@@ -97,6 +112,7 @@ class Lanczos(object):
                       Use this just for testing
                    1) Fast C serial code
                    2) Fast C parallel (MPI)
+                   3) Fasr Julia multithreading
             unwrap_symmetries : bool
                 If true (default), the ensemble is unwrapped to respect the symmetries.
                 This requires SPGLIB installed.
@@ -175,6 +191,12 @@ class Lanczos(object):
         self.L_linop = None
         self.M_linop = None
         self.unwrapped = False
+        
+        # New stuff -> JULIA
+        self.sym_julia = None
+        self.deg_julia = None
+        self.n_syms = 1
+        
         # The static displacements multiplied by the sqrt(masses)
         self.u_tilde = None
         # The static forces divided by the sqrt(masses)
@@ -627,6 +649,25 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
+        self.n_syms =  self.symmetries[0].shape[0]
+        
+        
+        if self.mode is MODE_FAST_JULIA:
+            # Get the max length
+            max_val = 0
+            nblocks = len(self.symmetries)
+            for s in self.symmetries:
+                m = s.shape[1]
+                if m > max_val:
+                    max_val = m
+            self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
+            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
+
+            # Now fill the array
+            for i, sblock in enumerate(self.symmetries):
+                nsym, c, _ = np.shape(sblock)
+                self.sym_julia[i, :, :c, :c] = sblock
+                self.deg_julia[i, :c] = self.degenerate_space[i]
 
         # Create the mapping between the modes and the block id.
         t1 = time.time()
@@ -1147,7 +1188,7 @@ File {} not found. S norm not loaded.
         # NOW PREPARE THE SECOND ORDER DIPOLE MOMEN
         if add_two_ph:
             if ec_eq is not None:
-                print('[NEW] Subtracting the equilibirum effective charges...')
+                print('[NEW] Getting the equilibirum effective charges...')
                 print()
                 n_supercell = np.prod(self.dyn.GetSupercell())
                 # ec_eq is np.array with shape = (N_at_uc, E_field, cart)
@@ -1168,6 +1209,7 @@ File {} not found. S norm not loaded.
 
             # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
             if ec_eq is not None:
+                print('[NEW] Subtracting the equilibirum effective charges...')
                 # ec - ec_eq_gamma, np.array with shape = (N_configs, N_at_sc, Efield, cart)
                 d2M_dR = perturbations.get_d2M_dR_av(ensemble, ec - ec_eq_gamma, None, symmetrize = symmetrize)
             else:
@@ -2444,12 +2486,65 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         #print("DEG:")
         #print(self.degenerate_space)
         
-        # Get the pertrubed averages
-        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
-                                          self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
-                                          f_pert_av, d2v_pert_av)
+        # OLD Implementation still working
+        if self.mode in (MODE_FAST_MPI, MODE_FAST_SERIAL): 
+            # Get the pertrubed averages
+            sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
+                                              self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
+                                              f_pert_av, d2v_pert_av)
+        # NEW JULIA
+        elif self.mode == MODE_FAST_JULIA:
+            if not __JULIA_EXT__:
+                raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
+                
+            if self.sym_julia is None:
+                MSG = "Error, the initialization must be called AFTER you change mode to JULIA."
+                raise ValueError(MSG)
+                
+                
+            # Prepare the parallelization function
+            def get_f_proc(start_end):
+                start = int(start_end[0])
+                end   = int(start_end[1])
+                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
+                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
+                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                return f_pert_av
+            def get_d2v_proc(start_end):
+                start = int(start_end[0])
+                end   = int(start_end[1])
+                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
+                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                return d2v_dr2
+            
+            # Divide the configurations and symmetries on different processors (Here we get the range of work for each process)
+            n_total = self.n_syms * self.N 
+            n_processors = Parallel.GetNProc()
+            count = n_total // n_processors
+            remainer = n_total % n_processors
+            
+            # Assign which configurations should be computed by each processor
+            indices = []
+            for rank in range(n_processors):
+                if rank < remainer:
+                    start = np.int64(rank * (count + 1))
+                    stop = np.int64(start + count + 1) 
+                else:
+                    start = np.int64(rank * count + remainer) 
+                    stop = np.int64(start + count) 
+                
+                indices.append([start + 1, stop])
+                
+            # Execute the get_f_d2v_proc on each processor in parallel.
+            f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
+            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+        else:
+            raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
 
+            
+              
+        # OLD PART OF THE CODE
         #print("D2V:")
         #np.set_printoptions(threshold = 10000)
         #print(d2v_pert_av[:10, :10])#print("Out get pert")
@@ -2957,7 +3052,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 perturbation_modulus = self.perturbation_modulus,
                                 q_vectors = self.q_vectors,
                                 use_wigner = self.use_wigner,
-                                ignore_small_w = self.ignore_small_w)
+                                ignore_small_w = self.ignore_small_w,
+                                sym_julia = self.sym_julia,
+                                deg_julia = self.deg_julia,
+                                n_syms = self.n_syms)
             
     def load_status(self, file):
         """
@@ -3015,6 +3113,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             self.c_coeffs = data["c_coeffs"]
         self.krilov_basis = data["krilov_basis"]
         self.arnoldi_matrix = data["arnoldi_matrix"]
+        
+        self.sym_julia = data["sym_julia"]
+        self.deg_julia = data["deg_julia"]
+        self.n_syms = data["n_syms"]
 
         self.basis_Q = data["basis_Q"]
         self.basis_P = data["basis_P"]
