@@ -10,7 +10,50 @@ from time import time
 import spglib
 import numpy as np
 
+##################
+# SYMMETRIZATION #
+##################
+
+def symmetrize_d1alpha_dR(d1alpha_dR_in, dyn, verbose = False):
+    """
+    SYMMETRIZE THE EFFECTIVE CHARGES IN SUPERCELL
+    =============================================
+
+    This method symmetrize the Raman tensors
     
+    Parameters:
+    -----------
+        -d1alpha_dR_in: average of the polarizability moment first derivative, np.array with shape = (E_field, E_field, 3 * N_at_sc)
+        -dyn: the current Phonons object of the ensemble object
+
+    Returnes:
+    ---------
+        -d1alpha_dR_out: symmetrized average of the polarizability first derivative, np.array with shape = (E_field, E_field, 3 * N_at_sc)
+    """
+    # Initialize the symmetries in the supercell
+    super_dyn = dyn.GenerateSupercellDyn(dyn.GetSupercell())
+    symmetries = cellconstructor.symmetries.QE_Symmetry(super_dyn.structure)
+    symmetries.SetupFromSPGLIB()
+    
+    # Prepare the result
+    d1alpha_dR_out = d1alpha_dR_in.copy()
+
+    if verbose:
+        print('Symmetrizing the Raman tensor in the supercell!')
+        print('[spglib] identified {} symmetries'.format(symmetries.QE_nsym))
+        print('[spglib] identified {} translations'.format(symmetries.QE_translation_nr))
+        print()
+
+    # The result has shape = (E_field, E_field, 3 * N_at_sc)
+    d1alpha_dR_out = d1alpha_dR_in.copy()
+    symmetries.ApplySymmetryToRamanTensor(d1alpha_dR_out)
+
+    return d1alpha_dR_out
+
+
+
+
+
 def symmetrize_d1M_dR(d1M_dR_in, dyn, verbose = False):
     """
     SYMMETRIZE THE EFFECTIVE CHARGES IN SUPERCELL
@@ -61,7 +104,92 @@ def symmetrize_d1M_dR(d1M_dR_in, dyn, verbose = False):
     d1M_dR_out = np.einsum('abc -> acb', temp).reshape((super_dyn.structure.N_atoms * 3, 3))
 
     return d1M_dR_out
+
+
+
+
+
+def symmetrize_d2M_dR(d2M_dR_in, dyn, verbose = False):
+    """
+    SYMMETRIZE THE SECOND ORDER EFFECTIVE CHARGES
+    =============================================
+
+    Parameters:
+    -----------
+        -d2M_dR_in: average of the second derivative of the dipole moment (i.e. the second order dipole moment), np.array with shape (3 * N_at_sc, 3 * N_at_sc, 3)
+             the last component is the E_field
+        -dyn: the current Phonons object of the ensemble object
+
+    Returns:
+    --------
+        -d2M_dR_out: symmetrized second order effective charges,  np.array with shape (3 * N_at_sc, 3 * N_at_sc, 3), the last component is the E_field
+    """
+    # Initialize the symmetries in the supercell
+    super_dyn = dyn.GenerateSupercellDyn(dyn.GetSupercell())
+    symmetries = cellconstructor.symmetries.QE_Symmetry(super_dyn.structure)
+    symmetries.SetupFromSPGLIB()
+
+    # Prepare the results
+    d2M_dR_out = d2M_dR_in.copy()
+            
+    if verbose:
+        print('Symmetrizing the second order EFF CHARGES in the supercell!')
+        print('[spglib] identified {} symmetries'.format(symmetries.QE_nsym))
+        print('[spglib] identified {} translations'.format(symmetries.QE_translation_nr))
+        print()
+
+    # ASR is imposed
+    symmetries.ApplySymmetryToSecondOrderEffCharge(d2M_dR_out, apply_asr = True)
+
+    # Apply permutation symmetry on the first two indices
+    d2M_dR_out += np.einsum("abc -> bac", d2M_dR_out)
+    d2M_dR_out /= 2
+
+    return d2M_dR_out
+
+
+def symmetrize_d2alpha_dR(d2alpha_dR_in, dyn, verbose = False):
+    """
+    SYMMETRIZE THE SECOND ORDER RAMAN TENSORS
+    =========================================
+
+    Parameters:
+    -----------
+        -d2alpha_dR_in: average of the second derivative of the polarizability, np.array with shape (3, 3, 3 * N_at_sc, 3 * N_at_sc)
+             the last component is the E_field
+        -dyn: the current Phonons object of the ensemble object
+
+    Returns:
+    --------
+        -d2alpha_dR_out: symmetrized second order Raman tensor,  np.array with shape (3, 3, 3 * N_at_sc, 3 * N_at_sc)
+    """
+    # Initialize the symmetries in the supercell
+    super_dyn = dyn.GenerateSupercellDyn(dyn.GetSupercell())
+    symmetries = cellconstructor.symmetries.QE_Symmetry(super_dyn.structure)
+    symmetries.SetupFromSPGLIB()
+
+    # Prepare the results
+    d2alpha_dR_out = d2alpha_dR_in.copy()
+            
+    if verbose:
+        print('Symmetrizing the second order RAMAN tensor in the supercell!')
+        print('[spglib] identified {} symmetries'.format(symmetries.QE_nsym))
+        print('[spglib] identified {} translations'.format(symmetries.QE_translation_nr))
+        print()
+
+    # ASR is imposed
+    symmetries.ApplySymmetryToSecondOrderRamanTensor(d2alpha_dR_out, apply_asr = True)
+
+    return d2alpha_dR_out
+
+
+
+
+
     
+#####################
+# ONE PHONON VERTEX #
+#####################
 
 def get_d1M_dR_av(ensemble, effective_charges, symmetrize = False):
     """
@@ -101,50 +229,46 @@ Error, the number of effective charges ({})
     d1M_dR = np.einsum("iab, i", new_eff_charge, ensemble.rho) / N_effective
     
     if symmetrize:
-        # The ASR is imposed
+        print('Symmetrizing the one phonon IR in the supercell')
         d1M_dR = symmetrize_d1M_dR(d1M_dR, ensemble.current_dyn, verbose = True)
 
     return d1M_dR
 
 
-def symmetrize_d2M_dR(d2M_dR_in, dyn, verbose = False):
-    """
-    SYMMETRIZE THE SECOND ORDER EFFECTIVE CHARGES
-    =============================================
 
+def get_d1alpha_dR_av(ensemble, raman_tensors, symmetrize = False):
+    """
+    Get the average of the raman tensors over the ensemble
+    
     Parameters:
     -----------
-        -d2M_dR_in: average of the second derivative of the dipole moment (i.e. the second order dipole moment), np.array with shape (3 * N_at_sc, 3 * N_at_sc, 3)
-             the last component is the E_field
-        -dyn: the current Phonons object of the ensemble object
-
+        -ensemble: the scha ensemble object on which perform the averages
+        -raman_tensors: the raman_tensors, np.array with shape (N_configs, E_filed, E_field, 3 * N_at_sc)
+        
     Returns:
     --------
-        -d2M_dR_out: symmetrized second order effective charges,  np.array with shape (3 * N_at_sc, 3 * N_at_sc, 3), the last component is the E_field
+        -d1alpha_dR: the averages of raman_tensor, np.array with shape (E_filed, E_field, 3 * N_at_sc)
     """
-    # Initialize the symmetries in the supercell
-    super_dyn = dyn.GenerateSupercellDyn(dyn.GetSupercell())
-    symmetries = cellconstructor.symmetries.QE_Symmetry(super_dyn.structure)
-    symmetries.SetupFromSPGLIB()
+    # The size of the Raman tensor is controlled in the main
 
-    # Prepare the results
-    d2M_dR_out = d2M_dR_in.copy()
-            
-    if verbose:
-        print('Symmetrizing the second order effective charges in the supercell!')
-        print('[spglib] identified {} symmetries'.format(symmetries.QE_nsym))
-        print('[spglib] identified {} translations'.format(symmetries.QE_translation_nr))
-        print()
+    # Effective sample size
+    N_effective = np.sum(ensemble.rho)
+    # Get the average of raman tensors, np.array with shape (E_field, E_field, 3 * N_atoms)
+    d1alpha_dR = np.einsum("iabc, i", raman_tensors, ensemble.rho) / N_effective
+    
+    # print(symmetrize)
+    if symmetrize:
+        print('Symmetrizing the one phonon Raman in the supercell')
+        d1alpha_dR = symmetrize_d1alpha_dR(d1alpha_dR, ensemble.current_dyn)
 
-    # ASR is imposed
-    symmetries.ApplySymmetryToSecondOrderEffCharge(d2M_dR_out, apply_asr = True)
+    return d1alpha_dR
 
-    # Apply permutation symmetry on the first two indices
-    d2M_dR_out += np.einsum("abc -> bac", d2M_dR_out)
-    d2M_dR_out /= 2
 
-    return d2M_dR_out
 
+
+#################
+# TWO PH VERTEX #
+#################
 
 
 def get_d2M_dR_av(ensemble, effective_charges, w_pols = None, symmetrize = False):
@@ -205,4 +329,55 @@ Error, the number of effective charges ({})
 
 
 
+def get_d2alpha_dR_av(ensemble, raman, w_pols = None, symmetrize = False):
+    """
+    COMPUTE THE SECOND DERIVATIVE OF THE DIPOLE MOMENT
+    ==================================================
+
+    Using the effective charges, we compute the derivative of the dipole moment
+    
+     Parameters:
+    -----------
+        -ensemble: the scha ensemble object on which perorm the averages
+        -raman: raman tensors, np.array with shape (N_configs, E_field, E_filed, 3 * N_at_sc)
+        
+    Returns:
+    --------
+        -d2alpha_dR: the averages of the polarizability second derivative, np.array with shape (E_field, E_filed, 3 * N_at_sc)
+        
+    """
+    assert len(raman) == ensemble.N, """
+Error, the number of Raman tenors ({})
+       does not match with the ensemble size ({}).
+""".format(len(raman), ensemble.N)
+
+    T = ensemble.current_T
+    dyn = ensemble.current_dyn
+
+    nat = dyn.structure.N_atoms
+    nat_sc = nat * np.prod(dyn.GetSupercell())
+    n_rand = ensemble.N
+
+    # Get the upsilon matrix, shape = (3 * N_at_sc, 3 * N_at_sc) 1/BOHR^2
+    ups_mat = dyn.GetUpsilonMatrix(T, w_pols = None)
+
+    # Get the v in 1/BOHR, np.array with shape = (N_configs, 3 * N_at_sc)
+    v_disp = np.einsum("ab, ib -> ia", ups_mat, ensemble.u_disps * CC.Units.A_TO_BOHR)
+    
+    # The effective sample size
+    N_effective = np.sum(ensemble.rho)
+
+    # Get the average of the second derivative of the polarizability, np.array with shape = (E_field, E_field, 3 * N_at_sc, 3 * N_at_sc)
+    d2alpha_dR = np.einsum("i, ia, ibcd -> bcda", ensemble.rho, v_disp, raman) / N_effective
+
+    # Apply permutation symmetry before symmetrize
+    d2alpha_dR += np.einsum("abcd -> badc", d2alpha_dR)
+    d2alpha_dR /= 2
+    
+    if symmetrize:
+        d2alpha_dR = symmetrize_d2alpha_dR(d2alpha_dR, ensemble.current_dyn, verbose = True)
+        
+
+    return d2alpha_dR
+        
 

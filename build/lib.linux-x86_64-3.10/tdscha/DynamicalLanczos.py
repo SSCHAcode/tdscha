@@ -1147,7 +1147,7 @@ File {} not found. S norm not loaded.
         # NOW PREPARE THE SECOND ORDER DIPOLE MOMEN
         if add_two_ph:
             if ec_eq is not None:
-                print('[NEW] Getting the equilibirum effective charges...')
+                print('[NEW] Subtracting the equilibirum effective charges...')
                 print()
                 n_supercell = np.prod(self.dyn.GetSupercell())
                 # ec_eq is np.array with shape = (N_at_uc, E_field, cart)
@@ -1168,7 +1168,6 @@ File {} not found. S norm not loaded.
 
             # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
             if ec_eq is not None:
-                print('[NEW] Subtracting the equilibirum effective charges...')
                 # ec - ec_eq_gamma, np.array with shape = (N_configs, N_at_sc, Efield, cart)
                 d2M_dR = perturbations.get_d2M_dR_av(ensemble, ec - ec_eq_gamma, None, symmetrize = symmetrize)
             else:

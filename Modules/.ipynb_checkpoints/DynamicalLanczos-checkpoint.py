@@ -936,7 +936,156 @@ File {} not found. S norm not loaded.
 
         self.prepare_perturbation(new_zeff, masses_exp = -1)
         
+   
+
+    def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
+                                    add_two_ph = False, symmetrize = False, ensemble = None):
+        """
+        PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
+        ===========================================================================
         
+        This works only with the Wigner representation if we add the two phonons effect. 
+        Prepare the psi vector for RAMAN spectrum considering position-dependent raman tensors.
+        
+        Parameters:
+        -----------
+            -raman: nd.array (N_configs, E_comp, E_comp, 3 * N_at_sc),
+                 the Raman tensor for all configurations.
+                 Indices are: Number of configuration, electric field component,
+                 electric field component, atomic coordinates in sc.
+            rama_eq: nd.array, (E_comp, E_comp, 3 * N_at_uc), the effective charges at equilibrium.
+                 Indices are: electric field component,
+                 electric field component, atomic coordinate in uc.   
+            -pol_in: nd.array, the polarization of in-out light. default is x
+            -pol_out: nd.array, the polarization of in-out light. default is x
+            -add_two_ph: bool, if True two phonon processes are included in the calculation
+            -symmetrize: bool, if True the second order Raman tensors are symmetrized
+            -ensemble: a scha ensemble object for computing the averages
+        """
+        if not self.use_wigner and add_two_ph:
+            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
+            
+        if raman is None:
+            raise ValueError('Must specify the raman tensors for all configurations!')
+            
+            
+        print()
+        print('PREPARE THE RAMAN ANHARMONIC SPECTRUM CALCULATION')
+        print('=================================================')
+        print('Are we considering two ph effects? = {}'.format(add_two_ph))
+        print('Are we using Wigner? = {}'.format(self.use_wigner))
+        print('Are we symmetrizing the raman tensor? = {}'.format(symmetrize))
+        print()
+        if ensemble is not None:
+            Nconf = ensemble.N
+        else:
+            Nconf = self.N
+        
+        required = 'N_conf - E_field - E_field - 3 * N_at_sc'
+        assert raman.shape[0] == Nconf, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
+        assert raman.shape[1] == 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
+        assert raman.shape[2] == 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
+        assert raman.shape[3] == self.nat * 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
+        
+        # alpha is the polarizability
+        
+        # Get the average of the raman tensor, np.array with shape = (3, 3, 3 * N_at_sc)
+        d1alpha_dR_av = perturbations.get_d1alpha_dR_av(ensemble, raman, symmetrize = True)
+        
+        # Get the supercell dyn then set the raman tensor euqal to d1alpha_dR_av
+        sc_dyn = self.dyn.GenerateSupercellDyn(self.dyn.GetSupercell())
+        sc_dyn.raman_tensor = d1alpha_dR_av
+        
+        # Get the Raman vector np.array (3 * N_at_sc)
+        raman_vector_sc = sc_dyn.GetRamanVector(pol_in, pol_out)
+        
+        # Now rescale by the mass and go in polarizaiton basis
+        self.prepare_perturbation(raman_vector_sc, masses_exp = -1)
+        print('[NEW] Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
+        print()
+        
+        # NOW PREPARE THE SECOND RAMAN TENSOR
+        if add_two_ph:
+            if raman_eq is not None:
+                print('[NEW] Getting the equilibirum RAMAN tensor...')
+                print()
+                n_supercell = np.prod(self.dyn.GetSupercell())
+                # raman_eq is np.array with shape = (E_field, E_field, N_at_uc * 3)
+                raman_eq_size = np.shape(raman_eq)
+                MSG = """
+                Error, effective charges of the wrong shape: {}
+                """.format(raman_eq_size)
+                assert len(raman_eq_size) == 3, MSG
+                if not self.ignore_small_w:
+                    assert raman_eq_size[2] * n_supercell == self.n_modes + 3
+                assert raman_eq_size[0] == raman_eq_size[1] == 3
+
+                # Get the raman tensor in the supercell (E_field, E_filed, 3 * N_at_sc)
+                raman_eq_gamma = np.zeros((3, 3, 3 * n_supercell * self.dyn.structure.N_atoms), dtype = type(raman_eq[0,0,0]))
+                raman_eq_gamma = np.tile(raman_eq, n_supercell)
+                
+            print('[NEW] Getting the two phonon contribution in RAMAN...')
+
+            # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
+            if raman_eq is not None:
+                print('[NEW] Subtracting the equilibirum RAMAN tensor...')
+                # raman - raman_eq_gamma, np.array with shape = (N_configs, Efield, Efield, 3 * N_at_sc)
+                d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman - raman_eq_gamma, None, symmetrize = symmetrize)
+            else:
+                # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
+                d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman, None, symmetrize = symmetrize)
+            
+            print('[NEW] Go in polarization basis and divide by the masses')
+            # Divide by the masses of the atoms in the supercell shape =  (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
+            d2alpha_dR = np.einsum('c, abcd, d -> abcd', np.sqrt(self.m)**-1, d2alpha_dR, np.sqrt(self.m)**-1)
+            
+            # Now go in polarization basis, np.array with shape = (E_field, E_field, n_modes, n_modes)
+            d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
+
+            # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
+            dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
+            
+            # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
+            dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
+
+            # Get chi_minus and chi_plus tensors, np.array with shape = (n_modes, n_modes)
+            chi_minus = self.get_chi_minus()
+            chi_plus  = self.get_chi_plus()
+
+            # Get the pertubations on a'^(1) b'^(1)
+            pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), dXi_dR_muspace)
+            pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , dXi_dR_muspace)
+
+            # Check if everything is symmetric
+            assert np.all(np.abs(dXi_dR_muspace - dXi_dR_muspace.T) < 1e-10), "Second derivative of the polarizability is not symmetric in pol basis"
+            assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
+            assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
+
+            # Now get the perturbation for a'^(1)
+            current = self.n_modes
+            for i in range(self.n_modes):
+                self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
+                current = current + self.n_modes - i
+
+            # Now get the pertrubation for b'^(1)
+            for i in range(self.n_modes):
+                self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
+                current = current + self.n_modes - i
+
+            # Add the mask dot taking into account symmetric elements
+            mask_dot = self.mask_dot_wigner()
+            # OVERWRITE the pertubation modulus considering the two phonon sector
+            self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
+
+            print('[NEW] Perturbation modulus after adding two ph contributions RAMAN = {}'.format(self.perturbation_modulus))
+            print()
+    
+        return
+    
+    
+    
+    
+    
     
     
     def prepare_anharmonic_ir_FT(self, ec = None, ec_eq = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False, symmetrize = False, ensemble = None):
@@ -946,6 +1095,8 @@ File {} not found. S norm not loaded.
         
         This works only with the Wigner representation if we add the two phonons effect. 
         Prepare the psi vector for IR spectrum considering position-dependent effective charges.
+        
+        The one phonon scetor is symmetrized by default
         
         Parameters:
         -----------
@@ -958,7 +1109,7 @@ File {} not found. S norm not loaded.
                  electric field component, atomic coordinate.   
             -pol_vec_light: nd.array, the polarization of in-out light. default is x
             -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symmetrize: bool, if True the effective charges are symmetrized
+            -symmetrize: bool, if True the second order effective charges are symmetrized
             -ensemble: a scha ensemble object for computing the averages
         """
         if not self.use_wigner and add_two_ph:
@@ -966,6 +1117,8 @@ File {} not found. S norm not loaded.
             
         if ec is None:
             raise ValueError('Must specify the effective charges for all configurations!')
+            
+        
             
         print()
         print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
@@ -976,12 +1129,12 @@ File {} not found. S norm not loaded.
         print()
         
         required = 'N_conf N_at_sc E_field cart'
-        assert ec.shape[0] == self.N, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
+        assert ec.shape[0] == ensemble.N, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
         assert ec.shape[1] == self.nat, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
         assert ec.shape[2] == ec.shape[3] == 3, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
             
         # Get the average of the dipole moment, np.array with shape = (3 * N_at_sc, 3)
-        d1M_dR_av = perturbations.get_d1M_dR_av(ensemble, ec, symmetrize = symmetrize)
+        d1M_dR_av = perturbations.get_d1M_dR_av(ensemble, ec, symmetrize = True)
         
         # Project along the direction of light polarization, (3 * N_at_sc)
         Z = np.einsum("ab, b -> a", d1M_dR_av, pol_vec_light)
@@ -994,7 +1147,7 @@ File {} not found. S norm not loaded.
         # NOW PREPARE THE SECOND ORDER DIPOLE MOMEN
         if add_two_ph:
             if ec_eq is not None:
-                print('[NEW] Subtracting the equilibirum effective charges...')
+                print('[NEW] Getting the equilibirum effective charges...')
                 print()
                 n_supercell = np.prod(self.dyn.GetSupercell())
                 # ec_eq is np.array with shape = (N_at_uc, E_field, cart)
@@ -1015,6 +1168,7 @@ File {} not found. S norm not loaded.
 
             # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
             if ec_eq is not None:
+                print('[NEW] Subtracting the equilibirum effective charges...')
                 # ec - ec_eq_gamma, np.array with shape = (N_configs, N_at_sc, Efield, cart)
                 d2M_dR = perturbations.get_d2M_dR_av(ensemble, ec - ec_eq_gamma, None, symmetrize = symmetrize)
             else:
@@ -4910,7 +5064,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
 
 
             
-    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False):
+    def run_FT(self, n_iter, save_dir = ".", save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False, optimized = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -4951,6 +5105,8 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
             run_simm : bool
                 If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product
+            optimized : bool
+                If True we pop the vectors P and Q that we do not use during the Lanczos
         """
         # Check if the symmetries has been initialized
         if not self.initialized:
@@ -5387,6 +5543,21 @@ or if the acoustic sum rule is not satisfied.
                 self.b_coeffs.append(b_coeff)
                 self.c_coeffs.append(c_coeff)
                 self.s_norm.append(s_norm)
+                
+                # Pop the elements we do not use to optimize the use of memory
+                if optimized:
+                    print('Optimize RAM consumption')
+                    if len(self.basis_P) > 3:
+                        print('P basis popping the elements we do not use')
+                        self.basis_P.pop(-4)
+
+                    if len(self.basis_Q) > 3:
+                        print('Q basis popping the elements we do not use')
+                        self.basis_Q.pop(-4)
+                        
+                    if len(self.s_norm) > 3:
+                        print('s norm popping the elements we do not use')
+                        self.s_norm.pop(-4)
 
             t2 = time.time()
 
