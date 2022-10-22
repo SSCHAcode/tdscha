@@ -1,0 +1,66 @@
+
+===== NEW STEP 1 =====
+
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 320.554 ms
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.471 ms
+Lanczos coefficients:
+
+a_0 = 2.1958244463998568e-07
+b_0 = 4.0276024921473788e-11
+c_0 = 1.5733889154384624e-02
+
+
+===== NEW STEP 2 =====
+
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.4819269999999847 ms
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.0576800000000048 ms
+Lanczos coefficients:
+
+a_1 = 3.6468697303092622e-06
+b_1 = 8.3559039317101021e-07
+c_1 = 9.0498801175471731e-07
+
+
+===== NEW STEP 3 =====
+
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.4590029999999956 ms
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.9541879999999878 ms
+Lanczos coefficients:
+
+a_2 = 3.0534049459196896e-06
+b_2 = 5.0895292523202957e-07
+c_2 = 2.4681927813924320e-06
+
+
+===== NEW STEP 4 =====
+
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 320.2915160000000014 ms
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.5433590000000095 ms
+Lanczos coefficients:
+
+a_3 = 5.9420421098876569e-07
+b_3 = 1.3307855172936552e-06
+c_3 = 2.5065197880233572e-07
+
+
+===== NEW STEP 5 =====
+
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.5853730000000041 ms
+MPI COMPUTATION | rank 0 computes configs [0, 10)
+Time to apply the L matrix: 318.7219729999999913 ms
+Lanczos coefficients:
+
+a_4 = 3.2293720829509200e-06
+b_4 = 7.2428970213566219e-07
+c_4 = 6.5974434410687580e-07
+
+I'm done with the calculation!
