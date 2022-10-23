@@ -3114,9 +3114,16 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         self.krilov_basis = data["krilov_basis"]
         self.arnoldi_matrix = data["arnoldi_matrix"]
         
-        self.sym_julia = data["sym_julia"]
-        self.deg_julia = data["deg_julia"]
-        self.n_syms = data["n_syms"]
+        try:
+            self.sym_julia = data["sym_julia"]
+            self.deg_julia = data["deg_julia"]
+            self.n_syms = data["n_syms"]
+        except:
+            print('ATTENTION THE JULIA VARIABLES  WERE NOT LOADED')
+            self.sym_julia = None
+            self.deg_julia = None
+            self.n_syms = 1
+            
 
         self.basis_Q = data["basis_Q"]
         self.basis_P = data["basis_P"]
