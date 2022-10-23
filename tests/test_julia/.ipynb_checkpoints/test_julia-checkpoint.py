@@ -37,7 +37,7 @@ def test_lanczos():
     lanc.init(use_symmetries = True)
     lanc.prepare_mode(10)
 
-    lanc.run_FT(2*N_STEPS, debug = False)
+    lanc.run_FT(2*N_STEPS, save_dir = 'julia', debug = False)
 
     # HARDCODE the last c value
     C_LAST_GOOD = 6.59744344e-07
