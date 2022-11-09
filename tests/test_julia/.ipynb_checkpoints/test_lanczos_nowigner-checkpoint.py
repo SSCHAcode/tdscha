@@ -37,11 +37,11 @@ def test_lanczos():
     lanc.ignore_harmonic = False
     lanc.ignore_v3 = False
     lanc.ignore_v4 = False
-    lanc.use_wigner = True
+    lanc.use_wigner = False
     lanc.init(use_symmetries = True)
     lanc.prepare_mode(10)
 
-    lanc.run_FT(2 * N_STEPS, save_dir = 'wigner_nowigner_julia', debug = False, run_simm = lanc.use_wigner, prefix = 'lanczos_wigner')
+    lanc.run_FT(2 * N_STEPS, save_dir = 'wigner_nowigner_julia', debug = False, run_simm = lanc.use_wigner, prefix = 'lanczos_nowigner')
 
 
 if __name__ == "__main__":

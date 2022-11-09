@@ -41,7 +41,7 @@ def test_lanczos():
     lanc.init(use_symmetries = True)
     lanc.prepare_mode(10)
 
-    lanc.run_FT(2 * N_STEPS, save_dir = 'lanc_wigner', debug = False, run_simm = True, prefix = 'lanczos_wigner')
+    lanc.run_FT(2 * N_STEPS, save_dir = 'wigner_nowigner_julia', debug = False, run_simm = lanc.use_wigner, prefix = 'lanczos_wigner')
 
 
 if __name__ == "__main__":

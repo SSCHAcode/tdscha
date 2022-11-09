@@ -980,6 +980,7 @@ File {} not found. S norm not loaded.
    
 
     def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
+                                    mixed = False, pol_in_2 = None, pol_out_2 = None,\
                                     add_two_ph = False, symmetrize = False, ensemble = None):
         """
         PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
@@ -1008,6 +1009,15 @@ File {} not found. S norm not loaded.
             
         if raman is None:
             raise ValueError('Must specify the raman tensors for all configurations!')
+            
+        if mixed:
+            if (pol_in_2 is None) or (pol_out_2 is None):
+                raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
+                
+            if len(pol_in_2) != 3 or len(pol_out_2) == 3:
+                raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
+                
+                
             
             
         print()
@@ -1039,6 +1049,12 @@ File {} not found. S norm not loaded.
         
         # Get the Raman vector np.array (3 * N_at_sc)
         raman_vector_sc = sc_dyn.GetRamanVector(pol_in, pol_out)
+        
+        if mixed:
+            print('ONE PH SECTOR adding compoent pol_in_2 pol_out_2 of the Raman tensor')
+            raman_vector_sc += sc_dyn.GetRamanVector(pol_in_2, pol_out_2)
+            
+            
         
         # Now rescale by the mass and go in polarizaiton basis
         self.prepare_perturbation(raman_vector_sc, masses_exp = -1)
@@ -1085,6 +1101,10 @@ File {} not found. S norm not loaded.
 
             # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
             dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
+            
+            if mixed:
+                print('TWO PH SECTOR adding component pol_in_2 pol_out_2 of the Raman tensor')
+                dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_2, pol_out_2)
             
             # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
             dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
