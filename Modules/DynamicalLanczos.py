@@ -853,7 +853,7 @@ File {} not found. S norm not loaded.
 
 
 
-    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
+    def prepare_raman(self, pol_vec_in = np.array([1,0,0]), pol_vec_out = np.array([1,0,0]), unpolarized: int = None):
         """
         PREPARE LANCZOS FOR RAMAN SPECTRUM
         ==================================
@@ -868,20 +868,101 @@ File {} not found. S norm not loaded.
                 The polarization vector of the incoming light
             pol_vec_out : ndarray (size = 3)
                 The polarization vector for the outcoming light
+            unpolarized : int or None
+                The perturbation for unpolarized raman (if different from None, overrides the behaviour
+                of pol_vec_in and pol_vec_out). Indices goes from 0 to 6 (included).
+                0 is alpha^2
+                1 + 2 + 3 + 4 + 5 + 6 are beta^2
+                alpha_0 = (xx + yy + zz)^2/9
+                beta_1 = (xx -yy)^2 / 2
+                beta_2 = (xx -zz)^2 / 2
+                beta_3 = (yy -zz)^2 / 2
+                beta_4 = 3xy^2
+                beta_5 = 3xz^2
+                beta_6 = 3yz^2
+
+                The total unpolarized raman intensity is 45 alpha^2 + 7 beta^2
         """
 
         # Check if the raman tensor is present
         assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
 
-        # Get the raman vector
-        raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
-
-        # Get the raman vector in the supercelld
         n_supercell = np.prod(self.dyn.GetSupercell())
-        new_raman_v = np.tile(raman_v.ravel(), n_supercell)
 
-        # Convert in the polarization basis and store the intensity
-        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        if unpolarized is None:
+            # Get the raman vector
+            raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
+
+            # Get the raman vector in the supercelld
+            new_raman_v = np.tile(raman_v.ravel(), n_supercell)
+
+            # Convert in the polarization basis and store the intensity
+            self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        else:
+            px = np.array([1,0,0])
+            py = np.array([0,1,0])
+            pz = np.array([0,0,1])
+
+            if unpolarized == 0:
+                # Alpha
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 1:
+                # (xx -yy)^2 / 2
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 2:
+                # beta_2 = (xx -zz)^2 / 2
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 3:
+                # beta_2 = (yy -zz)^2 / 2
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 4:
+                # beta_2 = 3 xy^2
+                raman_v = self.dyn.GetRamanVector(px, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            elif unpolarized == 5:
+                # beta_2 = 3 yz^2
+                raman_v = self.dyn.GetRamanVector(py, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            elif unpolarized == 6:
+                # beta_2 = 3 xz^2
+                raman_v = self.dyn.GetRamanVector(px, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            else:
+                raise ValueError("Error, unpolarized must be between [0, ... ,6] got invalid {}.".format(unpolarized))
+
+
+
 
 
     def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
@@ -927,7 +1008,7 @@ File {} not found. S norm not loaded.
         self.prepare_perturbation(new_zeff, masses_exp = -1)
 
 
-    def prepare_perturbation(self, vector, masses_exp = 1):
+    def prepare_perturbation(self, vector, masses_exp = 1, add = False):
         r"""
         This function prepares the calculation for the Green function
 
@@ -955,17 +1036,19 @@ File {} not found. S norm not loaded.
                 If you want to multiply each component by the square root of the masses use 1,
                 if you want to divide by the quare root use -1, use 0 if you do not want to use the
                 masses.
+            add : bool
+                If true, the perturbation is added on the top of the one already setup.
+                Calling add does not cause a reset of the Lanczos
         """
-        self.reset()
-
-
-        self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
+        if not add:
+            self.reset()
+            self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
 
         # Convert the vector in the polarization space
         m_on = np.sqrt(self.m) ** masses_exp
         print("SHAPE:", m_on.shape, vector.shape, self.pols.shape)
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
-        self.psi[:self.n_modes] = new_v
+        self.psi[:self.n_modes] += new_v
 
         self.perturbation_modulus = new_v.dot(new_v)
 
