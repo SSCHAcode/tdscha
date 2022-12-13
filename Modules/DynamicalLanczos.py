@@ -1000,6 +1000,11 @@ File {} not found. S norm not loaded.
                  electric field component, atomic coordinate in uc.   
             -pol_in: nd.array, the polarization of in-out light. default is x
             -pol_out: nd.array, the polarization of in-out light. default is x
+            -mixed: if True we can study the one and two phonon response to 
+                    pol_in \cdot \Xi \cdot pol_out + pol_in_2 \cdot \Xi \cdot pol_out_2
+                    (\Xi is the Raman tensor)
+            -pol_in_2: nd.array, the polarization of in-out light. default is x
+            -pol_out_2: nd.array, the polarization of in-out light. default is x
             -add_two_ph: bool, if True two phonon processes are included in the calculation
             -symmetrize: bool, if True the second order Raman tensors are symmetrized
             -ensemble: a scha ensemble object for computing the averages
@@ -1014,12 +1019,10 @@ File {} not found. S norm not loaded.
             if (pol_in_2 is None) or (pol_out_2 is None):
                 raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
                 
-            if len(pol_in_2) != 3 or len(pol_out_2) == 3:
+            if len(pol_in_2) != 3 or len(pol_out_2) != 3:
                 raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
                 
-                
-            
-            
+        
         print()
         print('PREPARE THE RAMAN ANHARMONIC SPECTRUM CALCULATION')
         print('=================================================')
@@ -1053,7 +1056,6 @@ File {} not found. S norm not loaded.
         if mixed:
             print('ONE PH SECTOR adding compoent pol_in_2 pol_out_2 of the Raman tensor')
             raman_vector_sc += sc_dyn.GetRamanVector(pol_in_2, pol_out_2)
-            
             
         
         # Now rescale by the mass and go in polarizaiton basis
@@ -5315,6 +5317,8 @@ Max number of iterations: {}
             self.basis_P.append(first_vector)
             self.s_norm.append(1)
         else:
+            print('Restarting the Lanczos')
+            print('There is no control on the len of basis_Q')
             # Convert everything in a list
             self.basis_Q = list(self.basis_Q)
             self.basis_P = list(self.basis_P)
@@ -5324,10 +5328,11 @@ Max number of iterations: {}
             self.c_coeffs = list(self.c_coeffs)
             #self.arnoldi_matrix = list(self.arnoldi_matrix)
 
-            if len(self.basis_Q) != i_step + 1:
-                print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
-                print("Error, the Krilov basis dimension should be 1 more than the number of steps")
-                raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
+            
+            # if len(self.basis_Q) != i_step + 1:
+            #     print("Krilov dim: %d, number of steps perfomed: %d" % (len(self.basis_Q), i_step))
+            #     print("Error, the Krilov basis dimension should be 1 more than the number of steps")
+            #     raise ValueError("Error the starting krilov basis does not matches the matrix, Look stdout.")
 
         assert len(self.basis_Q) == len(self.basis_P), "Something wrong when restoring the Lanczos."
         assert len(self.s_norm) == len(self.basis_P), "Something wrong when restoring the Lanczos."
