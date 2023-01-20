@@ -2236,7 +2236,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
         
         if "perturbation_modulus" in data.keys():
             self.perturbation_modulus = data["perturbation_modulus"]
-            self.q_vectors = data["q_vectors"]
+            #self.q_vectors = data["q_vectors"]
 
         # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
         def L_transp(psi):

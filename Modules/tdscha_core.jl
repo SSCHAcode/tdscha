@@ -4,6 +4,7 @@ using SparseArrays
 using LinearAlgebra
 using Distributed
 using LinearAlgebra.BLAS
+using InteractiveUtils
 
 LinearAlgebra.BLAS.set_num_threads(1)
 struct Ensemble{T<: AbstractFloat} 
@@ -128,7 +129,7 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
         mul!(forces, symmetries[j], view(ensemble.Y, :, i))
         mul!(displacements, symmetries[j], view(ensemble.X, :, i))
         mul!(buffer_u, Y1, displacements)
-        buffer_f = f_ψ .* forces
+        buffer_f .= f_ψ .* forces
 
         weight = -displacements' * buffer_u
         weight *= ω_is[i] / 8
@@ -244,6 +245,7 @@ function get_perturb_d2v_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T},
     d2v_dr2 = get_d2v_dR2_from_R_pert_sym_fast(ensemble, new_symmetries, temperature, R1, rho, start_index, end_index)
 
     if apply_v4
+        #@code_warntype get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end 
 
