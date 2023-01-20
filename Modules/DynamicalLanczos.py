@@ -3714,9 +3714,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         if "perturbation_modulus" in data.keys():
             self.perturbation_modulus = data["perturbation_modulus"]
 
-        if "q_vectors" in data.keys():
-            self.q_vectors = data["q_vectors"]
-
+        
         # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
         def L_transp(psi):
             return self.apply_full_L(psi, transpose= True)
