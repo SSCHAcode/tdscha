@@ -257,7 +257,9 @@ class Lanczos(object):
 Error, 'select_modes' should be an array of the same lenght of the number of modes.
  n_modes = {} | len(select_modes) = {}
 """.format(len(ws), len(select_modes)))
-
+            print()
+            print('Selecting some of the modes...')
+            print()
             good_mask = (~trans_mask) & select_modes
 
         # Get the frequencies in Ry and polarization vectors
@@ -902,7 +904,7 @@ File {} not found. S norm not loaded.
 
 
 
-    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
+    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0]), mixed = False, pol_in_2 = None, pol_out_2 = None):
         """
         PREPARE LANCZOS FOR RAMAN SPECTRUM
         ==================================
@@ -924,6 +926,11 @@ File {} not found. S norm not loaded.
 
         # Get the raman vector
         raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
+        
+        if mixed:
+            print('Prepare Raman')
+            print('Adding other component of the Raman tensor')
+            raman_v += self.dyn.GetRamanVector(pol_in_2, pol_out_2)
 
         # Get the raman vector in the supercelld
         n_supercell = np.prod(self.dyn.GetSupercell())
@@ -981,7 +988,8 @@ File {} not found. S norm not loaded.
 
     def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
                                     mixed = False, pol_in_2 = None, pol_out_2 = None,\
-                                    add_two_ph = False, symmetrize = False, ensemble = None):
+                                    add_two_ph = False, symmetrize = False, ensemble = None,\
+                                    save_raman_tensor2 = False, file_raman_tensor2 = None):
         """
         PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
         ===========================================================================
@@ -1008,6 +1016,7 @@ File {} not found. S norm not loaded.
             -add_two_ph: bool, if True two phonon processes are included in the calculation
             -symmetrize: bool, if True the second order Raman tensors are symmetrized
             -ensemble: a scha ensemble object for computing the averages
+            -save_raman_tensor2: bool if True we save the second order Raman tensor
         """
         if not self.use_wigner and add_two_ph:
             raise NotImplementedError('The two phonon processes are implemented only in Wigner')
@@ -1076,7 +1085,7 @@ File {} not found. S norm not loaded.
                 """.format(raman_eq_size)
                 assert len(raman_eq_size) == 3, MSG
                 if not self.ignore_small_w:
-                    assert raman_eq_size[2] * n_supercell == self.n_modes + 3
+                    assert raman_eq_size[2] * n_supercell == self.nat * 3 #self.n_modes + 3
                 assert raman_eq_size[0] == raman_eq_size[1] == 3
 
                 # Get the raman tensor in the supercell (E_field, E_filed, 3 * N_at_sc)
@@ -1094,12 +1103,21 @@ File {} not found. S norm not loaded.
                 # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
                 d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman, None, symmetrize = symmetrize)
             
-            print('[NEW] Go in polarization basis and divide by the masses')
+            print('[NEW] Divide by the masses')
             # Divide by the masses of the atoms in the supercell shape =  (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
             d2alpha_dR = np.einsum('c, abcd, d -> abcd', np.sqrt(self.m)**-1, d2alpha_dR, np.sqrt(self.m)**-1)
             
+            if save_raman_tensor2:
+                print('[NEW] Saving the second-order SCHA Raman tensor')
+                np.save('{}'.format(file_raman_tensor2), d2alpha_dR)
+                return
+            
+            print('[NEW] Go in polarization basis')
             # Now go in polarization basis, np.array with shape = (E_field, E_field, n_modes, n_modes)
-            d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
+            # d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
+            # -> substitute
+            tmp                = np.einsum('abcd, cm -> abmd', d2alpha_dR, self.pols)
+            d2alpha_dR_muspace = np.einsum('abmd, dn -> abmn', tmp, self.pols)
 
             # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
             dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
@@ -1142,6 +1160,118 @@ File {} not found. S norm not loaded.
 
             print('[NEW] Perturbation modulus after adding two ph contributions RAMAN = {}'.format(self.perturbation_modulus))
             print()
+    
+        return
+    
+    
+    
+    def prepare_anharmonic_raman_FT_2ph(self, d2alpha_dR = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
+                                    mixed = False, pol_in_2 = None, pol_out_2 = None):
+        """
+        PREPARE THE PSI VECTOR FOR RAMAN SPECTRUM CALCULATION (NEW VERSION) DIRECTLY FROM 2nd ORDER RAMAN TENSOR
+        ========================================================================================================
+        
+        This function is useful if we want to interpolate the 2nd Raman tensor on a bigger supercell.
+        
+        This works only with the Wigner representation if we add the two phonons effect. 
+        Prepare the psi vector for RAMAN spectrum considering position-dependent raman tensors.
+        
+        NOTE: we completely neglect the frist order Raman scattering!
+        
+        Parameters:
+        -----------
+            -d2alpha_dR: nd.array (E_comp, E_comp, 3 * N_at_sc, 3 * N_at_sc),
+                 2nd order Raman tensor.
+                 Indices are: Number of configuration, electric field component,
+                 electric field component, atomic coordinates in sc.   
+            -pol_in: nd.array, the polarization of in-out light. default is x
+            -pol_out: nd.array, the polarization of in-out light. default is x
+            -mixed: if True we can study the one and two phonon response to 
+                    pol_in \cdot \Xi \cdot pol_out + pol_in_2 \cdot \Xi \cdot pol_out_2
+                    (\Xi is the Raman tensor)
+            -pol_in_2: nd.array, the polarization of in-out light. default is x
+            -pol_out_2: nd.array, the polarization of in-out light. default is x
+        """
+        if not self.use_wigner:
+            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
+            
+        if d2alpha_dR is None:
+            raise ValueError('Must specify the 2nd order Raman tensor!')
+            
+        exp_shape = (3, 3, self.nat * 3, self.nat * 3)
+        if d2alpha_dR.shape != exp_shape:
+            raise ValueError('The shape of the 2nd order Raman tensor is not correct, expected {}'.format(exp_shape))
+            
+        if mixed:
+            if (pol_in_2 is None) or (pol_out_2 is None):
+                raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
+                
+            if len(pol_in_2) != 3 or len(pol_out_2) != 3:
+                raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
+                
+        
+        print()
+        print('PREPARE THE RAMAN ANHARMONIC SPECTRUM CALCULATION FROM 2nd ORDER RAMAN TENSOR')
+        print('=============================================================================')
+        # print('Are we considering two ph effects? = {}'.format(add_two_ph))
+        print('Are we using Wigner? = {}'.format(self.use_wigner))
+        # print('Are we symmetrizing the raman tensor? = {}'.format(symmetrize))
+        print()
+            
+        print('TWO PH Going in polarization basis')
+        # Now go in polarization basis, np.array with shape = (E_field, E_field, n_modes, n_modes)
+        # d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
+        # -> substitute
+        tmp                = np.einsum('abcd, cm -> abmd', d2alpha_dR, self.pols)
+        d2alpha_dR_muspace = np.einsum('abmd, dn -> abmn', tmp, self.pols)
+        # print(d2alpha_dR_muspace.shape)
+        
+        print('TWO PH Selecting the polarizations')
+        # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
+        dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
+        # print(dXi_dR_muspace.shape)
+        
+        if mixed:
+            print('TWO PH SECTOR adding component pol_in_2 pol_out_2 of the Raman tensor')
+            dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_2, pol_out_2)
+
+        # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
+        dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
+
+        # Get chi_minus and chi_plus tensors, np.array with shape = (n_modes, n_modes)
+        chi_minus = self.get_chi_minus()
+        chi_plus  = self.get_chi_plus()
+
+        # Get the pertubations on a'^(1) b'^(1)
+        pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), dXi_dR_muspace)
+        pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , dXi_dR_muspace)
+
+        # Check if everything is symmetric
+        assert np.all(np.abs(dXi_dR_muspace - dXi_dR_muspace.T) < 1e-10), "Second derivative of the polarizability is not symmetric in pol basis"
+        assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
+        assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
+        
+        print('[NEW] Perturbation modulus = {}'.format(self.perturbation_modulus))
+        print()
+
+        # Now get the perturbation for a'^(1)
+        current = self.n_modes
+        for i in range(self.n_modes):
+            self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
+            current = current + self.n_modes - i
+
+        # Now get the pertrubation for b'^(1)
+        for i in range(self.n_modes):
+            self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
+            current = current + self.n_modes - i
+
+        # Add the mask dot taking into account symmetric elements
+        mask_dot = self.mask_dot_wigner()
+        # OVERWRITE the pertubation modulus considering the two phonon sector
+        self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
+
+        print('[NEW] Perturbation modulus adding two ph contributions RAMAN = {}'.format(self.perturbation_modulus))
+        print()
     
         return
     
