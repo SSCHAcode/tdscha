@@ -91,10 +91,12 @@ setup( name = "tdscha",
        author = "Lorenzo Monacelli",
        url = "https://github.com/mesonepigreco/python-sscha",
        packages = ["tdscha"],
+       include_package_data=True,
        package_dir = {"tdscha": "Modules"},
+       package_data={"": ["*.jl"]},
        install_requires = ["numpy", "ase", "scipy", "cellconstructor", "python-sscha"],
        ext_modules = [odd_HP],
-       scripts = ["scripts/plot_lanczos_convergence.py", "scripts/plot_hessian_convergence.py"],
+       scripts = [os.path.join("scripts", x) for x in os.listdir("scripts") if x.endswith(".py")],
        license = "GPLv3"
        )
                                                                                                                                                           

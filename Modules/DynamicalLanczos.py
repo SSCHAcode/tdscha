@@ -31,6 +31,18 @@ import cellconstructor.Settings as Parallel
 from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
 
+# Try to import the julia module
+__JULIA_EXT__ = False
+try:
+    import julia, julia.Main
+
+    # Compile the tdscha code
+    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
+    __JULIA_EXT__ = True
+except:
+    pass
+
+
 # Define a generic type for the double precision.
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
@@ -67,9 +79,14 @@ def f_ups(w, T):
     return 2*w / (1 + 2 *n_w)
 
 # Modes for the calculation
+MODE_FAST_JULIA = 3
 MODE_FAST_MPI = 2
 MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
+
+
+def is_julia_enabled():
+    return __JULIA_EXT__
 
 
 class Lanczos(object):
@@ -91,6 +108,7 @@ class Lanczos(object):
                       Use this just for testing
                    1) Fast C serial code
                    2) Fast C parallel (MPI)
+                   3) Fast Julia multithreading (only if julia is available)
             unwrap_symmetries : bool
                 If true (default), the ensemble is unwrapped to respect the symmetries.
                 This requires SPGLIB installed.
@@ -147,7 +165,6 @@ class Lanczos(object):
         self.N_degeneracy = None
         self.initialized = False
         self.perturbation_modulus = 1
-        self.q_vectors = None # The q vectors of each mode
         self.dyn = None
         self.uci_structure = None
         self.super_structure = None
@@ -155,6 +172,9 @@ class Lanczos(object):
         self.L_linop = None
         self.M_linop = None
         self.unwrapped = False
+        self.sym_julia = None
+        self.deg_julia = None
+        self.n_syms = 1
 
         self.u_tilde = None
         self.f_tilde = None
@@ -221,8 +241,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         # Prepare the list of q point starting from the polarization vectors
         #q_list = CC.symmetries.GetQForEachMode(self.pols, self.uci_structure, self.super_structure, self.dyn.GetSupercell())
         # Store the q vectors in crystal space
-        bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
-        self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
+        #bg = self.uci_structure.get_reciprocal_vectors() / 2* np.pi
+        #self.q_vectors = np.zeros((self.n_modes, 3), dtype = np.double, order = "C")
         #for iq, q in enumerate(q_list):
         #    self.q_vectors[iq, :] = CC.Methods.covariant_coordinate(bg, q)
         
@@ -519,7 +539,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         
 
 
-    def prepare_symmetrization(self, no_sym = False, verbose = True):
+    def prepare_symmetrization(self, no_sym = False, verbose = True, symmetries = None):
         """
         PREPARE THE SYMMETRIZATION
         ==========================
@@ -533,6 +553,9 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         ----------
             no_sym : bool
                 If True, the symmetries are neglected.
+            symmetries : list of 3x4 matrices
+                If None, spglib is employed to find the symmetries,
+                         otherwise, the symmetries here contained are employed.
         """
 
         self.initialized = True
@@ -556,13 +579,18 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
             return
 
-
         t1 = time.time()
-        super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+        if symmetries is None:
+            super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+
+        else:
+            super_symmetries = symmetries
         t2 = time.time()
+
 
         if verbose:
             print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
+
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
@@ -576,6 +604,25 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.degenerate_space = [np.array(x, dtype = np.intc) for x in basis]
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
+        self.n_syms =  self.symmetries[0].shape[0]
+
+
+        if self.mode is MODE_FAST_JULIA:
+            # Get the max length
+            max_val = 0
+            nblocks = len(self.symmetries)
+            for s in self.symmetries:
+                m = s.shape[1]
+                if m > max_val:
+                    max_val = m
+            self.sym_julia = np.zeros((nblocks, self.n_syms, max_val, max_val), dtype = TYPE_DP)
+            self.deg_julia = np.zeros((nblocks, max_val), dtype = np.int32)
+
+            # Now fill the array
+            for i, sblock in enumerate(self.symmetries):
+                nsym, c, _ = np.shape(sblock)
+                self.sym_julia[i, :, :c, :c] = sblock
+                self.deg_julia[i, :c] = self.degenerate_space[i]
 
         # Create the mapping between the modes and the block id.
         t1 = time.time()
@@ -809,7 +856,7 @@ File {} not found. S norm not loaded.
 
 
 
-    def prepare_raman(self, pol_vec_in= np.array([1,0,0]), pol_vec_out = np.array([1,0,0])):
+    def prepare_raman(self, pol_vec_in = np.array([1,0,0]), pol_vec_out = np.array([1,0,0]), unpolarized: int = None):
         """
         PREPARE LANCZOS FOR RAMAN SPECTRUM
         ==================================
@@ -824,20 +871,101 @@ File {} not found. S norm not loaded.
                 The polarization vector of the incoming light
             pol_vec_out : ndarray (size = 3)
                 The polarization vector for the outcoming light
+            unpolarized : int or None
+                The perturbation for unpolarized raman (if different from None, overrides the behaviour
+                of pol_vec_in and pol_vec_out). Indices goes from 0 to 6 (included).
+                0 is alpha^2
+                1 + 2 + 3 + 4 + 5 + 6 are beta^2
+                alpha_0 = (xx + yy + zz)^2/9
+                beta_1 = (xx -yy)^2 / 2
+                beta_2 = (xx -zz)^2 / 2
+                beta_3 = (yy -zz)^2 / 2
+                beta_4 = 3xy^2
+                beta_5 = 3xz^2
+                beta_6 = 3yz^2
+
+                The total unpolarized raman intensity is 45 alpha^2 + 7 beta^2
         """
 
         # Check if the raman tensor is present
         assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
 
-        # Get the raman vector
-        raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
-
-        # Get the raman vector in the supercelld
         n_supercell = np.prod(self.dyn.GetSupercell())
-        new_raman_v = np.tile(raman_v.ravel(), n_supercell)
 
-        # Convert in the polarization basis and store the intensity
-        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        if unpolarized is None:
+            # Get the raman vector
+            raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
+
+            # Get the raman vector in the supercelld
+            new_raman_v = np.tile(raman_v.ravel(), n_supercell)
+
+            # Convert in the polarization basis and store the intensity
+            self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        else:
+            px = np.array([1,0,0])
+            py = np.array([0,1,0])
+            pz = np.array([0,0,1])
+
+            if unpolarized == 0:
+                # Alpha
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 1:
+                # (xx -yy)^2 / 2
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 2:
+                # beta_2 = (xx -zz)^2 / 2
+                raman_v = self.dyn.GetRamanVector(px, px)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 3:
+                # beta_2 = (yy -zz)^2 / 2
+                raman_v = self.dyn.GetRamanVector(py, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+
+                raman_v = self.dyn.GetRamanVector(pz, pz)
+                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
+            elif unpolarized == 4:
+                # beta_2 = 3 xy^2
+                raman_v = self.dyn.GetRamanVector(px, py)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            elif unpolarized == 5:
+                # beta_2 = 3 yz^2
+                raman_v = self.dyn.GetRamanVector(py, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            elif unpolarized == 6:
+                # beta_2 = 3 xz^2
+                raman_v = self.dyn.GetRamanVector(px, pz)
+                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
+                self.prepare_perturbation(new_raman_v, masses_exp=-1)
+            else:
+                raise ValueError("Error, unpolarized must be between [0, ... ,6] got invalid {}.".format(unpolarized))
+
+
+
 
 
     def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
@@ -883,7 +1011,7 @@ File {} not found. S norm not loaded.
         self.prepare_perturbation(new_zeff, masses_exp = -1)
 
 
-    def prepare_perturbation(self, vector, masses_exp = 1):
+    def prepare_perturbation(self, vector, masses_exp = 1, add = False):
         r"""
         This function prepares the calculation for the Green function
 
@@ -911,16 +1039,19 @@ File {} not found. S norm not loaded.
                 If you want to multiply each component by the square root of the masses use 1,
                 if you want to divide by the quare root use -1, use 0 if you do not want to use the
                 masses.
+            add : bool
+                If true, the perturbation is added on the top of the one already setup.
+                Calling add does not cause a reset of the Lanczos
         """
-        self.reset()
-
-
-        self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
+        if not add:
+            self.reset()
+            self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
 
         # Convert the vector in the polarization space
         m_on = np.sqrt(self.m) ** masses_exp
+        print("SHAPE:", m_on.shape, vector.shape, self.pols.shape)
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
-        self.psi[:self.n_modes] = new_v
+        self.psi[:self.n_modes] += new_v
 
         self.perturbation_modulus = new_v.dot(new_v)
 
@@ -1500,9 +1631,63 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         n_syms, _, _ = np.shape(self.symmetries[0])
         #print("DEG:")
         #print(self.degenerate_space)
-        sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
-                                          self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
-                                          f_pert_av, d2v_pert_av)
+        if self.mode in (MODE_FAST_MPI, MODE_FAST_SERIAL): 
+            sscha_HP_odd.GetPerturbAverageSym(self.X, self.Y, self.w, self.rho, R1, Y1, self.T, apply_d4, n_syms,
+                                            self.symmetries, self.N_degeneracy, self.degenerate_space ,self.sym_block_id, 
+                                            f_pert_av, d2v_pert_av)
+        elif self.mode == MODE_FAST_JULIA:
+            if not __JULIA_EXT__:
+                raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
+            
+            if self.sym_julia is None:
+                MSG="""
+Error, the initialization must be called AFTER you change mode to JULIA.
+"""
+                raise ValueError(MSG)
+
+
+            # Prepare the parallelization function
+            def get_f_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
+                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return f_pert_av
+            def get_d2v_proc(start_end):
+                start = int(start_end[0])
+                end = int(start_end[1])
+                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
+                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
+                
+                return d2v_dr2
+
+            # Divide the configurations and symmetries on different processors
+            # (Here we get the range of work for each process)
+            n_total = self.n_syms * self.N 
+
+            n_processors = Parallel.GetNProc()
+            count = n_total // n_processors
+            remainer = n_total % n_processors
+
+            indices = []
+            for rank in range(n_processors):
+
+                if rank < remainer:
+                    start = np.int64(rank * (count + 1))
+                    stop = np.int64(start + count + 1) 
+                else:
+                    start = np.int64(rank * count + remainer) 
+                    stop = np.int64(start + count) 
+                
+                indices.append( [start + 1, stop])
+        
+            # Execute the get_f_d2v_proc on each processor in parallel.
+            f_pert_av = Parallel.GoParallel(get_f_proc, indices, "+")
+            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+        else:
+            raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
         #print("D2V:")
         #np.set_printoptions(threshold = 10000)
@@ -1976,8 +2161,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                 arnoldi_matrix = self.arnoldi_matrix,
                                 reverse = self.reverse_L,
                                 shift = self.shift_value,
-                                perturbation_modulus = self.perturbation_modulus,
-                                q_vectors = self.q_vectors)
+                                perturbation_modulus = self.perturbation_modulus)
             
     def load_status(self, file, is_file_instance = False):
         """
@@ -2055,7 +2239,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         
         if "perturbation_modulus" in data.keys():
             self.perturbation_modulus = data["perturbation_modulus"]
-            self.q_vectors = data["q_vectors"]
+            #self.q_vectors = data["q_vectors"]
 
         # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
         def L_transp(psi):
@@ -3258,7 +3442,7 @@ Max number of iterations: {}
         return -np.imag(spectral)
 
 
-    def get_green_function_continued_fraction(self, w_array, use_terminator = True, last_average = 1, smearing = 0):
+    def get_green_function_continued_fraction(self, w_array, use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0):
         """
         CONTINUED FRACTION GREEN FUNCTION
         =================================
@@ -3314,6 +3498,42 @@ Max number of iterations: {}
             gf = 1. / (a - w_array**2  + 2j*w_array*smearing - b*c * gf)
 
         return gf * self.perturbation_modulus
+
+    def get_static_frequency(self, smearing: np.float64 = 0) -> np.float64:
+        r"""
+        GET THE STATIC FREQUENCY
+        ========================
+
+        The static frequency of a specific perturbation can be obtained as the limit of the 
+        dynamical green function for w -> 0. 
+
+        .. math ::
+
+            \omega = \sqrt{\frac{1}{\Re G(\omega \rightarrow 0 + i\eta)}} 
+
+
+        where :math:`\eta` is the smearing for the static frequency calculation.
+        This frequency is the diagonal element of the free energy Hessian matrix acros the chosen perturbation.
+
+        If :math:`\omega` is imaginary, a negative value is returned.
+
+        Parameters
+        ----------
+            - smearing : float
+                The smearing in Ry of the calculation
+
+        Results
+        -------
+            - frequency : float
+                The frequency of the perturbation :math:`\omega`
+        """
+
+
+
+        gf = self.get_green_function_continued_fraction(np.array([0]), False, smearing = smearing)
+
+        w2 = 1 / np.real(gf)
+        return np.float64(np.sqrt(np.abs(w2)) * np.sign(w2))
 
     
     def get_full_L_operator(self, verbose = False, only_pert=False, debug_d3 = None):
