@@ -73,10 +73,16 @@ def f_ups(w, T):
     The eigenvalue of the upsilon matrix as a function of the frequency and the
     temperature
     """
+
+    n_w = bose_occupation(w, T)
+    return 2*w / (1 + 2 *n_w)
+
+def bose_occupation(w, T):
+    """ The Bose-Einstein occupation. Assumes T in K and w in Ry."""
     n_w = 0
     if T > 0:
         n_w = 1 / (np.exp(w * __RyToK__ / T) - 1)
-    return 2*w / (1 + 2 *n_w)
+    return n_w
 
 # Modes for the calculation
 MODE_FAST_JULIA = 3
