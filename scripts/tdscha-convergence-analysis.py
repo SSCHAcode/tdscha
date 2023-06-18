@@ -71,7 +71,7 @@ def main():
     NW = 10000
     SMEARING = smearing / CC.Units.RY_TO_CM
 
-    print ("Computing the static responce...")
+    print ("Found {} iterations.".format(N_iters + 1))
     freqs = np.zeros((N_iters, 3*nat))
     dynamical = np.zeros((N_iters, NW))
     dynamical_noterm = np.zeros((N_iters, NW))
@@ -114,7 +114,7 @@ def main():
 
     plt.figure(dpi = 160)
     plt.title("Static Frequency")
-    plt.plot(np.arange(N_iters), w_static, marker = "o")
+    plt.plot(np.arange(N_iters) + 1, w_static, marker = "o")
     plt.xlabel("Lanczos step")
     plt.ylabel("Static frequency [cm-1]")
     plt.tight_layout()
