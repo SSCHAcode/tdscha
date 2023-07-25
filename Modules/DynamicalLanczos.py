@@ -11,6 +11,8 @@ import time
 import warnings, difflib
 import numpy as np
 
+import warnings
+
 from timeit import default_timer as timer
 
 import json
@@ -48,11 +50,34 @@ except:
 __JULIA_EXT__ = False
 try:
     import julia, julia.Main
-
-    # Compile the tdscha code
-    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
+    julia.Main.include(os.path.join(os.path.dirname(__file__), 
+        "tdscha_core.jl"))
     __JULIA_EXT__ = True
 except:
+    try:
+        import julia
+        from julia.api import Julia
+        jl = Julia(compiled_modules=False)
+        import julia.Main
+        try:
+            julia.Main.include(os.path.join(os.path.dirname(__file__),
+                "tdscha_core.jl"))
+            __JULIA_EXT__ = True
+        except:
+            # Install the required modules
+            julia.Main.eval("""
+using Pkg
+Pkg.add("SparseArrays")
+Pkg.add("InteractiveUtils")
+""")
+            try:
+                julia.Main.include(os.path.join(os.path.dirname(__file__),
+                    "tdscha_core.jl"))
+                __JULIA_EXT__ = True
+            except Exception as e:
+                warnings.warn("Julia extension not available.\nError: {}".format(e))
+    except Exception as e:
+        warnings.warn("Julia extension not available.\nError: {}".format(e))
     pass
 
 
@@ -116,7 +141,7 @@ def is_julia_enabled():
 
 
 class Lanczos(object):
-    def __init__(self, ensemble = None, mode = 1, unwrap_symmetries = False, select_modes = None, use_wigner = False, lo_to_split = "random"):
+    def __init__(self, ensemble = None, mode = None, unwrap_symmetries = False, select_modes = None, use_wigner = False, lo_to_split = "random"):
         """
         INITIALIZE THE LANCZOS
         ======================
@@ -148,7 +173,13 @@ class Lanczos(object):
                 If a ndarray is provided, it is the direction of q on which the LO-TO splitting is computed.
         """
 
-        self.mode = mode
+        if __JULIA_EXT__:
+            self.mode = is_julia_enabled() 
+        else:
+            self.mode = MODE_FAST_SERIAL
+
+        if mode is not None:
+            self.mode = mode
 
         # Define the order
         order = "C"
