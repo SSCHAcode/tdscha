@@ -30,7 +30,7 @@ from sscha.Parallel import pprint as print
 
 
 class StaticHessian(object):
-    def __init__(self, ensemble = None, verbose = False):
+    def __init__(self, ensemble = None, verbose = False, *args, **kwargs):
         """
         STATIC HESSIAN
         ==============
@@ -41,12 +41,17 @@ class StaticHessian(object):
 
         You can either initialize directly the object passing the ensemble with the configurations,
         or call the init function after the object has been defined.
+
+        You can pass all arguments expected for initializing the DynamicalLanczos.Lanczos object
+        (for example the modes to be excluded, or the running mode).
+
+        Check the DynamicalLanczos.Lanczos docs for more details
         """
 
 
         # The minimization variables
         self.vector = None
-        self.lanczos = sscha.DynamicalLanczos.Lanczos()
+        self.lanczos = sscha.DynamicalLanczos.Lanczos(*args, **kwargs)
         self.verbose = False
         self.prefix = "hessian_calculation"
         self.preconitioned = True
