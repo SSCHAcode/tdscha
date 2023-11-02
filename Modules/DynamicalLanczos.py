@@ -152,7 +152,7 @@ class Lanczos(object):
 
         """
 
-        if is_julia_enabled()
+        if is_julia_enabled():
             self.mode = MODE_FAST_JULIA
         else:
             self.mode = MODE_FAST_SERIAL
