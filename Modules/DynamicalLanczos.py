@@ -173,8 +173,8 @@ class Lanczos(object):
                 If a ndarray is provided, it is the direction of q on which the LO-TO splitting is computed.
         """
 
-        if __JULIA_EXT__:
-            self.mode = is_julia_enabled() 
+        if is_julia_enabled()
+            self.mode = MODE_FAST_JULIA
         else:
             self.mode = MODE_FAST_SERIAL
 
