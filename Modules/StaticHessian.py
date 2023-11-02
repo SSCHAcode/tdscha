@@ -1,7 +1,7 @@
 from __future__ import print_function
 from __future__ import division
 
-import sscha.DynamicalLanczos
+import tdscha.DynamicalLanczos
 
 import sys, os
 import time
@@ -30,7 +30,7 @@ from sscha.Parallel import pprint as print
 
 
 class StaticHessian(object):
-    def __init__(self, ensemble = None, verbose = False, *args, **kwargs):
+    def __init__(self, ensemble = None, verbose = False, lanczos_input={}):
         """
         STATIC HESSIAN
         ==============
@@ -43,6 +43,7 @@ class StaticHessian(object):
         or call the init function after the object has been defined.
 
         You can pass all arguments expected for initializing the DynamicalLanczos.Lanczos object
+        as a dictionary called lanczos_input
         (for example the modes to be excluded, or the running mode).
 
         Check the DynamicalLanczos.Lanczos docs for more details
@@ -51,7 +52,8 @@ class StaticHessian(object):
 
         # The minimization variables
         self.vector = None
-        self.lanczos = sscha.DynamicalLanczos.Lanczos(*args, **kwargs)
+        self.lanczos_input = lanczos_input
+        self.lanczos = tdscha.DynamicalLanczos.Lanczos(ensemble, **lanczos_input)
         self.verbose = False
         self.prefix = "hessian_calculation"
         self.preconitioned = True
@@ -95,7 +97,7 @@ class StaticHessian(object):
         lenv = (self.lanczos.n_modes * (self.lanczos.n_modes + 1)) // 2
         n_g = (n_modes * (n_modes + 1)) // 2
         n_w = (n_modes * (n_modes**2 + 3*n_modes + 2)) // 6
-        self.vector = np.zeros( n_g + n_w, dtype = sscha.DynamicalLanczos.TYPE_DP)
+        self.vector = np.zeros( n_g + n_w, dtype = tdscha.DynamicalLanczos.TYPE_DP)
 
         self.vector[:] = np.loadtxt(fname)
 
@@ -145,7 +147,7 @@ class StaticHessian(object):
         """
 
         if ensemble is not None:
-            self.lanczos = sscha.DynamicalLanczos.Lanczos(ensemble)
+            self.lanczos = tdscha.DynamicalLanczos.Lanczos(ensemble, **self.lanczos_input)
             self.lanczos.init()
 
             n_modes = self.lanczos.n_modes
@@ -154,7 +156,7 @@ class StaticHessian(object):
             n_w = (n_modes * (n_modes**2 + 3*n_modes + 2)) // 6
 
 
-            self.vector = np.zeros( n_g + n_w, dtype = sscha.DynamicalLanczos.TYPE_DP)
+            self.vector = np.zeros( n_g + n_w, dtype = tdscha.DynamicalLanczos.TYPE_DP)
             
             # Initialize vector with the initial guess (the SSCHA matrix)
             counter = 0
@@ -239,7 +241,7 @@ class StaticHessian(object):
         
 
         x0 = self.vector.copy()
-        b = np.zeros( lenv, dtype = sscha.DynamicalLanczos.TYPE_DP)
+        b = np.zeros( lenv, dtype = tdscha.DynamicalLanczos.TYPE_DP)
 
         # Initialize vector of the known terms
         counter = 0
@@ -324,11 +326,11 @@ class StaticHessian(object):
     #             os.makedirs(save_dir)
 
     #     # Prepare all the variable for the minimization
-    #     pG = np.zeros(self.Ginv.shape, dtype = sscha.DynamicalLanczos.TYPE_DP)
-    #     pG_bar = np.zeros(self.Ginv.shape, dtype = sscha.DynamicalLanczos.TYPE_DP)
+    #     pG = np.zeros(self.Ginv.shape, dtype = tdscha.DynamicalLanczos.TYPE_DP)
+    #     pG_bar = np.zeros(self.Ginv.shape, dtype = tdscha.DynamicalLanczos.TYPE_DP)
 
-    #     pW = np.zeros(self.W.shape, dtype = sscha.DynamicalLanczos.TYPE_DP)
-    #     pW_bar = np.zeros(self.W.shape, dtype = sscha.DynamicalLanczos.TYPE_DP)
+    #     pW = np.zeros(self.W.shape, dtype = tdscha.DynamicalLanczos.TYPE_DP)
+    #     pW_bar = np.zeros(self.W.shape, dtype = tdscha.DynamicalLanczos.TYPE_DP)
 
 
     #     # Perform the first application
@@ -578,7 +580,7 @@ class StaticHessian(object):
         ti = time.time()
         for i in range(self.lanczos.n_modes):
             
-            vector = np.zeros(lenv, dtype = sscha.DynamicalLanczos.TYPE_DP)
+            vector = np.zeros(lenv, dtype = tdscha.DynamicalLanczos.TYPE_DP)
             vector[:self.lanczos.n_modes] = Ginv[i, :]
             vector[self.lanczos.n_modes:] = _from_matrix_to_symmetric(W[i, :, :])
 
