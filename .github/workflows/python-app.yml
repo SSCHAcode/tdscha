@@ -39,6 +39,8 @@ jobs:
         sudo apt-get install gfortran libblas-dev liblapack-dev build-essential \
                              mpich libopenmpi-dev libgl1-mesa-glx  libglib2.0-0 \
                              libboost-all-dev
+
+        pip install mpi4py
                              
         
         git clone https://github.com/SSCHAcode/CellConstructor.git
