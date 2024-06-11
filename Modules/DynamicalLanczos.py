@@ -5879,9 +5879,10 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
             raise ValueError(ERROR_MSG)
 
         # If save_dir does not exist, create it
-        if save_dir is not None:
-            if not os.path.exists(save_dir):
-                os.makedirs(save_dir)
+        if Parallel.am_i_the_master():
+            if save_dir is not None:
+                if not os.path.exists(save_dir):
+                    os.makedirs(save_dir)
          
         # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
