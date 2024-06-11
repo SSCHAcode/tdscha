@@ -24,7 +24,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
-        pip install ase spglib julia
+        pip install ase spglib==2.2 julia
         python -c 'import julia; julia.install()'
     - name: Lint with flake8
       run: |
