@@ -226,6 +226,9 @@ function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end 
 
+    # Free the memory
+    GC.gc()
+
     return f_average, d2v_dr2
 end 
 
@@ -252,6 +255,10 @@ function get_perturb_d2v_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T},
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end 
 
+
+    # Free the memory 
+    GC.gc()
+
     return d2v_dr2
 end 
 
@@ -274,6 +281,8 @@ function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, r
     # Get the average force
     f_average = get_f_average_from_Y_pert(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
 
+    # Free the memory
+    GC.gc()
 
     return f_average
 end 
