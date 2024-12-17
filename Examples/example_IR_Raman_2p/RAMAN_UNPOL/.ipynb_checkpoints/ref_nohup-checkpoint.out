@@ -1,0 +1,1120 @@
+Load LANCZO from ./tdscha_raman_0/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_0
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.0015282630920410156 s
+Time to convert symmetries in the polarizaion space: 0.00916910171508789 s
+Time to create the block_id array: 0.01085352897644043 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003923201933503151
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.68384904e-03
+b_0 = 1.26368096e-03
+c_0 = 1.26368096e-03
+|b_0 - c_0| = 0.00000000e+00
+
+Status saved into './tdscha_raman_0/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003873910289257765
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.67093808e-03
+b_1 = 1.84141211e-03
+c_1 = 1.84141211e-03
+|b_1 - c_1| = 2.16840434e-19
+
+Status saved into './tdscha_raman_0/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003895570058375597
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -2.49845944e-03
+b_2 = 9.12358633e-04
+c_2 = 9.12358633e-04
+|b_2 - c_2| = 1.08420217e-19
+
+Status saved into './tdscha_raman_0/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038527250289916992
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.71368450e-03
+b_3 = 1.85681875e-03
+c_3 = 1.85681875e-03
+|b_3 - c_3| = 4.33680869e-19
+
+Status saved into './tdscha_raman_0/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038967356085777283
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -4.00044450e-03
+b_4 = 1.14611691e-03
+c_4 = 1.14611691e-03
+|b_4 - c_4| = 4.33680869e-19
+
+Status saved into './tdscha_raman_0/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_1/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_1
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.0025658607482910156 s
+Time to convert symmetries in the polarizaion space: 0.009324789047241211 s
+Time to create the block_id array: 0.010823965072631836 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003911239560693502
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.37240788e-03
+b_0 = 1.32432133e-03
+c_0 = 1.32432133e-03
+|b_0 - c_0| = 0.00000000e+00
+
+Status saved into './tdscha_raman_1/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0037190066650509834
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.43163330e-03
+b_1 = 1.95908476e-03
+c_1 = 1.95908476e-03
+|b_1 - c_1| = 4.33680869e-19
+
+Status saved into './tdscha_raman_1/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003931127022951841
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -3.13281159e-03
+b_2 = 9.39251589e-04
+c_2 = 9.39251589e-04
+|b_2 - c_2| = 4.33680869e-19
+
+Status saved into './tdscha_raman_1/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003889926243573427
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.84115151e-03
+b_3 = 2.00475131e-03
+c_3 = 2.00475131e-03
+|b_3 - c_3| = 0.00000000e+00
+
+Status saved into './tdscha_raman_1/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003882276825606823
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.48868620e-03
+b_4 = 1.26270598e-03
+c_4 = 1.26270598e-03
+|b_4 - c_4| = 4.33680869e-19
+
+Status saved into './tdscha_raman_1/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_2/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_2
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.002344369888305664 s
+Time to convert symmetries in the polarizaion space: 0.009328365325927734 s
+Time to create the block_id array: 0.01090860366821289 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0039271279238164425
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.59286194e-03
+b_0 = 1.47034293e-03
+c_0 = 1.47034293e-03
+|b_0 - c_0| = 2.16840434e-19
+
+Status saved into './tdscha_raman_2/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003962100949138403
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.55157809e-03
+b_1 = 1.93977641e-03
+c_1 = 1.93977641e-03
+|b_1 - c_1| = 4.33680869e-19
+
+Status saved into './tdscha_raman_2/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003922238014638424
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -3.00458596e-03
+b_2 = 8.09167746e-04
+c_2 = 8.09167746e-04
+|b_2 - c_2| = 1.08420217e-19
+
+Status saved into './tdscha_raman_2/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003911525011062622
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.86598175e-03
+b_3 = 2.00188549e-03
+c_3 = 2.00188549e-03
+|b_3 - c_3| = 0.00000000e+00
+
+Status saved into './tdscha_raman_2/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003922330215573311
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.31649388e-03
+b_4 = 1.42558695e-03
+c_4 = 1.42558695e-03
+|b_4 - c_4| = 6.50521303e-19
+
+Status saved into './tdscha_raman_2/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_3/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_3
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.00151824951171875 s
+Time to convert symmetries in the polarizaion space: 0.009151458740234375 s
+Time to create the block_id array: 0.011011362075805664 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038759508170187473
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.71341044e-03
+b_0 = 1.45697996e-03
+c_0 = 1.45697996e-03
+|b_0 - c_0| = 2.16840434e-19
+
+Status saved into './tdscha_raman_3/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003885210957378149
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.56972564e-03
+b_1 = 1.87851998e-03
+c_1 = 1.87851998e-03
+|b_1 - c_1| = 2.16840434e-19
+
+Status saved into './tdscha_raman_3/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038798879832029343
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -2.72931357e-03
+b_2 = 8.79155458e-04
+c_2 = 8.79155458e-04
+|b_2 - c_2| = 2.16840434e-19
+
+Status saved into './tdscha_raman_3/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038757999427616596
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.99605747e-03
+b_3 = 1.95892483e-03
+c_3 = 1.95892483e-03
+|b_3 - c_3| = 1.30104261e-18
+
+Status saved into './tdscha_raman_3/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038802498020231724
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.42921904e-03
+b_4 = 1.34608060e-03
+c_4 = 1.34608060e-03
+|b_4 - c_4| = 8.67361738e-19
+
+Status saved into './tdscha_raman_3/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_4/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_4
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.0018243789672851562 s
+Time to convert symmetries in the polarizaion space: 0.009722471237182617 s
+Time to create the block_id array: 0.011476755142211914 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.00388119975104928
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.75536890e-03
+b_0 = 1.42605596e-03
+c_0 = 1.42605596e-03
+|b_0 - c_0| = 0.00000000e+00
+
+Status saved into './tdscha_raman_4/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0041723488830029964
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.61681617e-03
+b_1 = 1.89602821e-03
+c_1 = 1.89602821e-03
+|b_1 - c_1| = 0.00000000e+00
+
+Status saved into './tdscha_raman_4/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038930801674723625
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -2.66059015e-03
+b_2 = 9.35520283e-04
+c_2 = 9.35520283e-04
+|b_2 - c_2| = 2.16840434e-19
+
+Status saved into './tdscha_raman_4/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003894072026014328
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -3.38604873e-03
+b_3 = 1.97496573e-03
+c_3 = 1.97496573e-03
+|b_3 - c_3| = 0.00000000e+00
+
+Status saved into './tdscha_raman_4/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003894992172718048
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.21602174e-03
+b_4 = 1.15871316e-03
+c_4 = 1.15871316e-03
+|b_4 - c_4| = 4.33680869e-19
+
+Status saved into './tdscha_raman_4/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_5/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_5
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.0015671253204345703 s
+Time to convert symmetries in the polarizaion space: 0.010686397552490234 s
+Time to create the block_id array: 0.011025190353393555 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.00386583199724555
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.49678907e-03
+b_0 = 1.40150439e-03
+c_0 = 1.40150439e-03
+|b_0 - c_0| = 2.16840434e-19
+
+Status saved into './tdscha_raman_5/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0039012846536934376
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.36761328e-03
+b_1 = 2.00403519e-03
+c_1 = 2.00403519e-03
+|b_1 - c_1| = 4.33680869e-19
+
+Status saved into './tdscha_raman_5/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003907532896846533
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -3.26933187e-03
+b_2 = 8.07511492e-04
+c_2 = 8.07511492e-04
+|b_2 - c_2| = 2.16840434e-19
+
+Status saved into './tdscha_raman_5/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003910999745130539
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.83418719e-03
+b_3 = 2.03087979e-03
+c_3 = 2.03087979e-03
+|b_3 - c_3| = 4.33680869e-19
+
+Status saved into './tdscha_raman_5/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003676082007586956
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.26764763e-03
+b_4 = 1.43254284e-03
+c_4 = 1.43254284e-03
+|b_4 - c_4| = 0.00000000e+00
+
+Status saved into './tdscha_raman_5/lanczos_STEP5'
+Lanczos step 5 ultimated.
+Load LANCZO from ./tdscha_raman_6/initial
+
+++++++++++++++++++++++++++++++++++
+RUNNING THE LANCZOS WITH D3 AND D4
+The calculation is saved in ./tdscha_raman_6
+Steps     5
+Save each 1
+D3 = False D4 = False
+++++++++++++++++++++++++++++++++++
+
+
+Not initialized. Now we symmetrize
+
+Time to get the symmetries [4] from spglib: 0.001562356948852539 s
+Time to convert symmetries in the polarizaion space: 0.009664773941040039 s
+Time to create the block_id array: 0.01095271110534668 s
+Running the standard Lanczos algorithm with Wigner
+Getting the mask dot product
+
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? True
+Should I ignore the fourth order effect? True
+Should I use the Wigner formalism? True
+Should I use a standard Lanczos? True
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0039494577795267105
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = -1.60842255e-03
+b_0 = 1.43640574e-03
+c_0 = 1.43640574e-03
+|b_0 - c_0| = 6.50521303e-19
+
+Status saved into './tdscha_raman_6/lanczos_STEP1'
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.00312557490542531
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = -3.47284039e-03
+b_1 = 2.01926483e-03
+c_1 = 2.01926483e-03
+|b_1 - c_1| = 1.73472348e-18
+
+Status saved into './tdscha_raman_6/lanczos_STEP2'
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.00387516338378191
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = -3.10914734e-03
+b_2 = 7.46926364e-04
+c_2 = 7.46926364e-04
+|b_2 - c_2| = 2.16840434e-19
+
+Status saved into './tdscha_raman_6/lanczos_STEP3'
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.003874431364238262
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = -2.88643529e-03
+b_3 = 2.09025035e-03
+c_3 = 2.09025035e-03
+|b_3 - c_3| = 4.33680869e-19
+
+Status saved into './tdscha_raman_6/lanczos_STEP4'
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+The Wigner representation is used!
+
+
+Time to apply the full L: 0.0038692839443683624
+
+Running the SYMMETRIC Lanczos with Wigner!
+
+Optimize RAM consumption
+P basis popping the elements we do not use
+Q basis popping the elements we do not use
+s norm popping the elements we do not use
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = -3.34932830e-03
+b_4 = 1.40317879e-03
+c_4 = 1.40317879e-03
+|b_4 - c_4| = 4.33680869e-19
+
+Status saved into './tdscha_raman_6/lanczos_STEP5'
+Lanczos step 5 ultimated.

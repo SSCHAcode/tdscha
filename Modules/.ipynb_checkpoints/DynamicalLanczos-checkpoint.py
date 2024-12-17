@@ -924,7 +924,7 @@ File {} not found. S norm not loaded.
         # Check if the raman tensor is present
         assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
 
-        # Get the raman vector
+        # Get the raman vector (apply the ASR and contract the raman tensor with the polarization vectors)
         raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
         
         if mixed:
@@ -938,56 +938,228 @@ File {} not found. S norm not loaded.
 
         # Convert in the polarization basis and store the intensity
         self.prepare_perturbation(new_raman_v, masses_exp=-1)
-
-
-    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
-        """
-        PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
-        =================================================
-
-        In this subroutine we prepare the lanczos algorithm for the computation of the
-        infrared spectrum signal.
-
-        Parameters
-        ----------
-            effective_charges : ndarray(size = (n_atoms, 3, 3), dtype = np.double)
-                The effective charges. Indices are: Number of atoms in the unit cell,
-                electric field component, atomic coordinate. If None, the effective charges
-                contained in the dynamical matrix will be considered.
-            pol_vec : ndarray(size = 3)
-                The polarization vector of the light.
-        """
-
-        ec = self.dyn.effective_charges
-        if not effective_charges is None:
-            ec = effective_charges
         
+    def get_prefactors_unpolarized_raman(self, index):
+        """
+        RETURNS THE PREFACTORS FOR COMPUTING THE UNPOLARIZED RAMAN
+        ==========================================================
+        
+        It returns a dictionary with the prefactors
+        
+        The prefactors corresponds to the components of the unpolarized raman signal
+        """
+        labels = [i for i in range(7)]
+        if not(index in labels):
+            raise ValueError('{} should be in {}'.format(index, labels))
+            
+        dictionary = {'(xx+yy+zz)^2' : 45/9,\
+                      '(xx-yy)^2'    : 7/2,\
+                      '(xx-zz)^2'    : 7/2,\
+                      '(yy-zz)^2'    : 7/2,\
+                      '(xy)^2'       : 7*3,\
+                      '(xz)^2'       : 7*3,\
+                      '(yz)^2'       : 7*3}
+        
+        keys = list(dictionary.keys())
+        
+        
+        return dictionary[keys[index]]
+    
+    def prepare_unpolarized_raman(self, index = 0, debug = False):
+        """
+        PREPARE UNPOLARIZED RAMAN SIGNAL
+        ================================
+        
+        The raman tensor is read from the dynamical matrix provided by the original ensemble.
+        
+        The perturbations are prepared accordin to the formula (see https://doi.org/10.1021/jp5125266)
+        
+        ..math:
+        
+            I_unpol = 45/9 (xx + yy + zz)^2
+                      + 7/2 [(xx-yy)^2 + (xx-zz)^2 + (yy-zz)^2]
+                      + 7 * 3 [(xy)^2 + (yz)^2 + (xz)^2]
+        """
+        # Check if the raman tensor is present
+        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
+        
+        labels = [i for i in range(7)]
+        if not(index in labels):
+            raise ValueError('{} should be in {}'.format(index, labels))
+        
+        epols = {'x' : np.array([1,0,0]),\
+                 'y' : np.array([0,1,0]),\
+                 'z' : np.array([0,0,1])}
+        
+        # (xx + yy + zz)^2
+        if index == 0:
+            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            raman_v += self.dyn.GetRamanVector(epols['y'], epols['y'])
+            raman_v += self.dyn.GetRamanVector(epols['z'], epols['z'])
+        # (xx - yy)^2    
+        elif index == 1:
+            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            raman_v -= self.dyn.GetRamanVector(epols['y'], epols['y'])
+        # (xx - zz)^2       
+        elif index == 2:
+            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
+        # (yy - zz)^2   
+        elif index == 3:
+            raman_v  = self.dyn.GetRamanVector(epols['y'], epols['y'])
+            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
+        # (xy)^2
+        elif index == 4:
+            raman_v = self.dyn.GetRamanVector(epols['x'], epols['y'])
+        # (xz)^2
+        elif index == 5:
+            raman_v = self.dyn.GetRamanVector(epols['x'], epols['z'])
+        # (yz)^2
+        elif index == 6:
+            raman_v = self.dyn.GetRamanVector(epols['y'], epols['z'])
+            
+        if debug:
+            np.save('raman_v_{}'.format(index), raman_v)
+            
+        # Get the raman vector in the supercelld
         n_supercell = np.prod(self.dyn.GetSupercell())
+        new_raman_v = np.tile(raman_v.ravel(), n_supercell)
 
-        # Check the effective charges
-        assert not ec is None, "Error, no effective charge found. Cannot initialize IR responce"
+        # Convert in the polarization basis and store the intensity
+        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        
+        if debug:
+            print('[NEW] Pertubation modulus with eq Raman tensors = {}'.format(self.perturbation_modulus))
+        print()
+                             
+        return
+    
+    
+    def prepare_unpolarized_raman_FT(self, index = 0, debug = False, eq_raman_tns = None, use_symm = True,\
+                                     ens_av_raman = None, raman_tns_ens = None, add_2ph = True):
+        """
+        PREPARE UNPOLARIZED RAMAN SIGNAL CONSIDERING FLUCTUATIONS OF THE RAMAN TENSOR
+        =============================================================================
+        
+        The raman tensor is read from the dynamical matrix provided by the original ensemble.
+        
+        The perturbations are prepared accordin to the formula (see https://doi.org/10.1021/jp5125266)
+        
+        ..math:
+        
+            I_unpol = 45/9 (xx + yy + zz)^2
+                      + 7/2 [(xx-yy)^2 + (xx-zz)^2 + (yy-zz)^2]
+                      + 7 * 3 [(xy)^2 + (yz)^2 + (xz)^2]
+                      
+        Parameters:
+        -----------
+            -index: the pol component of the unpolarized signal
+            -debug: if true we save the second order Raman tensor
+            -eq_raman_tns: np.array with shape (3, 3, 3 * N_at_uc), the equilibirum raman tensor
+            -use_symm: bool, if True symmetries are enforced
+            -ens_av_raman:  the ensemble on which we compute the averages of the Raman tensors
+            -raman_tns_ens: np.array with shape (N_conf, 3, 3, 3 * N_at_sc), the raman tensors on the displaced configruations
+        """
+        # Check if the raman tensor is present
+        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
+        
+        labels = [i for i in range(7)]
+        if not(index in labels):
+            raise ValueError('{} should be in {}'.format(index, labels))
+        
+        epols = {'x' : np.array([1,0,0]),\
+                 'y' : np.array([0,1,0]),\
+                 'z' : np.array([0,0,1])}
+        
+        # (xx + yy + zz)^2
+        if index == 0:
+            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            # raman_v += self.dyn.GetRamanVector(epols['y'], epols['y'])
+            # raman_v += self.dyn.GetRamanVector(epols['z'], epols['z'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   = epols['x'], pol_out   = epols['x'],\
+                                             mixed = True,\
+                                             pol_in_2 = epols['y'], pol_out_2 = epols['y'],\
+                                             pol_in_3 = epols['z'], pol_out_3 = epols['z'],\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_plus_yy_plus_zz')
+        # (xx - yy)^2    
+        elif index == 1:
+            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            # raman_v -= self.dyn.GetRamanVector(epols['y'], epols['y'])
+            # NB we put just one minus sign because the component is (xx - yy)^2
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['x'],  pol_out  =  epols['x'],\
+                                             mixed = True,\
+                                             pol_in_2 = -epols['y'], pol_out_2 =  epols['y'],\
+                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_minus_yy')
+        # (xx - zz)^2       
+        elif index == 2:
+            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
+            # raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['x'],  pol_out  =  epols['x'],\
+                                             mixed = True,\
+                                             pol_in_2 = -epols['z'], pol_out_2 =  epols['z'],\
+                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_minus_zz')
+        # (yy - zz)^2   
+        elif index == 3:
+            # raman_v  = self.dyn.GetRamanVector(epols['y'], epols['y'])
+            # raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['y'],  pol_out  =  epols['y'],\
+                                             mixed = True,\
+                                             pol_in_2 = -epols['z'], pol_out_2 =  epols['z'],\
+                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'yy_minus_zz')
+        # (xy)^2
+        elif index == 4:
+            # raman_v = self.dyn.GetRamanVector(epols['x'], epols['y'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['x'],  pol_out  =  epols['y'],\
+                                             mixed = False,\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xy_square')
+        # (xz)^2
+        elif index == 5:
+            # raman_v = self.dyn.GetRamanVector(epols['x'], epols['z'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['x'],  pol_out  =  epols['z'],\
+                                             mixed = False,\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xz_square')
+        # (yz)^2
+        elif index == 6:
+            # raman_v = self.dyn.GetRamanVector(epols['y'], epols['z'])
+            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
+                                             pol_in   =  epols['y'],  pol_out  =  epols['z'],\
+                                             mixed = False,\
+                                             add_two_ph = add_2ph, symmetrize = use_symm,\
+                                             ensemble = ens_av_raman,\
+                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'yz_square')
+            
+        return
 
-        ec_size = np.shape(ec)
-        MSG = """
-        Error, effective charges of the wrong shape: {}
-        """.format(ec_size)
-        assert len(ec_size) == 3, MSG
-        if not self.ignore_small_w:
-            assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
-        assert ec_size[1] == ec_size[2] == 3
 
-        # shape = (N_at_uc, 3)
-        z_eff = np.einsum("abc, b", ec, pol_vec)
-
-        # Get the gamma effective charge
-        new_zeff = np.tile(z_eff.ravel(), n_supercell)
-
-        self.prepare_perturbation(new_zeff, masses_exp = -1)
+    
         
    
 
-    def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
+    def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None,\
+                                    pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
                                     mixed = False, pol_in_2 = None, pol_out_2 = None,\
+                                    pol_in_3 = None, pol_out_3 = None,\
                                     add_two_ph = False, symmetrize = False, ensemble = None,\
                                     save_raman_tensor2 = False, file_raman_tensor2 = None):
         """
@@ -1009,12 +1181,14 @@ File {} not found. S norm not loaded.
             -pol_in: nd.array, the polarization of in-out light. default is x
             -pol_out: nd.array, the polarization of in-out light. default is x
             -mixed: if True we can study the one and two phonon response to 
-                    pol_in \cdot \Xi \cdot pol_out + pol_in_2 \cdot \Xi \cdot pol_out_2
+                    pol_in \cdto \Xi \cdot pol_in + pol_in_2 \cdto \Xi \cdot pol_in_2 + pol_in_3 \cdto \Xi \cdot pol_in_3
                     (\Xi is the Raman tensor)
-            -pol_in_2: nd.array, the polarization of in-out light. default is x
-            -pol_out_2: nd.array, the polarization of in-out light. default is x
+            -pol_in_2:  nd.array, the polarization of in-out light. default is None
+            -pol_out_2: nd.array, the polarization of in-out light. default is None
+            -pol_in_3:  nd.array, the polarization of in-out light. default is None
+            -pol_out_3: nd.array, the polarization of in-out light. default is None
             -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symmetrize: bool, if True the second order Raman tensors are symmetrized
+            -symmetrize: bool, if True the first/second order Raman tensors are symmetrized
             -ensemble: a scha ensemble object for computing the averages
             -save_raman_tensor2: bool if True we save the second order Raman tensor
         """
@@ -1025,11 +1199,18 @@ File {} not found. S norm not loaded.
             raise ValueError('Must specify the raman tensors for all configurations!')
             
         if mixed:
+            #Check that we have the other polarization vectors
             if (pol_in_2 is None) or (pol_out_2 is None):
                 raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
                 
+            if (pol_in_3 is None) or (pol_out_3 is None):
+                raise ValueError('Must specify pol_in_3 pol_out_3 if mixed = True!')
+                
             if len(pol_in_2) != 3 or len(pol_out_2) != 3:
                 raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
+                
+            if len(pol_in_3) != 3 or len(pol_out_3) != 3:
+                raise ValueError('pol_in_3 pol_out_3 must be array of len 3')
                 
         
         print()
@@ -1053,7 +1234,7 @@ File {} not found. S norm not loaded.
         # alpha is the polarizability
         
         # Get the average of the raman tensor, np.array with shape = (3, 3, 3 * N_at_sc)
-        d1alpha_dR_av = perturbations.get_d1alpha_dR_av(ensemble, raman, symmetrize = True)
+        d1alpha_dR_av = perturbations.get_d1alpha_dR_av(ensemble, raman, symmetrize = symmetrize)
         
         # Get the supercell dyn then set the raman tensor euqal to d1alpha_dR_av
         sc_dyn = self.dyn.GenerateSupercellDyn(self.dyn.GetSupercell())
@@ -1065,6 +1246,8 @@ File {} not found. S norm not loaded.
         if mixed:
             print('ONE PH SECTOR adding compoent pol_in_2 pol_out_2 of the Raman tensor')
             raman_vector_sc += sc_dyn.GetRamanVector(pol_in_2, pol_out_2)
+            print('ONE PH SECTOR adding compoent pol_in_3 pol_out_3 of the Raman tensor')
+            raman_vector_sc += sc_dyn.GetRamanVector(pol_in_3, pol_out_3)
             
         
         # Now rescale by the mass and go in polarizaiton basis
@@ -1081,7 +1264,7 @@ File {} not found. S norm not loaded.
                 # raman_eq is np.array with shape = (E_field, E_field, N_at_uc * 3)
                 raman_eq_size = np.shape(raman_eq)
                 MSG = """
-                Error, effective charges of the wrong shape: {}
+                Error, raman tns of the wrong shape: {}
                 """.format(raman_eq_size)
                 assert len(raman_eq_size) == 3, MSG
                 if not self.ignore_small_w:
@@ -1098,6 +1281,7 @@ File {} not found. S norm not loaded.
             if raman_eq is not None:
                 print('[NEW] Subtracting the equilibirum RAMAN tensor...')
                 # raman - raman_eq_gamma, np.array with shape = (N_configs, Efield, Efield, 3 * N_at_sc)
+                # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
                 d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman - raman_eq_gamma, None, symmetrize = symmetrize)
             else:
                 # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
@@ -1125,6 +1309,8 @@ File {} not found. S norm not loaded.
             if mixed:
                 print('TWO PH SECTOR adding component pol_in_2 pol_out_2 of the Raman tensor')
                 dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_2, pol_out_2)
+                print('TWO PH SECTOR adding component pol_in_3 pol_out_3 of the Raman tensor')
+                dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_3, pol_out_3)
             
             # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
             dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
@@ -1277,7 +1463,49 @@ File {} not found. S norm not loaded.
     
     
     
-    
+    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
+        """
+        PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
+        =================================================
+
+        In this subroutine we prepare the lanczos algorithm for the computation of the
+        infrared spectrum signal.
+
+        Parameters
+        ----------
+            effective_charges : ndarray(size = (n_atoms, 3, 3), dtype = np.double)
+                The effective charges. Indices are: Number of atoms in the unit cell,
+                electric field component, atomic coordinate. If None, the effective charges
+                contained in the dynamical matrix will be considered.
+            pol_vec : ndarray(size = 3)
+                The polarization vector of the light.
+        """
+
+        ec = self.dyn.effective_charges
+        if not effective_charges is None:
+            ec = effective_charges
+        
+        n_supercell = np.prod(self.dyn.GetSupercell())
+
+        # Check the effective charges
+        assert not ec is None, "Error, no effective charge found. Cannot initialize IR responce"
+
+        ec_size = np.shape(ec)
+        MSG = """
+        Error, effective charges of the wrong shape: {}
+        """.format(ec_size)
+        assert len(ec_size) == 3, MSG
+        if not self.ignore_small_w:
+            assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3
+        assert ec_size[1] == ec_size[2] == 3
+
+        # shape = (N_at_uc, 3)
+        z_eff = np.einsum("abc, b", ec, pol_vec)
+
+        # Get the gamma effective charge
+        new_zeff = np.tile(z_eff.ravel(), n_supercell)
+
+        self.prepare_perturbation(new_zeff, masses_exp = -1)
     
     
     
@@ -1302,7 +1530,7 @@ File {} not found. S norm not loaded.
                  electric field component, atomic coordinate.   
             -pol_vec_light: nd.array, the polarization of in-out light. default is x
             -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symmetrize: bool, if True the second order effective charges are symmetrized
+            -symmetrize: bool, if True the first/second order effective charges are symmetrized
             -ensemble: a scha ensemble object for computing the averages
         """
         if not self.use_wigner and add_two_ph:
@@ -1311,8 +1539,7 @@ File {} not found. S norm not loaded.
         if ec is None:
             raise ValueError('Must specify the effective charges for all configurations!')
             
-        
-            
+         
         print()
         print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
         print('==============================================')
@@ -1327,7 +1554,7 @@ File {} not found. S norm not loaded.
         assert ec.shape[2] == ec.shape[3] == 3, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
             
         # Get the average of the dipole moment, np.array with shape = (3 * N_at_sc, 3)
-        d1M_dR_av = perturbations.get_d1M_dR_av(ensemble, ec, symmetrize = True)
+        d1M_dR_av = perturbations.get_d1M_dR_av(ensemble, ec, symmetrize = symmetrize)
         
         # Project along the direction of light polarization, (3 * N_at_sc)
         Z = np.einsum("ab, b -> a", d1M_dR_av, pol_vec_light)
@@ -1337,7 +1564,7 @@ File {} not found. S norm not loaded.
         print('Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
         print()
         
-        # NOW PREPARE THE SECOND ORDER DIPOLE MOMEN
+        # NOW PREPARE THE SECOND ORDER DIPOLE MOMENT
         if add_two_ph:
             if ec_eq is not None:
                 print('[NEW] Getting the equilibirum effective charges...')
@@ -2646,6 +2873,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                               f_pert_av, d2v_pert_av)
         # NEW JULIA
         elif self.mode == MODE_FAST_JULIA:
+            print('julia')
             if not __JULIA_EXT__:
                 raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
                 
@@ -3263,6 +3491,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         self.b_coeffs = data["b_coeffs"]
         if "c_coeffs" in data:
             self.c_coeffs = data["c_coeffs"]
+        # Make them as lists
+        self.a_coeffs = list(self.a_coeffs)
+        self.b_coeffs = list(self.b_coeffs)
+        self.c_coeffs = list(self.c_coeffs)
         self.krilov_basis = data["krilov_basis"]
         self.arnoldi_matrix = data["arnoldi_matrix"]
         

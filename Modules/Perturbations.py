@@ -10,9 +10,9 @@ from time import time
 import spglib
 import numpy as np
 
-##################
-# SYMMETRIZATION #
-##################
+######################
+# SYMMETRIZATION 1ph #
+######################
 
 def symmetrize_d1alpha_dR(d1alpha_dR_in, dyn, verbose = False):
     """
@@ -107,7 +107,9 @@ def symmetrize_d1M_dR(d1M_dR_in, dyn, verbose = False):
 
 
 
-
+######################
+# SYMMETRIZATION 2ph #
+######################
 
 def symmetrize_d2M_dR(d2M_dR_in, dyn, verbose = False):
     """
@@ -156,7 +158,6 @@ def symmetrize_d2alpha_dR(d2alpha_dR_in, dyn, verbose = False):
     Parameters:
     -----------
         -d2alpha_dR_in: average of the second derivative of the polarizability, np.array with shape (3, 3, 3 * N_at_sc, 3 * N_at_sc)
-             the last component is the E_field
         -dyn: the current Phonons object of the ensemble object
 
     Returns:
@@ -316,12 +317,9 @@ Error, the number of effective charges ({})
 
     # Get the average of the second derivative of the dipole moment, np.array with shape = (3 * N_at_sc, 3 * N_at_sc, 3)
     d2M_dR = np.einsum("i, ia, ibc -> abc", ensemble.rho, v_disp, new_eff_charge) / N_effective
-
-    # Apply permutation symmetry before symmetrize
-    d2M_dR += np.einsum("abc -> bac", d2M_dR)
-    d2M_dR /= 2
     
     if symmetrize:
+        # Apply permutation symmetry on atomic indices
         d2M_dR = symmetrize_d2M_dR(d2M_dR, ensemble.current_dyn, verbose = True)
 
     return d2M_dR
@@ -343,7 +341,7 @@ def get_d2alpha_dR_av(ensemble, raman, w_pols = None, symmetrize = False):
         
     Returns:
     --------
-        -d2alpha_dR: the averages of the polarizability second derivative, np.array with shape (E_field, E_filed, 3 * N_at_sc)
+        -d2alpha_dR: the averages of the polarizability second derivative, np.array with shape (E_field, E_filed, 3 * N_at_sc, 3 * N_at_sc)
         
     """
     assert len(raman) == ensemble.N, """
@@ -369,12 +367,9 @@ Error, the number of Raman tenors ({})
 
     # Get the average of the second derivative of the polarizability, np.array with shape = (E_field, E_field, 3 * N_at_sc, 3 * N_at_sc)
     d2alpha_dR = np.einsum("i, ia, ibcd -> bcda", ensemble.rho, v_disp, raman) / N_effective
-
-    # Apply permutation symmetry before symmetrize
-    d2alpha_dR += np.einsum("abcd -> badc", d2alpha_dR)
-    d2alpha_dR /= 2
     
     if symmetrize:
+        # This also applies permutation symmetry for both atomic indices and electric field components
         d2alpha_dR = symmetrize_d2alpha_dR(d2alpha_dR, ensemble.current_dyn, verbose = True)
         
 
