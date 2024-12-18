@@ -15,11 +15,22 @@ import sscha
 import tdscha, tdscha.DynamicalLanczos as DL
 import sscha.Ensemble
 
-if __name__ == "__main__":
-    if len(sys.argv) not in [2, 4, 5]:
-        print("""
+HEADER = """
+
 TDSCHA
 ------
+
+"""
+
+
+if __name__ == "__main__":
+    print(HEADER)
+
+    if len(sys.argv) not in [2, 4, 5]:
+        print("""
+Plot the spectrum of a TDSCHA calculation.
+
+Usage: tdscha-plot.py <file.abc> [w_start w_end [smearing]]
 
 Pass a .abc or .npz file resulting from a linear response calculation.
 Optionally you can pass a range of frequencies (cm-1) and the smearing.
@@ -31,6 +42,8 @@ Optionally you can pass a range of frequencies (cm-1) and the smearing.
     
 
     lanc = DL.Lanczos()
+
+    print("Loading file {}".format(fname))
 
     if fname.endswith(".abc"):
         lanc.load_abc(fname)
@@ -57,6 +70,10 @@ Optionally you can pass a range of frequencies (cm-1) and the smearing.
 
     gf = lanc.get_green_function_continued_fraction(w_ry, smearing = smearing, use_terminator=False)
     spectrum = - np.imag(gf)
+
+    # Print some info about the calculation
+    print()
+    print("Number of poles: {}".format(len(lanc.a_coeffs)))
 
     
     plt.plot(w, spectrum)
