@@ -7,7 +7,6 @@ using LinearAlgebra.BLAS
 using InteractiveUtils
 
 LinearAlgebra.BLAS.set_num_threads(1)
-
 struct Ensemble{T<: AbstractFloat} 
     X:: Matrix{T}
     Y:: Matrix{T}
@@ -142,7 +141,6 @@ function get_d2v_dR2_from_Y_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vec
         BLAS.gemm!('N', 'T', -weight, r1_aux, r2_aux, 1.0, d2v_dR2)
         BLAS.gemm!('N', 'T', -weight, r2_aux, r1_aux, 1.0, d2v_dR2)
 
-
         weight = - buffer_u' * buffer_f
         weight *= ω_is[i] / 4
 
@@ -170,7 +168,6 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
     buffer_f = zeros(T, n_modes) 
     buffer_f1 = zeros(T, n_modes) 
 
-
     @assert start_index <= end_index  "Error, start_index $start_index should be lower than end $end_index"
     @assert start_index >= 1 "Error, start_index $start_index should be bigger than 1"
     @assert end_index <= n_configs*n_symmetries  "Error, end_index cannot exceed $(n_modes*n_symmetries)"
@@ -195,7 +192,6 @@ function get_f_average_from_Y_pert(ensemble::Ensemble{T}, symmetries::Vector{Spa
         weight = - buffer_u' * buffer_f 
         weight *= ω_is[i] / 3.
         f_average .+= weight .* buffer_f1
-
     end 
 
     return f_average/ ( n_symmetries * sum(ω_is))
@@ -286,4 +282,3 @@ function get_perturb_f_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, r
 
     return f_average
 end 
-

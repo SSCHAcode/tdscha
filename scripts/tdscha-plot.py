@@ -74,7 +74,6 @@ Optionally you can pass a range of frequencies (cm-1) and the smearing.
     # Print some info about the calculation
     print()
     print("Number of poles: {}".format(len(lanc.a_coeffs)))
-
     
     plt.plot(w, spectrum)
     plt.xlabel("Frequency [cm-1]")

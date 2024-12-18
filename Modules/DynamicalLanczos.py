@@ -81,6 +81,41 @@ Pkg.add("InteractiveUtils")
     pass
 
 
+# Try to import the julia module
+__JULIA_EXT__ = False
+try:
+    import julia, julia.Main
+    julia.Main.include(os.path.join(os.path.dirname(__file__), 
+        "tdscha_core.jl"))
+    __JULIA_EXT__ = True
+except:
+    try:
+        import julia
+        from julia.api import Julia
+        jl = Julia(compiled_modules=False)
+        import julia.Main
+        try:
+            julia.Main.include(os.path.join(os.path.dirname(__file__),
+                "tdscha_core.jl"))
+            __JULIA_EXT__ = True
+        except:
+            # Install the required modules
+            julia.Main.eval("""
+using Pkg
+Pkg.add("SparseArrays")
+Pkg.add("InteractiveUtils")
+""")
+            try:
+                julia.Main.include(os.path.join(os.path.dirname(__file__),
+                    "tdscha_core.jl"))
+                __JULIA_EXT__ = True
+            except Exception as e:
+                warnings.warn("Julia extension not available.\nError: {}".format(e))
+    except Exception as e:
+        warnings.warn("Julia extension not available.\nError: {}".format(e))
+    pass
+
+
 # Define a generic type for the double precision.
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
@@ -135,6 +170,10 @@ MODE_SLOW_SERIAL = 0
 
 def is_julia_enabled():
     return __JULIA_EXT__
+
+def is_julia_enabled():
+    return __JULIA_EXT__
+
 
 def is_julia_enabled():
     return __JULIA_EXT__
@@ -246,8 +285,6 @@ class Lanczos(object):
         self.L_linop = None
         self.M_linop = None
         self.unwrapped = False
-        
-        # New stuff -> JULIA
         self.sym_julia = None
         self.deg_julia = None
         self.n_syms = 1
@@ -712,7 +749,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.N_degeneracy = np.array([len(x) for x in basis], dtype = np.intc)
         self.sym_block_id = -np.ones(self.n_modes, dtype = np.intc)
         self.n_syms =  self.symmetries[0].shape[0]
-        
 
         if self.mode is MODE_FAST_JULIA:
             # Get the max length
@@ -1298,9 +1334,7 @@ File {} not found. S norm not loaded.
                                              save_raman_tensor2 = debug, file_raman_tensor2 = 'yz_square')
             
         return
-
-    
-        
+       
    
 
     def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None,\
@@ -1961,7 +1995,6 @@ File {} not found. S norm not loaded.
                 If true, the perturbation is added on the top of the one already setup.
                 Calling add does not cause a reset of the Lanczos
         """
-
         if not add:
             self.reset()
             self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
@@ -3054,61 +3087,21 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             # Assign which configurations should be computed by each processor
             indices = []
             for rank in range(n_processors):
+
                 if rank < remainer:
                     start = np.int64(rank * (count + 1))
                     stop = np.int64(start + count + 1) 
                 else:
                     start = np.int64(rank * count + remainer) 
                     stop = np.int64(start + count) 
-                
+
                 indices.append([start + 1, stop])
+
                 
             # Execute the get_f_d2v_proc on each processor in parallel.
             f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
             d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
 
-
-            # Prepare the parallelization function
-            def get_f_proc(start_end):
-                start = int(start_end[0])
-                end = int(start_end[1])
-                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
-                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
-                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                
-                return f_pert_av
-            def get_d2v_proc(start_end):
-                start = int(start_end[0])
-                end = int(start_end[1])
-                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),
-                                                self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                
-                return d2v_dr2
-
-            # Divide the configurations and symmetries on different processors
-            # (Here we get the range of work for each process)
-            n_total = self.n_syms * self.N 
-
-            n_processors = Parallel.GetNProc()
-            count = n_total // n_processors
-            remainer = n_total % n_processors
-
-            indices = []
-            for rank in range(n_processors):
-
-                if rank < remainer:
-                    start = np.int64(rank * (count + 1))
-                    stop = np.int64(start + count + 1) 
-                else:
-                    start = np.int64(rank * count + remainer) 
-                    stop = np.int64(start + count) 
-                
-                indices.append( [start + 1, stop])
-        
-            # Execute the get_f_d2v_proc on each processor in parallel.
-            f_pert_av = Parallel.GoParallel(get_f_proc, indices, "+")
-            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
->>>>>>> 046a7f3d (Now the julia version works in parallel with the GoParallel function)
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
@@ -5313,6 +5306,42 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
         w2 = 1 / np.real(gf)
         return np.float64(np.sqrt(np.abs(w2)) * np.sign(w2))
 
+    def get_static_frequency(self, smearing: np.float64 = 0) -> np.float64:
+        r"""
+        GET THE STATIC FREQUENCY
+        ========================
+
+        The static frequency of a specific perturbation can be obtained as the limit of the 
+        dynamical green function for w -> 0. 
+
+        .. math ::
+
+            \omega = \sqrt{\frac{1}{\Re G(\omega \rightarrow 0 + i\eta)}} 
+
+
+        where :math:`\eta` is the smearing for the static frequency calculation.
+        This frequency is the diagonal element of the free energy Hessian matrix acros the chosen perturbation.
+
+        If :math:`\omega` is imaginary, a negative value is returned.
+
+        Parameters
+        ----------
+            - smearing : float
+                The smearing in Ry of the calculation
+
+        Results
+        -------
+            - frequency : float
+                The frequency of the perturbation :math:`\omega`
+        """
+
+
+
+        gf = self.get_green_function_continued_fraction(np.array([0]), False, smearing = smearing)
+
+        w2 = 1 / np.real(gf)
+        return np.float64(np.sqrt(np.abs(w2)) * np.sign(w2))
+
     
     
     
@@ -5896,6 +5925,7 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
                 print('Getting the mask dot product')
                 print()
             mask_dot = self.mask_dot_wigner(debug)
+
 
         
         # Get the current step
