@@ -46,4 +46,5 @@ def test_lanczos():
 
 
 if __name__ == "__main__":
+    # Run with python-jl
     test_lanczos()
