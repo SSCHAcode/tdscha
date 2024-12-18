@@ -28,7 +28,7 @@ POPULATION_ID = 2 # Population of the ensemble
 LOAD_BIN = False # If true, load a binary ensemble
 
 # Here the input of the TDSCHA calculation
-LANCZOS_STEPS = 100 # Number of Lanczos step
+LANCZOS_STEPS = 2 # Number of Lanczos step
 USE_THIRD_ORDER = True  # Use the third order in the calculation
 USE_FOURTH_ORDER = True # Use the fourth order (2x computational cost)
 SAVE_EACH = 5 # Save the result each tot steps (for restart)
@@ -40,14 +40,12 @@ SAVE_PREFIX = "tdscha_lanczos" # The name of this calculation
 # Mode ids are ordered as the respective frequencies in the supercell
 # (excluding translations)
 
-MODE_PERTURBATION_ID = 0
+MODE_PERTURBATION_ID = 3
 # 0 => The lowest energy mode of the final sscha matrix (excluding translations)
 
 
 # NOTE: If you want to compute IR or Raman,
 #       go to the code below and uncomment the respective region.
-
-
 
 
 if FINAL_TEMPERATURE is None:

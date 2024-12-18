@@ -81,8 +81,8 @@ try:
     __RyToK__ =  Rydberg / units["kB"]
     
 except:
-    Rydberg = 13.605698066
-    Bohr = 1.889725989
+    Rydberg = 13.605698066 #RY->eV
+    Bohr = 1.889725989 #Angstrom -> Bohr
     __RyToK__ = 157887.32400374097
 
 
@@ -96,7 +96,7 @@ except:
 def f_ups(w, T):
     """
     The eigenvalue of the upsilon matrix as a function of the frequency and the
-    temperature
+    temperature. This is (xi^2_\mu)^-1.
     """
 
     n_w = bose_occupation(w, T)
@@ -108,6 +108,14 @@ def bose_occupation(w, T):
     if T > 0:
         n_w = 1 / (np.exp(w * __RyToK__ / T) - 1)
     return n_w
+
+def xi2(w, T):
+    """
+    The eigenvalue of the inverse upsilon matrix as a function of the frequency and the
+    temperature. This is xi^2_\mu.
+    """
+    return 1. /f_ups(w, T)
+    
 
 # Modes for the calculation
 MODE_FAST_JULIA = 3
@@ -145,11 +153,16 @@ class Lanczos(object):
                 This requires SPGLIB installed.
             select_modes : ndarray(size = n_modes, dtype = bool)
                 A mask for each mode, if False, the mode is neglected. Use this to exclude some modes that you know are not
+<<<<<<< HEAD
                 involved in the calculation. If not specified, all modes are considered by default.
             lo_to_split : string or ndarray
                 Mode of lo_to_splitting. If empty or none, it is LO-TO splitting correction is neglected.
                 If a ndarray is provided, it is the direction of q on which the LO-TO splitting is computed.
 
+=======
+                involved in the calculation. If not specified, all modes are considered by default.  
+            use_wigner: bool, if True Wigner equations are used.
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         """
 
         if is_julia_enabled():
@@ -166,27 +179,44 @@ class Lanczos(object):
         #    order = "F"
 
         # HERE DEFINE ALL THE VARIABLES FOR THE Dynamical Lanczos
+<<<<<<< HEAD
         self.verbose = True
 
+=======
+    
+        # The temperature
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         self.T = 0
+        # Number of atoms in the supercell
         self.nat = 0
+        # The array of masses in the supercell, np.shape = 3 * N_at_sc
         self.m = []
+        # Auxiliary eigenmodes of SCHA
         self.w = []
+        # Auxiliary eigenvectors of SCHA
         self.pols = []
+        # The numbero of modes, translations excluded
         self.n_modes = 0
         self.ignore_harmonic = False 
+        # Ignore D3 and D4
         self.ignore_v3 = False
         self.ignore_v4 = False
+        # Number of configurations
         self.N = 0
+        # The weights from the static calculations
         self.rho = []
+        # Effective number of configurations
         self.N_eff = 0
+        # The satic displacements in the polarization basis
         self.X = []
+        # The static forces in the polarization basis
         self.Y = []
+        # The vector on which we apply Lanczos
         self.psi = []
         self.eigvals = None
         self.eigvects = None
         # In the custom lanczos mode
-        self.a_coeffs = [] #Coefficients on the diagonal
+        self.a_coeffs = [] # Coefficients on the diagonal
         self.b_coeffs = [] # Coefficients close to the diagonal
         self.c_coeffs = [] # Coefficients in the case of the biconjugate Lanczos
         self.krilov_basis = [] # The basis of the krilov subspace
@@ -202,21 +232,35 @@ class Lanczos(object):
         self.N_degeneracy = None
         self.initialized = False
         self.perturbation_modulus = 1
+<<<<<<< HEAD
+=======
+        self.q_vectors = None # The q vectors of each mode
+        # The Phonons object from the ensemble current_dyn
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         self.dyn = None
+        # Unit cell structure
         self.uci_structure = None
+        # Structure for the supercell
         self.super_structure = None
         self.qe_sym = None
         self.L_linop = None
         self.M_linop = None
         self.unwrapped = False
+<<<<<<< HEAD
         self.sym_julia = None
         self.deg_julia = None
         self.n_syms = 1
 
+=======
+        # The static displacements multiplied by the sqrt(masses)
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         self.u_tilde = None
+        # The static forces divided by the sqrt(masses)
         self.f_tilde = None
 
         self.sym_block_id = None
+        
+        self.use_wigner = use_wigner
 
 
         # Setup the attribute control
@@ -247,7 +291,12 @@ class Lanczos(object):
         self.qe_sym.SetupQPoint()
 
         # Get the masses
+<<<<<<< HEAD
         m = self.super_structure.get_masses_array()
+=======
+        m = superdyn.structure.get_masses_array()
+        # np.shape = (N_at_sc, 3) then ravel
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         self.m = np.tile(m, (3,1)).T.ravel()
 
         # Remove the translations
@@ -264,14 +313,15 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
             good_mask = (~trans_mask) & select_modes
 
-        # Get the polarization vectors
+        # Get the frequencies and polarization vectors
         self.w = ws[good_mask]
         self.pols = pols[:, good_mask]
 
         # Correctly reshape the polarization in case only one mode is selected
         if len(self.w) == 1:
             self.pols = self.pols.reshape((len(self.m), 1))
-
+        
+        # Get the number of modes
         self.n_modes = len(self.w)
 
 
@@ -307,7 +357,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         # Reproduce the average force on the full supercell
         f_mean = np.tile(f_mean, (np.prod(ensemble.current_dyn.GetSupercell()), 1)).ravel()
 
-        # Transpform in Bohr
+        # Transform in Bohr
         f_mean *= Ensemble.Bohr
         
         # Subtract also the average force to clean more the stochastic noise
@@ -351,6 +401,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
 
         # Prepare the variable used for the working
+        # The len of psi = N_modes + 0.5 * N_modes * (N_modes + 1) + 0.5 * N_modes * (N_modes + 1)
         len_psi = self.n_modes
         #if self.T < __EPSILON__:
         #    len_psi += self.n_modes**2
@@ -359,21 +410,26 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         #print("N MODES:", self.n_modes)
         #print("LEN PSI:", len_psi)
 
+        # Psi contains R^(1), Upsilon^(1), ReA^(1)
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
+        # For the matrices the code will store only the upper triangle
 
-        # Prepare the L as a linear operator (Prepare the possibility to transpose the matrix)
+        # Prepare the L as a linear operator 
+        # Prepare the possibility to transpose the matrix with L_transp
         def L_transp(psi):
-            return self.apply_full_L(psi, transpose= True)
-        self.L_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = self.apply_full_L, rmatvec = L_transp, dtype = TYPE_DP)
+            return self.apply_full_L(psi, transpose = True)
+        self.L_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)),\
+                                                          matvec = self.apply_full_L, rmatvec = L_transp, dtype = TYPE_DP)
 
         # Define the preconditioner
         def M_transp(psi):
             return self.apply_L1_inverse_FT(psi, transpose = True)
-        self.M_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)), matvec = self.apply_L1_inverse_FT, rmatvec = M_transp, dtype = TYPE_DP)
+        self.M_linop = scipy.sparse.linalg.LinearOperator(shape = (len(self.psi), len(self.psi)),\
+                                                          matvec = self.apply_L1_inverse_FT, rmatvec = M_transp, dtype = TYPE_DP)
 
 
         # Prepare the solution of the Lanczos algorithm
-        self.eigvals = None
+        self.eigvals  = None
         self.eigvects = None 
 
         # Store the basis and the coefficients of the Lanczos procedure
@@ -460,7 +516,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
     
         """
         # Prepare the variable used for the working
-        len_psi = self.n_modes
+        len_psi  = self.n_modes
         len_psi += self.n_modes * (self.n_modes + 1)
         self.psi = np.zeros(len_psi, dtype = TYPE_DP)
         
@@ -674,9 +730,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         if verbose:
             print("Time to create the block_id array: {} s".format(t2-t1))
-
-
-
 
         # Ns, dumb, dump = np.shape(pol_symmetries)
         
@@ -1048,11 +1101,16 @@ File {} not found. S norm not loaded.
         self.prepare_perturbation(new_zeff, masses_exp = -1)
 
 
+<<<<<<< HEAD
     def prepare_perturbation(self, vector, masses_exp = 1, add = False):
         r"""
+=======
+    def prepare_perturbation(self, vector, masses_exp = 1):
+        """
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
         This function prepares the calculation for the Green function
 
-        <v| G|v>
+        <v| G |v>
 
         Where |v> is the vector passed as input. If you want to compute the
         raman, for istance, it can be the vector of the Raman intensities.
@@ -1080,6 +1138,7 @@ File {} not found. S norm not loaded.
                 If true, the perturbation is added on the top of the one already setup.
                 Calling add does not cause a reset of the Lanczos
         """
+<<<<<<< HEAD
         if not add:
             self.reset()
             self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
@@ -1089,6 +1148,17 @@ File {} not found. S norm not loaded.
         print("SHAPE:", m_on.shape, vector.shape, self.pols.shape)
         new_v = np.einsum("a, a, ab->b", m_on, vector, self.pols)
         self.psi[:self.n_modes] += new_v
+=======
+        self.reset()
+
+        self.psi = np.zeros(self.psi.shape, dtype = TYPE_DP)
+
+        # Convert the vector in the polarization space
+        m_on = np.sqrt(self.m) ** masses_exp
+        new_v = np.einsum("a, a, ab -> b", m_on, vector, self.pols)
+        # By doing this we are neglecting the dependece of Eff. Charges/Raman tensor on the postion 
+        self.psi[:self.n_modes] = new_v
+>>>>>>> fa59d66e (Add the possibility to use Wigner representation. Still need to check if everything is ok)
 
         self.perturbation_modulus = new_v.dot(new_v)
 
@@ -1144,7 +1214,7 @@ File {} not found. S norm not loaded.
         """
         Set the psi vector from a given vector of positions [bohr] and a force constant matrix [Ry/bohr^2].
         Used to reset the psi after the symmetrization.
-       """
+        """
 
         new_v = np.einsum("a, ab->b",  np.sqrt(self.m) * vector, self.pols)
         
@@ -1246,20 +1316,38 @@ File {} not found. S norm not loaded.
         #print("out 0 (just end):", out_vect[0])
         return out_vect
 
+    
+    
     def apply_L1_FT(self, transpose = False):
         """
         APPLY THE L1 AT FINITE TEMPERATURE
         ==================================
 
-        This is the first part of the application, it involves only harmonic propagation.
-
+        This is the first part of the application, it involves only HARMONIC propagation.
+        
+        This method applies the harmonic part of the following super matrix: 
+        :: math .
+            \begin{bmatrix}
+            -Z'' &   0  &  0 \\
+            0    &  -X  & -Y \\
+            0    &  -X' & -Y'
+            \end{bmatrix}
+            
+        on a vector in this form:
+        :: math .
+            \begin{bmatrix}
+            \mathcal{R}^{(1)} \\
+            \tilde{\Upsilon}^{(1)} \\
+            \Re \tilde{A}^{(1)}
+            \end{bmatrix}
+        
+        If transpose = True it applies the transpose.
+            
         Results
         -------
             out_vect : ndarray(shape(self.psi))
                 It returns the application of the harmonic part of the L matrix
         """
-
-
         # Prepare the free propagator on the positions
         out_vect = np.zeros(np.shape(self.psi), dtype = TYPE_DP)
 
@@ -1279,8 +1367,14 @@ File {} not found. S norm not loaded.
 
         N_w2 = len(w_a)
 
-        # Get the harmonic responce function
-        out_vect[:self.n_modes] = (self.psi[:self.n_modes] * self.w) * self.w
+        ##############################################
+        # Get the harmonic responce function on R^(1)#
+        ##############################################
+        # Apply the diagonal free propagation 
+        if not self.use_wigner:
+            out_vect[:self.n_modes] = (self.psi[:self.n_modes] * self.w) * self.w
+        else:
+            out_vect[:self.n_modes] = -(self.psi[:self.n_modes] * self.w) * self.w
 
 
         n_a = np.zeros(np.shape(w_a), dtype = TYPE_DP)
@@ -1293,6 +1387,12 @@ File {} not found. S norm not loaded.
         # Apply the non interacting X operator
         start_Y = self.n_modes
         start_A = self.n_modes + N_w2
+        
+        #########################################################################
+        # The R^(1) perturbation ends at start_Y
+        # The Upsilon^(1)/a'^{(1)} perturbation start at start_Y
+        # The ReA^(1)/b'^{(1)} perturbation starts    at start_Y + 0.5*N_modes*(N_modes + 1)
+        ###################################################################################
 
         #print("start_Y: {} | start_A: {} | end_A: {} | len_psi: {}".format(start_Y, start_A, start_A + N_w2, len(self.psi)))
 
@@ -1302,35 +1402,54 @@ The initial vector for the Lanczos algorithm has a wrong dimension.
 This may be caused by the Lanczos initialized at the wrong temperature.
 """
         assert len(self.psi) == start_A + N_w2, ERR_MSG
+        
+        ########################################################
+        # Get the harmonic responce function on Upsilon^(1)-a' #
+        ########################################################
+        if not self.use_wigner:
+            # Apply the diagonal free propagation
+            X_ab_NI = -w_a**2 - w_b**2 - (2*w_a *w_b) /((2*n_a + 1) * (2*n_b + 1))
+            out_vect[start_Y: start_A] = - X_ab_NI * self.psi[start_Y: start_A]
 
-        # Apply the free propagation
-        X_ab_NI = -w_a**2 - w_b**2 - (2*w_a *w_b) /( (2*n_a + 1) * (2*n_b + 1))
-        out_vect[start_Y: start_A] = - X_ab_NI * self.psi[start_Y: start_A]
+            # Apply the off diagonal free propagation
+            Y_ab_NI = - (8 * w_a * w_b) / ( (2*n_a + 1) * (2*n_b + 1))
+            if not transpose:
+                out_vect[start_Y : start_A] += - Y_ab_NI * self.psi[start_A: ]
+            else:
+                out_vect[start_A:] += - Y_ab_NI * self.psi[start_Y : start_A]
 
-        # Perform the same on the A side
-        Y_ab_NI = - (8 * w_a * w_b) / ( (2*n_a + 1) * (2*n_b + 1))
-        if not transpose:
-            out_vect[start_Y : start_A] += - Y_ab_NI * self.psi[start_A: ]
+            #L_operator[start_Y : start_A, start_A:] = - np.diag(Y_ab_NI) * extra_count
+            #L_operator[start_Y + np.arange(self.n_modes**2), start_A + exchange_frequencies] -=  Y_ab_NI / 2
         else:
-            out_vect[start_A:] += - Y_ab_NI * self.psi[start_Y : start_A]
+            # Apply the diagonal free propagation in WIGNER on a'^{(1)}
+            # TODO at T = 0 we must remove this
+            a_harm = -(w_a**2 + w_b**2 - 2. * w_a * w_b)
+            out_vect[start_Y: start_A] = +a_harm * self.psi[start_Y: start_A]
+            
 
-        #L_operator[start_Y : start_A, start_A:] = - np.diag(Y_ab_NI) * extra_count
-        #L_operator[start_Y + np.arange(self.n_modes**2), start_A + exchange_frequencies] -=  Y_ab_NI / 2
+        ####################################################
+        # Get the harmonic responce function on ReA^(1)-b' #
+        ####################################################
+        if not self.use_wigner:
+            # Apply the off diagonal free propagation
+            X1_ab_NI = - (2*n_a*n_b + n_a + n_b) * (2*n_a*n_b + n_a + n_b + 1)*(2 * w_a * w_b) / ( (2*n_a + 1) * (2*n_b + 1))
 
-        X1_ab_NI = - (2*n_a*n_b + n_a + n_b) * (2*n_a*n_b + n_a + n_b + 1)*(2 * w_a * w_b) / ( (2*n_a + 1) * (2*n_b + 1))
+            if not transpose:
+                out_vect[start_A:] += - X1_ab_NI * self.psi[start_Y: start_A]
+            else:
+                out_vect[start_Y: start_A] += - X1_ab_NI * self.psi[start_A:]
+            #L_operator[start_A:, start_Y : start_A] = - np.diag(X1_ab_NI) / 1 * extra_count
+            #L_operator[start_A + np.arange(self.n_modes**2), start_Y + exchange_frequencies] -= X1_ab_NI / 2
 
-        if not transpose:
-            out_vect[start_A:] += - X1_ab_NI * self.psi[start_Y: start_A]
+            # Apply the diagonal free propagation
+            Y1_ab_NI = - w_a**2 - w_b**2 + (2*w_a *w_b) /( (2*n_a + 1) * (2*n_b + 1))
+            out_vect[start_A:] += - Y1_ab_NI * self.psi[start_A:]
+            #L_operator[start_A:, start_A:] = -np.diag(Y1_ab_NI) / 1 * extra_count
+            #L_operator[start_A + np.arange(self.n_modes**2),  start_A + exchange_frequencies] -= Y1_ab_NI / 2
         else:
-            out_vect[start_Y: start_A] += - X1_ab_NI * self.psi[start_A:]
-        #L_operator[start_A:, start_Y : start_A] = - np.diag(X1_ab_NI) / 1 * extra_count
-        #L_operator[start_A + np.arange(self.n_modes**2), start_Y + exchange_frequencies] -= X1_ab_NI / 2
-
-        Y1_ab_NI = - w_a**2 - w_b**2 + (2*w_a *w_b) /( (2*n_a + 1) * (2*n_b + 1))
-        out_vect[start_A:] += - Y1_ab_NI * self.psi[start_A:]
-        #L_operator[start_A:, start_A:] = -np.diag(Y1_ab_NI) / 1 * extra_count
-        #L_operator[start_A + np.arange(self.n_modes**2),  start_A + exchange_frequencies] -= Y1_ab_NI / 2
-
+            # Apply the diagonal free propagation in WIGNER on b'^{(1)}
+            b_harm = -(w_a**2 + w_b**2 + 2. * w_a * w_b)
+            out_vect[start_A:] = +b_harm * self.psi[start_A:]
 
         return out_vect
 
@@ -1511,8 +1630,143 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         out_vect[self.n_modes:] =  psi[self.n_modes:] / Lambda**power
 
         return out_vect
+    
+    
+    
+    
+    
+    def get_chi_minus(self):
+        """
+        Get the chi minus equilibrium tensor in the Wigner formalism.
+        
+        :: math .
+            \tilde{\chi}^{-}_{\mu\nu} = \frac{\hbar\left[\omega_\alpha - \omega_\beta\right]\left[n_\alpha - n_\beta\right]}{2\omega_\alpha\omega_\beta}
+            
+        Results:
+        -------
+            -chi_minus: the chi tensor, np.array with shape = (n_modes, n_modes)
+        
+        """
+        # Prepare the result
+        chi_minus = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
+        
+        # Create the matrix with freqeuncies
+        w = np.tile(self.w, (self.n_modes,1))
+        
+        # Create the Bose-Eninstein occupation number matrix
+        n = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
+        
+        if self.T > __EPSILON__:
+            n = 1.0 / (np.exp(w * 157887.32400374097 / self.T) - 1.0)
+        
+        chi_minus = (w - w.T) * (n - n.T) /(2 * w * w.T)
+        
+        return chi_minus
+    
+    
+    def get_chi_plus(self):
+        """
+        Get the chi plus equilibrium tensor in the Wigner formalism.
+        
+        :: math .
+            \tilde{\chi}^{+}_{\mu\nu} = \frac{\hbar\left[\omega_\alpha + \omega_\beta\right]\left[1 + n_\alpha + n_\beta\right]}{2\omega_\alpha\omega_\beta}
+            
+        Results:
+        -------
+            -chi_plus: the chi tensor, np.array with shape = (n_modes, n_modes)
+        
+        """
+        # Prepare the result
+        chi_plus = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
+        
+        # Create the matrix with freqeuncies
+        w = np.tile(self.w, (self.n_modes,1))
+        
+        # Create the Bose-Eninstein occupation number matrix
+        n = np.zeros((self.n_modes, self.n_modes), dtype = np.double)
+        
+        if self.T > __EPSILON__:
+            n = 1.0 / (np.exp(w * 157887.32400374097 / self.T) - 1.0)
+        
+        chi_plus = (w + w.T) * (1 + n + n.T) /(2 * w * w.T)
+        
+        return chi_plus
+        
 
+    def get_Y1_wigner(self, half_off_diagonal = False):
+        """
+        Get the perturbation on the Y matrix from the psi vector in the Wigner formalism.
+        
+        :: math .
+            \tilde{\Upsilon}^{(1)}_{\mu\nu} = \frac{\omega_\mu \omega_\nu}{\hbar^2 X_{\mu\nu}}
+            \left(\sqrt{-\frac{1}{2}\tilde{\chi}^-_{\mu\nu}} a^{(1)}_{\mu\nu} - \sqrt{\frac{1}{2}\tilde{\chi}^+_{\mu\nu}}  b^{(1)}_{\mu\nu}\right) 
+        
+        """
+        # Where the arrays start
+        start_a = self.n_modes
+        start_b = self.n_modes +  (self.n_modes * (self.n_modes + 1)) // 2
 
+        # Get the perturbed parameters a^(1) and b^(1)
+        a_all = self.psi[start_a : start_b]
+        b_all = self.psi[start_b :]
+        
+        # Get the independent indeces
+        # Avoid the exchange of w_a w_b
+        i_a = np.tile(np.arange(self.n_modes), (self.n_modes,1)).ravel()
+        i_b = np.tile(np.arange(self.n_modes), (self.n_modes,1)).T.ravel()
+
+        new_i_a = np.array([i_a[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        new_i_b = np.array([i_b[i] for i in range(len(i_a)) if i_a[i] >= i_b[i]])
+        
+        w_a = self.w[new_i_a]
+        w_b = self.w[new_i_b]
+
+        n_a = np.zeros(np.shape(len(w_a)), dtype = TYPE_DP)
+        n_b = np.zeros(np.shape(len(w_a)), dtype = TYPE_DP)
+        
+        if self.T > 0:
+            n_a = 1 / (np.exp( w_a / np.double(self.T / __RyToK__)) - 1)
+            n_b = 1 / (np.exp( w_b / np.double(self.T / __RyToK__)) - 1)
+            
+        
+        # Get all the quantities to make the change of variables
+        X         = ((1 + 2 * n_a) * (1 + 2 * n_b) /8)
+        omega2_X  = (w_a * w_b) / X
+        chi_minus = ((w_a - w_b) * (n_a - n_b)) /(2 * w_a * w_b)
+        chi_plus  = ((w_a + w_b) * (1 + n_a + n_b)) /(2 * w_a * w_b)
+        
+        # Now rescale a^(1) 
+        new_a =  omega2_X * np.sqrt(- 0.5 * chi_minus) * a_all
+        # Now rescale b^(1)
+        new_b =  omega2_X * np.sqrt(+ 0.5 * chi_plus)  * b_all
+
+        # Prepare the result
+        Y1 = np.zeros( (self.n_modes, self.n_modes), dtype = np.double)
+        
+        start = 0
+        next = self.n_modes
+        for i in range(self.n_modes):
+            # Get the difference of the rescaled tensor
+            Y1[i, i:] = new_a[start : next] - new_b[start : next]
+            start = next 
+            next = start + self.n_modes - i - 1 
+
+            # Fill symmetric
+            Y1[i, :i] = Y1[:i, i]
+
+        # Normalize each term outside the diagonal
+        if half_off_diagonal:
+            norm_mask = np.ones((self.n_modes, self.n_modes), dtype = np.double) / 2
+            np.fill_diagonal(norm_mask, 1)
+
+            Y1 *= norm_mask
+
+        return  Y1
+    
+    
+    
+    
+    
 
     def get_Y1(self, half_off_diagonal = False):
         """
@@ -1583,8 +1837,10 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         This term involves the anharmonic evolution:
         This calculates self-consistently the evolution from the vector.
-
-
+        This method applies - L_anh |p> (see Eq. (K4) of the Monacelli PRB).
+        
+        N.B.: the sign is changed when the result is returned.
+        
         Parameters
         ----------
             transpose : bool
@@ -1597,39 +1853,53 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 Use this option only for testing purpouses.
         """
         #print("Starting with psi:", self.psi)
-
-        Y1 = self.get_Y1(half_off_diagonal = transpose)
+        
+        # Get the perturbation R^(1)
         R1 = self.psi[: self.n_modes]
+        
+        # Get the perturbation Upsilon^(1)
+        if not self.use_wigner:
+            Y1 = self.get_Y1(half_off_diagonal = transpose)
+        else:
+            # Use the Wigner equations
+            Y1 = self.get_Y1_wigner(half_off_diagonal = transpose)
 
+        # Weights to perform the pertrubed average
         weights = np.zeros(self.N, dtype = np.double)
 
+        if not self.use_wigner:
+            # Create the multiplicative matrices for the rest of the anharmonicity
+            n_mu = 0
+            if self.T > __EPSILON__:
+                n_mu = 1.0 /(np.exp(self.w * 157887.32400374097 / self.T) - 1.0)
+            # Eigenvalues of Upsilon and ReA at equilibrium
+            Y_w   = 2 * self.w / (2 * n_mu + 1)
+            ReA_w = 2 * self.w * n_mu * (n_mu + 1) / (2*n_mu + 1)
 
-        # Create the multiplicative matrices for the rest of the anharmonicity
-        n_mu = 0
-        if self.T > __EPSILON__:
-            n_mu = 1.0 / ( np.exp(self.w * 157887.32400374097 / self.T) - 1.0)
-        Y_w = 2 * self.w / (2 * n_mu + 1)
-        ReA_w = 2 * self.w * n_mu * (n_mu + 1) / (2*n_mu + 1)
+            # Check if we must compute the transpose
+            if transpose:
+                ReA1 = self.get_ReA1(half_off_diagonal = transpose)
 
-        # Check if we must compute the transpose
-        if transpose:
-            ReA1 = self.get_ReA1(half_off_diagonal = transpose)
+                # The equation is
+                # Y^(1)_new = 2 Ya Yb^2 Y^(1) + 2 Yb Ya^2 Y^(1)
+                coeff_Y = np.einsum("a, b, b -> ab", Y_w, Y_w, Y_w)
+                coeff_Y += np.einsum("a, a, b -> ab", Y_w, Y_w, Y_w)
+                coeff_Y *= 2
 
-            # The equation is
-            # Y^(1)_new = 2 Ya Yb^2 Y^(1) + 2 Yb Ya^2 Y^(1)
-            coeff_Y = np.einsum("a, b, b -> ab", Y_w, Y_w, Y_w)
-            coeff_Y += np.einsum("a, a, b -> ab", Y_w, Y_w, Y_w)
-            coeff_Y *= 2
+                coeff_RA = np.einsum("a, b, b -> ab", Y_w, ReA_w, Y_w)
+                coeff_RA += np.einsum("a, a, b -> ab", Y_w, ReA_w, Y_w)
+                coeff_RA *= 2
 
-            coeff_RA = np.einsum("a, b, b -> ab", Y_w, ReA_w, Y_w)
-            coeff_RA += np.einsum("a, a, b -> ab", Y_w, ReA_w, Y_w)
-            coeff_RA *= 2
+                # Get the new perturbation
+                Y1_new = Y1 * coeff_Y + ReA1 * coeff_RA
 
-            # Get the new perturbation
-            Y1_new = Y1 * coeff_Y + ReA1 * coeff_RA
-
-            # Override the old perturbation
-            Y1 = Y1_new
+                # Override the old perturbation
+                Y1 = Y1_new    
+        else:
+            # We are using Wigner equations
+            # Get two array (n_modes,n_modes)
+            chi_minus = self.get_chi_minus()
+            chi_plus  = self.get_chi_plus()
 
 
         #print("X:", self.X)
@@ -1638,8 +1908,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         #print("Y1:", Y1)
         #print("T:", self.T)
 
-        # Compute the average SSCHA force and potential
-        f_pert_av = np.zeros(self.n_modes, dtype = np.double)
+        # Compute the perturbed average of BO potential
+        f_pert_av   = np.zeros(self.n_modes, dtype = np.double)
         d2v_pert_av = np.zeros((self.n_modes, self.n_modes), dtype = np.double, order = "C")
 
         # Check if you need to compute the fourth order
@@ -1663,7 +1933,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         #         j_mode = 0
 
 
-        # Compute the perturbed averages (the time consuming part is HERE)
+        # Compute the perturbed averages (the time consuming part is HERE !!!)
         #print("Entering in get pert...")
         n_syms, _, _ = np.shape(self.symmetries[0])
         #print("DEG:")
@@ -1734,7 +2004,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
         #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
         #print()
 
-        # Compute the average with the old version
+        # Compute the average with the OLD VERSION
         if use_old_version:
             # Get the weights of the perturbation (psi vector)
             sscha_HP_odd.GetWeights(self.X, self.w, R1, Y1, self.T, weights)
@@ -1805,39 +2075,62 @@ Error, the initialization must be called AFTER you change mode to JULIA.
             #print("<f> pert = {}".format(f_pert_av))
             #print("<d2v/dr^2> pert = {}".format(d2v_pert_av))
             #print()
+        
+        
 
-
+        
         # Get the final vector
         final_psi = np.zeros(self.psi.shape, dtype = np.double)
+        
+        # Now get the perturbation for R^(1) (same in Wigner)
         final_psi[:self.n_modes] =  f_pert_av
 
-        if not transpose:
-            # Get the perturbation on Y and Re A
-            pert_Y = np.einsum("ab, a ->ab", d2v_pert_av, Y_w)
-            pert_Y += np.einsum("ab, b -> ab", d2v_pert_av, Y_w)
+        # Prepare the reuslt for Upsilon^(1) and ReA^(1)
+        if not self.use_wigner:
+            if not transpose:
+                # Get the perturbation on D2 * Upsilon + Upsilon * D2
+                pert_Y = np.einsum("ab, a ->ab", d2v_pert_av, Y_w)
+                pert_Y += np.einsum("ab, b -> ab", d2v_pert_av, Y_w)
 
-            pert_RA = np.einsum("ab, a ->ab", d2v_pert_av, ReA_w)
-            pert_RA += np.einsum("ab, b -> ab", d2v_pert_av, ReA_w)
+                # Get the perturbation on D2 * Re A +  Re A* D2
+                pert_RA = np.einsum("ab, a ->ab", d2v_pert_av, ReA_w)
+                pert_RA += np.einsum("ab, b -> ab", d2v_pert_av, ReA_w)
+            else:
+                Y_inv = 1 / Y_w
+                pert_Y = 0.5 * np.einsum("a, ab, b -> ab", Y_inv, d2v_pert_av, Y_inv)
+                pert_RA = np.zeros(pert_Y.shape, dtype = np.double)
+
+                # Now double the off diagonal values of pert_Y and pert_RA
+                # This is to take into account the symmetric storage of psi
+                sym_mask = np.ones(pert_Y.shape) * 2 
+                np.fill_diagonal(sym_mask, 1) 
+                pert_Y  *= sym_mask 
+                pert_RA *= sym_mask
+        # Wigner: prepare the reuslt for a^(1) and b^(1)
         else:
-            Y_inv = 1 / Y_w
-            pert_Y = 0.5 * np.einsum("a, ab, b -> ab", Y_inv, d2v_pert_av, Y_inv)
-            pert_RA = np.zeros(pert_Y.shape, dtype = np.double)
+            # We are using Wigner equations
+            # Propagation for a^(1)
+            pert_Y  = + np.einsum('ab, ab -> ab', np.sqrt(-0.5 * chi_minus), d2v_pert_av)
+            # Propagation for b^(1)
+            pert_RA = - np.einsum('ab, ab -> ab', np.sqrt(+0.5 * chi_plus),  d2v_pert_av)
 
-            # Now double the off diagonal values of pert_Y and pert_RA
-            # This is to take into account the symmetric storage of psi
-            sym_mask = np.ones(pert_Y.shape) * 2 
-            np.fill_diagonal(sym_mask, 1) 
-            pert_Y *= sym_mask 
-            pert_RA *= sym_mask
-
-
-        # Now get the perturbation on the vector
+            
+        #####################
+        # Update the vector #
+        #####################
+        
+        # Note: the code deal with matrices in the following way.
+        # Given a matrix you take the row on the right from the (1,1) element,
+        # then you take the row on the right from the (2,2) element,
+        # then you proceed with the (3,3) element.
+        
+        # Now get the perturbation for Upsilon^(1)-a^(1)
         current = self.n_modes
         for i in range(self.n_modes):
             final_psi[current : current + self.n_modes - i] = pert_Y[i, i:]
             current = current + self.n_modes - i
 
-        # Now process the RA
+        # Now process the pertrubation of ReA^(1)-b^(1)
         for i in range(self.n_modes):
             final_psi[current : current + self.n_modes - i] = pert_RA[i, i:]
             current = current + self.n_modes - i
@@ -1853,7 +2146,10 @@ Error, the initialization must be called AFTER you change mode to JULIA.
 
 
         #print("Output:", final_psi)
-        return -final_psi
+        if not self.use_wigner:
+            return -final_psi
+        else:
+            return +final_psi
 
     def apply_anharmonic_static(self):
         """
@@ -2036,7 +2332,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
 
         return simple_output
 
-    def apply_full_L(self, target=None, force_t_0 = False, force_FT = True, transpose = False, fast_lanczos = True):
+    def apply_full_L(self, target = None, force_t_0 = False, force_FT = True, transpose = False, fast_lanczos = True):
         """
         APPLY THE L 
         ===========
@@ -2090,7 +2386,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
             output = self.apply_L1_FT(transpose)
         t2 = timer()
 
-        # Apply the quck_lanczos
+        # Apply the quick_lanczos
         if fast_lanczos and (not self.ignore_v3):
             output += self.apply_anharmonic_FT(transpose)
             t3 = timer()
@@ -2290,7 +2586,7 @@ Error, the initialization must be called AFTER you change mode to JULIA.
 
 
     def run_biconjugate_gradient(self, verbose = True, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "bicgstab"):
-        r"""
+        """
         STATIC RESPONSE
         ===============
 
@@ -3496,7 +3792,7 @@ Max number of iterations: {}
             use_terminator : bool
                 If true (default) a standard terminator is used.
             last_average : int
-                How many a and be coefficients are averaged to evaluate the terminator?
+                How many a and b coefficients are averaged to evaluate the terminator?
             smearing : float
                 The smearing parameter. If none
         """
@@ -3504,8 +3800,10 @@ Max number of iterations: {}
         n_iters = len(self.a_coeffs)
 
         gf = np.zeros(np.shape(w_array), dtype = np.complex128)
+        
+        # TODO: correct that in Wigner I invert (L + omega^2)
 
-        sign =1
+        sign = 1
         if self.reverse_L:
             sign = -1
 
@@ -3858,6 +4156,11 @@ Max number of iterations: {}
         This method performs the biconjugate Lanczos algorithm to find
         the sequence of a and b and c coefficients that are the tridiagonal representation 
         of the L matrix to be inverted.
+        
+        In Wigner we are computing:
+        
+        :: math .
+            \bra{p}(\mathcal{L} + \omega^2)^{-1}\ket{q}
 
         Parameters
         ----------
@@ -3978,7 +4281,7 @@ Max number of iterations: {}
             print("SHAPE PSI Q, P :", psi_q.shape, psi_p.shape)
 
         next_converged = False
-        for i in range(i_step, i_step+n_iter):
+        for i in range(i_step, i_step + n_iter):
             if verbose:
                 step_txt = """
  ===== NEW STEP %d =====
