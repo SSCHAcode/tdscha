@@ -86,7 +86,7 @@ odd_HP = Extension(name = "sscha_HP_odd",
 
 # Prepare the compilation of the Python Conde
 setup( name = "tdscha",
-       version = "1.4.1",
+       version = "1.5.0",
        description = "Time Dependent Self Consistent Harmonic Approximation",
        author = "Lorenzo Monacelli",
        url = "https://github.com/SSCHAcode/tdscha",
