@@ -1,4 +1,4 @@
-build/temp.linux-x86_64-3.10/CModules/odd_corr_module.o: \
+build/temp.linux-x86_64-cpython-310/CModules/odd_corr_module.o: \
  CModules/odd_corr_module.c /usr/include/python3.10/Python.h \
  /usr/include/python3.10/patchlevel.h /usr/include/python3.10/pyconfig.h \
  /usr/include/python3.10/pymacconfig.h /usr/include/python3.10/pyport.h \
@@ -80,19 +80,19 @@ build/temp.linux-x86_64-3.10/CModules/odd_corr_module.o: \
  /usr/include/python3.10/cpython/fileutils.h \
  /usr/include/python3.10/cpython/pyfpe.h \
  /usr/include/python3.10/tracemalloc.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/arrayobject.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/ndarrayobject.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/ndarraytypes.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/npy_common.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/numpyconfig.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/_numpyconfig.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/npy_endian.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/npy_cpu.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/utils.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/_neighborhood_iterator_imp.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/npy_1_7_deprecated_api.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/old_defines.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/__multiarray_api.h \
- /usr/local/lib/python3.10/dist-packages/numpy/core/include/numpy/npy_interrupt.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/arrayobject.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/ndarrayobject.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/ndarraytypes.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/npy_common.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/numpyconfig.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/_numpyconfig.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/npy_endian.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/npy_cpu.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/utils.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/_neighborhood_iterator_imp.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/npy_1_7_deprecated_api.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/old_defines.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/__multiarray_api.h \
+ /home/antonio/.local/lib/python3.10/site-packages/numpy/core/include/numpy/npy_interrupt.h \
  CModules/LanczosFunctions.h
-commandline: -I/usr/local/lib/python3.10/dist-packages/numpy/core/include -I/usr/local/lib/python3.10/dist-packages/numpy/core/include -Ibuild/src.linux-x86_64-3.10/numpy/distutils/include -I/usr/include/python3.10 -c-fopenmp -g -msse -msse2 -msse3-I/usr/local/lib/python3.10/dist-packages/numpy/core/include -I/usr/local/lib/python3.10/dist-packages/numpy/core/include -Ibuild/src.linux-x86_64-3.10/numpy/distutils/include -I/usr/include/python3.10
+commandline: -I/home/antonio/.local/lib/python3.10/site-packages/numpy/core/include -I/home/antonio/.local/lib/python3.10/site-packages/numpy/core/include -Ibuild/src.linux-x86_64-3.10/numpy/distutils/include -I/usr/include/python3.10 -c-fopenmp -g -msse -msse2 -msse3-I/home/antonio/.local/lib/python3.10/site-packages/numpy/core/include -I/home/antonio/.local/lib/python3.10/site-packages/numpy/core/include -Ibuild/src.linux-x86_64-3.10/numpy/distutils/include -I/usr/include/python3.10
