@@ -331,6 +331,9 @@ class Lanczos(object):
         self.m = np.tile(m, (3,1)).T.ravel()
 
         # Remove the translations
+        if lo_to_split is not None and self.dyn.effective_charges is not None:
+            trans_mask = np.zeros(len(ws), dtype=bool)
+            trans_mask[:3] = True
         if not ensemble.ignore_small_w:
             trans_mask = CC.Methods.get_translations(pols, m)
             good_mask  = ~trans_mask
@@ -1674,7 +1677,9 @@ File {} not found. S norm not loaded.
         ec_size = np.shape(ec)
         MSG = """
         Error, effective charges of the wrong shape: {}
-        """.format(ec_size)
+        Number of modes : {}
+        Dimension of the supercell : {}
+        """.format(ec_size, self.n_modes, n_supercell)
         assert len(ec_size) == 3, MSG
         if not self.ignore_small_w:
             assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3, MSG
