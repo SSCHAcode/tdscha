@@ -1,59 +1,82 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# This workflow will install Python dependencies, run tests and lint with a variety of Python versions
 # For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
 
-name: Python application
+name: Python package
 
 on:
   push:
-    branches: [ Fast_LANCZOS ]
+    branches: [ master ]
   pull_request:
-    branches: [ Fast_LANCZOS ]
+    branches: [ master ]
 
 jobs:
   build:
 
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        python-version: [3.8]
+
+    services:
+      rabbitmq:
+          image: rabbitmq:latest
+          ports:
+          -   5672:5672
+
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.9
+
+    - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v2
       with:
-        python-version: 3.9
+        python-version: ${{ matrix.python-version }}
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 pytest
-        pip install ase spglib==2.2 julia
-        python -c 'import julia; julia.install()'
+        pip install flake8 pytest~=6.0 pgtest~=1.3 aiida-core~=2.3 aiida-quantumespresso~=4.3
+        if [ ${{matrix.python-version}} -eq 2.7 ]; then pip install -r requirements2.txt;
+        else pip install -r requirements.txt; fi
+        aiida-pseudo install
+
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Prepare the installation
+
+    - name: Install
       run: |
         sudo apt-get update
-        # Install the fortran compiler with lapack and blas
-        sudo apt-get install gfortran libblas-dev liblapack-dev build-essential \
-                             mpich libopenmpi-dev libgl1-mesa-glx  libglib2.0-0 \
-                             libboost-all-dev
+        sudo apt-get install git gfortran libblas-dev liblapack-dev mpich
 
-        pip install mpi4py
-                             
-        
         git clone https://github.com/SSCHAcode/CellConstructor.git
-        cd CellConstructor && python setup.py install --user && cd ..
-        rm -r CellConstructor
-        
         git clone https://github.com/SSCHAcode/python-sscha.git
-        cd python-sscha && python setup.py install --user && cd ..
-        rm -r python-sscha
-        
-        MPICC=mpicc python setup.py install --user
-        
-        cd CModules; make; cd ..
+
+        pip install meson meson-python ninja
+        pip install mpi4py
+
+        cd CellConstructor
+        pip install --no-build-isolation .
+        cd ..
+
+        # Install the python-sscha
+        cd python-sscha
+        pip install --no-build-isolation .
+        cd ..
+
+        # Install the tdscha package
+        pip install --no-build-isolation .
+
+        # Install julia requirements
+        python -c 'import julia; julia.install()'
     - name: Test with pytest
+      env:
+        OMP_NUM_THREADS: 1
       run: |
-        pytest
+        cd tests
+        rm -rf __pycache__
+        # Test excluding very long running tests
+        pytest -v -m "not release"

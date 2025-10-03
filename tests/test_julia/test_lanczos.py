@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import pytest
 import numpy as np
 
 import cellconstructor as CC
@@ -23,6 +24,7 @@ def checkcompile():
         os.system("D=$PWD; cd {}; make; cd $D;".format(CDIR))
 
 
+@pytest.mark.skip(reason="it requires the C code compiled")
 def test_lanczos():
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)

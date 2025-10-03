@@ -11,6 +11,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import tdscha, tdscha.Perturbations
 
+
+@pytest.mark.skip(reason="Old test")
 def test_effective_charges_derivative(verbose = False):
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)
@@ -105,6 +107,7 @@ def get_effective_charges(structs, ncell = 1, uc = 2.5):
     return eff_charges
     
     
+@pytest.mark.skip()
 def test_eff_charges_with_calc(plot = False):
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)

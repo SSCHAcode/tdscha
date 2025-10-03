@@ -728,7 +728,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         t1 = time.time()
         if symmetries is None:
-            super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_ase_atoms()), False)
+            super_symmetries = CC.symmetries.GetSymmetriesFromSPGLIB(spglib.get_symmetry(super_structure.get_spglib_cell()), False)
 
         else:
             super_symmetries = symmetries
