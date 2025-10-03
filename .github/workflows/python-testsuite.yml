@@ -55,7 +55,7 @@ jobs:
         git clone https://github.com/SSCHAcode/python-sscha.git
 
         pip install meson meson-python ninja
-        pip install numpy scipy mpi4py spglib
+        pip install numpy scipy mpi4py spglib julia
 
         cd CellConstructor
         pip install --no-build-isolation .
