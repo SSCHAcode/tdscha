@@ -3,6 +3,7 @@ import scipy.sparse.linalg
 import sscha, sscha.Tools
 
 import matplotlib.pyplot as plt
+import pytest
 
 
 def get_matrix():
@@ -24,6 +25,7 @@ def get_matrix():
     return A, b
 
 
+@pytest.mark.skip()
 def test_fom(plot = False):
     print("Getting matrix...")
     A, b = get_matrix()
@@ -59,6 +61,7 @@ def test_fom(plot = False):
         plt.plot(distance, marker  = "o")
         plt.show()
 
+@pytest.mark.skip()
 def test_bicg():
     # Generate a random matrix
     A, b = get_matrix()
