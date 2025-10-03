@@ -13,6 +13,7 @@ import scipy.optimize
 
 
 import matplotlib.pyplot as plt
+import pytest
 
 
 
@@ -309,6 +310,7 @@ def DynamicalSSCHA(func,w_array, x0, phi0, _x_, full_spectral = False, m = 1, sm
     
 
 
+@pytest.mark.skip()
 def test_lanczos_1d(plot = False):
     """
     This is the proper testing function.

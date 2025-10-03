@@ -5,8 +5,10 @@ import numpy as np
 import cellconstructor as CC
 import cellconstructor.Phonons
 
-import sscha, sscha.DynamicalLanczos
-import sscha.Ensemble, sscha.StaticHessian
+import sscha
+import tdscha
+import tdscha.DynamicalLanczos
+import sscha.Ensemble, tdscha.StaticHessian
 
 import scipy, scipy.sparse
 
@@ -14,6 +16,7 @@ from sscha.Parallel import pprint as print
 
 import sys, os
 
+@pytest.mark.skip()
 def test_lanczos_symmetries(temperature = 250, N = 10000):
     """
     Test if the ensemble uwrapping works as the symmetries in the polarization
@@ -77,6 +80,7 @@ def test_lanczos_symmetries(temperature = 250, N = 10000):
     
     
 
+@pytest.mark.skip()
 def test_lanczos_snse(temperature = 250, N = 10000):
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)

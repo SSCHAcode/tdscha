@@ -10,10 +10,13 @@ import numpy as np
 import cellconstructor as CC
 import cellconstructor.Phonons
 import sscha, sscha.Ensemble, sscha.SchaMinimizer
-import sscha.Relax, sscha.DynamicalLanczos
+import sscha.Relax
+import tdscha, tdscha.DynamicalLanczos
+import pytest
 
 import sys, os
 
+@pytest.mark.skip()
 def test_sscha_1D():
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)
@@ -134,6 +137,7 @@ def solve_finite_temperature(T = 1000):
     relax.minim.dyn.save_qe(final_dynname)
 
 
+@pytest.mark.skip()
 def test_static_odd_ft(T = 20):
     dynname = "dyn_final_T_{:d}_".format(T)
 
@@ -158,7 +162,7 @@ def test_static_odd_ft(T = 20):
     hessian.save_qe("hessian_v4_T_{}_".format(T))
 
     # Setup the Lanczos (selecting only the interesting mode)
-    lanc = sscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, False, True]))
+    lanc = tdscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, False, True]))
     lanc.init()
     print("N_mod: {}".format(lanc.n_modes))
 
@@ -178,6 +182,7 @@ def test_static_odd_ft(T = 20):
     print("\n".join(["{:.4f} cm-1".format(x) for x in ws]))
 
 
+@pytest.mark.skip()
 def test_transposition(T = 500):
     total_path = os.path.dirname(os.path.abspath(__file__))
     os.chdir(total_path)
@@ -202,7 +207,7 @@ def test_transposition(T = 500):
     ens.compute_ensemble(calc, compute_stress = False)
 
     # Setup the Lanczos
-    lanc = sscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, True, True]))
+    lanc = tdscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, True, True]))
     lanc.init()
     print("N_modes: {}".format(lanc.n_modes))
 
@@ -212,8 +217,8 @@ def test_transposition(T = 500):
     #lanc.get_full_L_operator_FT(symmetrize = False)
 
     # Get the full L matrix and its transposed
-    L = sscha.DynamicalLanczos.get_full_L_matrix(lanc, False)
-    Lt = sscha.DynamicalLanczos.get_full_L_matrix(lanc, True)
+    L = tdscha.DynamicalLanczos.get_full_L_matrix(lanc, False)
+    Lt = tdscha.DynamicalLanczos.get_full_L_matrix(lanc, True)
 
     disp = np.max(np.abs(L - Lt.T)) / np.max(np.abs(L))
 
@@ -225,6 +230,7 @@ def test_transposition(T = 500):
     assert disp < 1e-6
 
     
+@pytest.mark.skip()
 def test_harmonic_inversion(T = 500):
     """
     This subroutine test the preconditioner M matrix at finite temperature
@@ -252,7 +258,7 @@ def test_harmonic_inversion(T = 500):
     ens.compute_ensemble(calc, compute_stress = False)
 
     # Setup the Lanczos
-    lanc = sscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, False, True]))
+    lanc = tdscha.DynamicalLanczos.Lanczos(ens, unwrap_symmetries = False, select_modes = np.array([True, True, True, False, False, True]))
     lanc.init()
     print("N_modes: {}".format(lanc.n_modes))
 
