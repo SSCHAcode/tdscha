@@ -1,7 +1,5 @@
-setuptools
 numpy
 scipy
-ase
 spglib
 cellconstructor
 python-sscha
