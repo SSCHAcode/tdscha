@@ -150,16 +150,16 @@ static PyObject *ApplyV3ToDyn(PyObject * self, PyObject * args) {
   }
 
   // Retrive the pointer to the data from the python object
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  rho = (double*) PyArray_DATA(npy_rho);
-  w = (double*) PyArray_DATA(npy_omega);
-  input = (double*) PyArray_DATA(npy_input);
-  output = (double*) PyArray_DATA(npy_output);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA((PyArrayObject*)npy_Y);
+  rho = (double*) PyArray_DATA((PyArrayObject*)npy_rho);
+  w = (double*) PyArray_DATA((PyArrayObject*)npy_omega);
+  input = (double*) PyArray_DATA((PyArrayObject*)npy_input);
+  output = (double*) PyArray_DATA((PyArrayObject*)npy_output);
 
   // Read the symmetries
-  symmetries = (double*)PyArray_DATA(npy_symmetries);
-  n_deg = (int*)PyArray_DATA(npy_n_deg);
+  symmetries = (double*)PyArray_DATA((PyArrayObject*)npy_symmetries);
+  n_deg = (int*)PyArray_DATA((PyArrayObject*)npy_n_deg);
 
   // Build the degeneracy space
   good_deg_space = (int **) malloc(sizeof(int*) * N_modes);
@@ -169,7 +169,7 @@ static PyObject *ApplyV3ToDyn(PyObject * self, PyObject * args) {
   for (i = 0; i < N_modes;++i) {
     good_deg_space[i] = (int*) malloc(sizeof(int) * n_deg[i]);
     for (j = 0; j < n_deg[i]; ++j) {
-      good_deg_space[i][j] = ((int*) PyArray_DATA(npy_deg_space))[counter++];
+      good_deg_space[i][j] = ((int*) PyArray_DATA((PyArrayObject*)npy_deg_space))[counter++];
     }
   }
 
@@ -252,16 +252,16 @@ static PyObject *ApplyV3_FT(PyObject * self, PyObject * args) {
   }
 
   // Retrive the pointer to the data from the python object
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  rho = (double*) PyArray_DATA(npy_rho);
-  w = (double*) PyArray_DATA(npy_omega);
-  input = (double*) PyArray_DATA(npy_input);
-  output = (double*) PyArray_DATA(npy_output);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA((PyArrayObject*)npy_Y);
+  rho = (double*) PyArray_DATA((PyArrayObject*)npy_rho);
+  w = (double*) PyArray_DATA((PyArrayObject*)npy_omega);
+  input = (double*) PyArray_DATA((PyArrayObject*)npy_input);
+  output = (double*) PyArray_DATA((PyArrayObject*)npy_output);
 
   // Read the symmetries
-  symmetries = (double*)PyArray_DATA(npy_symmetries);
-  n_deg = (int*)PyArray_DATA(npy_n_deg);
+  symmetries = (double*)PyArray_DATA((PyArrayObject*)npy_symmetries);
+  n_deg = (int*)PyArray_DATA((PyArrayObject*)npy_n_deg);
 
   // Build the degeneracy space
   good_deg_space = (int **) malloc(sizeof(int*) * N_modes);
@@ -275,7 +275,7 @@ static PyObject *ApplyV3_FT(PyObject * self, PyObject * args) {
     good_deg_space[i] = (int*) malloc(sizeof(int) * n_deg[i]);
       if (DEB) printf("Mode %d -> ", i);
     for (j = 0; j < n_deg[i]; ++j) {
-      good_deg_space[i][j] = ((int*) PyArray_DATA(npy_deg_space))[counter++];
+      good_deg_space[i][j] = ((int*) PyArray_DATA((PyArrayObject*)npy_deg_space))[counter++];
       if (DEB) printf(" %d ", good_deg_space[i][j]);
     }
     if (DEB) printf("\n");
@@ -339,12 +339,12 @@ static PyObject *GetWeights(PyObject * self, PyObject * args) {
   }
 
   // Retrive the pointer to the data from the python object
-  X = (double*) PyArray_DATA(npy_X);
-  R1 = (double*) PyArray_DATA(npy_R1);
-  Y1 = (double*) PyArray_DATA(npy_Y1);
-  w = (double*) PyArray_DATA(npy_omega);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  R1 = (double*) PyArray_DATA((PyArrayObject*)npy_R1);
+  Y1 = (double*) PyArray_DATA((PyArrayObject*)npy_Y1);
+  w = (double*) PyArray_DATA((PyArrayObject*)npy_omega);
 
-  weights = (double*) PyArray_DATA(npy_weights);
+  weights = (double*) PyArray_DATA((PyArrayObject*)npy_weights);
 
   get_weights(X, w, R1, Y1, T, N_modes, N_configs, weights);
 
@@ -389,12 +389,12 @@ static PyObject *Get_D2DR2_PertV(PyObject * self, PyObject * args) {
   }
 
   // Retrive the pointer to the data from the python object
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  rho = (double*) PyArray_DATA(npy_rho);
-  w = (double*) PyArray_DATA(npy_omega);
-  weights = (double*) PyArray_DATA(npy_weights);
-  d2vdr2 = (double*) PyArray_DATA(npy_d2vdr2);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA((PyArrayObject*)npy_Y);
+  rho = (double*) PyArray_DATA((PyArrayObject*)npy_rho);
+  w = (double*) PyArray_DATA((PyArrayObject*)npy_omega);
+  weights = (double*) PyArray_DATA((PyArrayObject*)npy_weights);
+  d2vdr2 = (double*) PyArray_DATA((PyArrayObject*)npy_d2vdr2);
 
   // Apply the method
   get_d2v_dR2_pert(X, Y, w, weights, rho, T, N_modes, N_configs, d2vdr2);
@@ -578,8 +578,8 @@ static PyObject * Get_Perturb_AveragesSym(PyObject * self, PyObject * args) {
   //printf("I'm here, %s:%d\n", __FILE__, __LINE__);
 
   for (i = 0; i < n_blocks; ++i) {
-    good_deg_space[i] = (int*)  PyArray_DATA( PyList_GetItem(sym_basis_list, i)); //malloc(sizeof(int) * n_deg[i]);
-    good_syms[i] = (double*) PyArray_DATA( PyList_GetItem(sym_list, i)) ;  // malloc(sizeof(double) * n_deg[i] * n_deg[i] * N_syms);
+    good_deg_space[i] = (int*)  PyArray_DATA((PyArrayObject*) PyList_GetItem(sym_basis_list, i)); //malloc(sizeof(int) * n_deg[i]);
+    good_syms[i] = (double*) PyArray_DATA( (PyArrayObject*)PyList_GetItem(sym_list, i)) ;  // malloc(sizeof(double) * n_deg[i] * n_deg[i] * N_syms);
 
     /*
     printf("Block:\n");
@@ -1081,9 +1081,9 @@ static PyObject * GetV3(PyObject * self, PyObject * args) {
   // Convert the array
   //numpy_array = PyArray_FROM_OTF(bare_array, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY);
 
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  v3 = (double*) PyArray_DATA(npy_v3);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA((PyArrayObject*)npy_Y);
+  v3 = (double*) PyArray_DATA((PyArrayObject*)npy_v3);
 
 
   int i;
@@ -1169,11 +1169,11 @@ static PyObject * ApplyV4(PyObject * self, PyObject * args) {
   // Convert the array
   //numpy_array = PyArray_FROM_OTF(bare_array, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY);
 
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  Lambda = (double*) PyArray_DATA(npy_Lambda);
-  v_in = (double*) PyArray_DATA(npy_vin);
-  v_out = (double*) PyArray_DATA(npy_vout);
+  X = (double*) PyArray_DATA((PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA((PyArrayObject*)npy_Y);
+  Lambda = (double*) PyArray_DATA((PyArrayObject*)npy_Lambda);
+  v_in = (double*) PyArray_DATA((PyArrayObject*)npy_vin);
+  v_out = (double*) PyArray_DATA((PyArrayObject*)npy_vout);
 
   int i;
   int a, b, c, d;
@@ -1273,11 +1273,11 @@ static PyObject * GetV4(PyObject * self, PyObject * args) {
   // Convert the array
   //numpy_array = PyArray_FROM_OTF(bare_array, NPY_DOUBLE, NPY_ARRAY_IN_ARRAY);
 
-  X = (double*) PyArray_DATA(npy_X);
-  Y = (double*) PyArray_DATA(npy_Y);
-  rows = (int*) PyArray_DATA(npy_rows);
-  cols = (int*) PyArray_DATA(npy_cols);
-  v4_out = (double*) PyArray_DATA(npy_v4out);
+  X = (double*) PyArray_DATA( (PyArrayObject*)npy_X);
+  Y = (double*) PyArray_DATA( (PyArrayObject*)npy_Y);
+  rows = (int*) PyArray_DATA( (PyArrayObject*)npy_rows);
+  cols = (int*) PyArray_DATA( (PyArrayObject*)npy_cols);
+  v4_out = (double*) PyArray_DATA((PyArrayObject*)npy_v4out);
 
   int i;
   int a, b, c, d;
