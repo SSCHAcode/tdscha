@@ -13,6 +13,7 @@ import sscha.Ensemble, tdscha.StaticHessian
 import scipy, scipy.sparse
 
 from sscha.Parallel import pprint as print
+import pytest
 
 import sys, os
 
