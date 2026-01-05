@@ -1,6 +1,6 @@
 project('tdscha',
   ['c'],
-  version: '1.5.0',
+  version: '1.5.1',
   license: 'GPL',
   meson_version: '>= 1.1.0', # <- set min version of meson.
   default_options : [
@@ -126,7 +126,8 @@ py.install_sources(
       'Modules/Perturbations.py',
       'Modules/StaticHessian.py',
       'Modules/tdscha_core.jl',
-      'Modules/Tools.py'
+      'Modules/Tools.py',
+      'Modules/cli.py'
     ],
     subdir: 'tdscha'
 )

@@ -33,7 +33,7 @@ The smearing is in cm-1
 def print_usage():
     print(MSG)
 
-def main():
+def tdscha_convergence_analysis():
     # Get from command line the last lanczos step
     if not len(sys.argv) in [2, 3]:
         print("Error, require the Lanczos .npz (or .abc) file to be analyzed, and (optionally) the smearing [cm-1]")
@@ -162,4 +162,4 @@ def main():
 
 if __name__ == "__main__":
     print_usage()
-    main()
+    tdscha_convergence_analysis()

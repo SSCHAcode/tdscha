@@ -11,7 +11,7 @@ build-backend = "mesonpy"
 [project]
 # Project metadata, which was previously in the `setup()` call of setup.py.
 name = "tdscha"
-version = "1.5.0" # Make sure this version matches meson.build
+version = "1.5.1" # Make sure this version matches meson.build
 description = "Time Dependent Self Consistent Harmonic Approximation"
 authors = [{name = "Lorenzo Monacelli"}]
 readme = "README.md"
@@ -38,6 +38,12 @@ dependencies = [
     # other than numpy, ase, or scipy (and not a system library like BLAS/LAPACK),
     # it would go here.
 ]
+
+[project.scripts]
+tdscha-convergence-analysis="tdscha.cli:tdscha_convergence_analysis"
+tdscha-plot-data="tdscha.cli:plot"
+tdscha-output2abc="tdscha.cli:convert"
+tdscha-hessian-convergence="tdscha.cli:plot_hessian_convergence"
 
 [project.urls]
 Homepage = "https://sscha.eu/"
