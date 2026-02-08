@@ -294,7 +294,13 @@ class Lanczos(object):
         self.f_tilde = None
 
         self.sym_block_id = None
-        
+
+        # Gamma-only optimization: use only point-group symmetries in replicas,
+        # impose translations directly on f_pert_av and d2v_pert_av
+        self.gamma_only = False
+        self.trans_projector = None    # (n_modes, n_modes) matrix P = (1/n_cells) Σ_R T_R^mode
+        self.trans_operators = None    # list of (n_modes, n_modes) T_R^mode matrices
+
         # Set to True if we want to use the Wigner equations
         self.use_wigner = use_wigner
         
@@ -738,6 +744,46 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         if verbose:
             print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
 
+        # Gamma-only optimization: separate point-group and translational symmetries
+        if self.gamma_only:
+            n_total_syms = len(super_symmetries)
+            identity = np.eye(3)
+            translations = []
+            unique_rotations = {}
+            for sym in super_symmetries:
+                rot = sym[:, :3]
+                rot_key = np.round(rot, 8).tobytes()
+                if np.allclose(rot, identity, atol=1e-8):
+                    translations.append(sym)
+                if rot_key not in unique_rotations:
+                    unique_rotations[rot_key] = sym
+            pg_symmetries = list(unique_rotations.values())
+
+            if verbose:
+                print("Gamma-only: {} PG syms instead of {} total (speedup: {}x)".format(
+                    len(pg_symmetries), n_total_syms, n_total_syms // max(len(pg_symmetries), 1)))
+
+            # Build translation operators in mode space: T_R^mode = pols^T @ P_R @ pols
+            self.trans_operators = []
+            nat_sc = super_structure.N_atoms
+            for t_sym in translations:
+                irt = CC.symmetries.GetIRT(super_structure, t_sym)
+                # Build Cartesian permutation matrix P_R (3*nat_sc x 3*nat_sc)
+                P_R = np.zeros((3 * nat_sc, 3 * nat_sc), dtype=np.double)
+                for i_at in range(nat_sc):
+                    j_at = irt[i_at]
+                    P_R[3*j_at:3*j_at+3, 3*i_at:3*i_at+3] = np.eye(3)
+                # Project into mode space
+                T_mode = self.pols.T @ P_R @ self.pols  # (n_modes, n_modes)
+                self.trans_operators.append(T_mode)
+
+            self.trans_projector = np.mean(self.trans_operators, axis=0)
+
+            if verbose:
+                print("Built {} translation operators in mode space".format(len(translations)))
+
+            # Replace super_symmetries with PG-only for the rest of the function
+            super_symmetries = pg_symmetries
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
@@ -3048,6 +3094,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         # Compute the perturbed averages (the time consuming part is HERE !!!)
         #print("Entering in get pert...")
+        _t_pert_start = time.time()
         n_syms, _, _ = np.shape(self.symmetries[0])
         #print("DEG:")
         #print(self.degenerate_space)
@@ -3110,9 +3157,26 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
+        _t_pert_end = time.time()
+        if self.verbose:
+            print("Time for perturb averages (n_syms={}): {:.6f} s".format(n_syms, _t_pert_end - _t_pert_start))
 
-            
-              
+        # Gamma-only: impose translational symmetry on the perturbed averages
+        if self.gamma_only and self.trans_projector is not None:
+            _t_trans_start = time.time()
+            # Project f_pert_av: P_trans @ f
+            f_pert_av = self.trans_projector @ f_pert_av
+
+            # Project d2v_pert_av: (1/n_cells) Σ_R T_R @ d2v @ T_R^T
+            n_cells = len(self.trans_operators)
+            d2v_proj = np.zeros_like(d2v_pert_av)
+            for T_R in self.trans_operators:
+                d2v_proj += T_R @ d2v_pert_av @ T_R.T
+            d2v_pert_av = d2v_proj / n_cells
+            _t_trans_end = time.time()
+            if self.verbose:
+                print("Time for translational projection: {:.6f} s".format(_t_trans_end - _t_trans_start))
+
         # OLD PART OF THE CODE
         #print("D2V:")
         #np.set_printoptions(threshold = 10000)
@@ -3554,8 +3618,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         if self.verbose:
             print("Time to apply the full L: {}".format(t4 - t1))
-        #print("Time to apply L2: {}".format(t3-t2))
-        #print("Time to apply L3: {}".format(t4-t3))
+            print("  Harmonic part (L1): {:.6f} s".format(t2 - t1))
+            print("  Anharmonic part:    {:.6f} s".format(t4 - t2))
 
         # Apply the shift reverse
         #print ("Output before:")
