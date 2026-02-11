@@ -1,0 +1,581 @@
+WARNING: redefinition of constant Main._cached_symmetries. This may fail, cause incorrect answers, or produce other errors.
+WARNING: redefinition of constant Main._cached_symmetries. This may fail, cause incorrect answers, or produce other errors.
+/home/darth-vader/micromamba/envs/sscha/lib/python3.13/site-packages/cellconstructor/Phonons.py:3678: UserWarning: WARNING: Requested LO-TO splitting without effective charges. LO-TO ignored.
+  warnings.warn("WARNING: Requested LO-TO splitting without effective charges. LO-TO ignored.")
+/home/darth-vader/micromamba/envs/sscha/lib/python3.13/site-packages/cellconstructor/ForceTensor.py:255: ComplexWarning: Casting complex values to real discards the imaginary part
+  self.tensor[i_block, 3*na1:3*na1+3, 3*na2: 3*na2+3] = tensor[3*na1 : 3*na1+3, 3*nat2_sc : 3*nat2_sc + 3]
+Replicating ensemble: N = 10
+  After merge 1: N = 20
+  After merge 2: N = 40
+  After merge 3: N = 80
+  After merge 4: N = 160
+  After merge 5: N = 320
+
+===== SYSTEM INFO =====
+N_configs = 320
+N_STEPS = 5
+
+Warming up Julia JIT (3 steps each)...
+Generating Real space force constant matrix...
+Time to generate the real space force constant matrix: 0.006406068801879883 s
+TODO: the last time could be speedup with the FFT algorithm.
+Time to get the symmetries [384] from spglib: 0.03411602973937988 s
+Time to convert symmetries in the polarizaion space: 0.18139076232910156 s
+Time to create the block_id array: 0.0010814666748046875 s
+SHAPE: (48,) (48,) (48, 45)
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? False
+Should I ignore the fourth order effect? False
+Should I use the Wigner formalism? False
+Should I use a standard Lanczos? False
+Max number of iterations: 3
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 4.842703 s
+Time to apply the full L: 4.844681257993216
+  Harmonic part (L1): 0.001642 s
+  Anharmonic part:    4.843039 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 1.341841 s
+Time to apply the full L: 1.3440536800044356
+  Harmonic part (L1): 0.001611 s
+  Anharmonic part:    1.342443 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = 2.19582445e-07
+b_0 = 4.02760249e-11
+c_0 = 1.57338892e-02
+
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 1.991932 s
+Time to apply the full L: 1.9938618810047046
+  Harmonic part (L1): 0.001607 s
+  Anharmonic part:    1.992255 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.125466 s
+Time to apply the full L: 2.1276821439969353
+  Harmonic part (L1): 0.001621 s
+  Anharmonic part:    2.126062 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = 3.64686973e-06
+b_1 = 8.35590393e-07
+c_1 = 9.04988012e-07
+
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.028886 s
+Time to apply the full L: 2.030827454997052
+  Harmonic part (L1): 0.001604 s
+  Anharmonic part:    2.029223 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.032960 s
+Time to apply the full L: 2.0351362899964442
+  Harmonic part (L1): 0.001602 s
+  Anharmonic part:    2.033535 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = 3.05340495e-06
+b_2 = 5.08952925e-07
+c_2 = 2.46819278e-06
+
+Lanczos step 3 ultimated.
+Generating Real space force constant matrix...
+Time to generate the real space force constant matrix: 0.005834817886352539 s
+TODO: the last time could be speedup with the FFT algorithm.
+Time to get the symmetries [384] from spglib: 0.03711104393005371 s
+Gamma-only: 48 PG syms instead of 384 total (speedup: 8x)
+Built 8 translation operators in mode space
+Time to convert symmetries in the polarizaion space: 0.041761159896850586 s
+Time to create the block_id array: 0.0010576248168945312 s
+SHAPE: (48,) (48,) (48, 45)
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? False
+Should I ignore the fourth order effect? False
+Should I use the Wigner formalism? False
+Should I use a standard Lanczos? False
+Max number of iterations: 3
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.171260 s
+Time for translational projection: 0.000335 s
+Time to apply the full L: 0.17359263099933742
+  Harmonic part (L1): 0.001668 s
+  Anharmonic part:    0.171925 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.164787 s
+Time for translational projection: 0.000342 s
+Time to apply the full L: 0.16729114299960202
+  Harmonic part (L1): 0.001610 s
+  Anharmonic part:    0.165681 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = 2.19582445e-07
+b_0 = 4.02760249e-11
+c_0 = 1.57338892e-02
+
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.250525 s
+Time for translational projection: 0.000411 s
+Time to apply the full L: 0.25288777399691753
+  Harmonic part (L1): 0.001604 s
+  Anharmonic part:    0.251284 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.251338 s
+Time for translational projection: 0.000336 s
+Time to apply the full L: 0.25408340799913276
+  Harmonic part (L1): 0.001834 s
+  Anharmonic part:    0.252250 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = 3.64686973e-06
+b_1 = 8.35590393e-07
+c_1 = 9.04988012e-07
+
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.250137 s
+Time for translational projection: 0.000337 s
+Time to apply the full L: 0.25240190700424137
+  Harmonic part (L1): 0.001607 s
+  Anharmonic part:    0.250795 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.249319 s
+Time for translational projection: 0.000358 s
+Time to apply the full L: 0.25186119400314055
+  Harmonic part (L1): 0.001615 s
+  Anharmonic part:    0.250246 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = 3.05340495e-06
+b_2 = 5.08952925e-07
+c_2 = 2.46819278e-06
+
+Lanczos step 3 ultimated.
+Warmup done.
+
+
+Benchmarking FULL symmetries (5 steps, 320 configs)...
+Generating Real space force constant matrix...
+Time to generate the real space force constant matrix: 0.00735926628112793 s
+TODO: the last time could be speedup with the FFT algorithm.
+Time to get the symmetries [384] from spglib: 0.03316664695739746 s
+Time to convert symmetries in the polarizaion space: 0.17981338500976562 s
+Time to create the block_id array: 0.0009887218475341797 s
+SHAPE: (48,) (48,) (48, 45)
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? False
+Should I ignore the fourth order effect? False
+Should I use the Wigner formalism? False
+Should I use a standard Lanczos? False
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 1.343724 s
+Time to apply the full L: 1.3457251450017793
+  Harmonic part (L1): 0.001672 s
+  Anharmonic part:    1.344053 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 1.373011 s
+Time to apply the full L: 1.3751837749950937
+  Harmonic part (L1): 0.001603 s
+  Anharmonic part:    1.373581 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = 2.19582445e-07
+b_0 = 4.02760249e-11
+c_0 = 1.57338892e-02
+
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.039971 s
+Time to apply the full L: 2.042069982002431
+  Harmonic part (L1): 0.001772 s
+  Anharmonic part:    2.040298 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.018873 s
+Time to apply the full L: 2.0210351499990793
+  Harmonic part (L1): 0.001612 s
+  Anharmonic part:    2.019423 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = 3.64686973e-06
+b_1 = 8.35590393e-07
+c_1 = 9.04988012e-07
+
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.023523 s
+Time to apply the full L: 2.025446223000472
+  Harmonic part (L1): 0.001606 s
+  Anharmonic part:    2.023840 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.295845 s
+Time to apply the full L: 2.298011870996561
+  Harmonic part (L1): 0.001594 s
+  Anharmonic part:    2.296418 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = 3.05340495e-06
+b_2 = 5.08952925e-07
+c_2 = 2.46819278e-06
+
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.024043 s
+Time to apply the full L: 2.026116342000023
+  Harmonic part (L1): 0.001714 s
+  Anharmonic part:    2.024402 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.010940 s
+Time to apply the full L: 2.0133006980031496
+  Harmonic part (L1): 0.001775 s
+  Anharmonic part:    2.011526 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = 5.94204211e-07
+b_3 = 1.33078552e-06
+c_3 = 2.50651979e-07
+
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.228897 s
+Time to apply the full L: 2.230953924001369
+  Harmonic part (L1): 0.001709 s
+  Anharmonic part:    2.229245 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=384): 2.125687 s
+Time to apply the full L: 2.1279441469960148
+  Harmonic part (L1): 0.001673 s
+  Anharmonic part:    2.126272 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = 3.22937208e-06
+b_4 = 7.24289702e-07
+c_4 = 6.59744344e-07
+
+Lanczos step 5 ultimated.
+
+Benchmarking GAMMA-ONLY (5 steps, 320 configs)...
+Generating Real space force constant matrix...
+Time to generate the real space force constant matrix: 0.006882190704345703 s
+TODO: the last time could be speedup with the FFT algorithm.
+Time to get the symmetries [384] from spglib: 0.03345155715942383 s
+Gamma-only: 48 PG syms instead of 384 total (speedup: 8x)
+Built 8 translation operators in mode space
+Time to convert symmetries in the polarizaion space: 0.04170060157775879 s
+Time to create the block_id array: 0.0010294914245605469 s
+SHAPE: (48,) (48,) (48, 45)
+
+<=====================================>
+|                                     |
+|          LANCZOS ALGORITHM          |
+|                                     |
+<=====================================>
+
+Starting the algorithm. It may take a while.
+Starting from step 0
+
+
+Should I ignore the third order effect? False
+Should I ignore the fourth order effect? False
+Should I use the Wigner formalism? False
+Should I use a standard Lanczos? False
+Max number of iterations: 5
+
+
+ ===== NEW STEP 1 =====
+
+ 
+Length of the coefficiets: a = 0, b = 0
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.173815 s
+Time for translational projection: 0.000328 s
+Time to apply the full L: 0.17617927199898986
+  Harmonic part (L1): 0.001703 s
+  Anharmonic part:    0.174476 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.165468 s
+Time for translational projection: 0.000357 s
+Time to apply the full L: 0.16800845700345235
+  Harmonic part (L1): 0.001607 s
+  Anharmonic part:    0.166401 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_0 = 2.19582445e-07
+b_0 = 4.02760249e-11
+c_0 = 1.57338892e-02
+
+Lanczos step 1 ultimated.
+
+ ===== NEW STEP 2 =====
+
+ 
+Length of the coefficiets: a = 1, b = 1
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.256143 s
+Time for translational projection: 0.000428 s
+Time to apply the full L: 0.25885150999965845
+  Harmonic part (L1): 0.001867 s
+  Anharmonic part:    0.256985 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.249368 s
+Time for translational projection: 0.000327 s
+Time to apply the full L: 0.2524064319950412
+  Harmonic part (L1): 0.002044 s
+  Anharmonic part:    0.250362 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_1 = 3.64686973e-06
+b_1 = 8.35590393e-07
+c_1 = 9.04988012e-07
+
+Lanczos step 2 ultimated.
+
+ ===== NEW STEP 3 =====
+
+ 
+Length of the coefficiets: a = 2, b = 2
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.248533 s
+Time for translational projection: 0.000338 s
+Time to apply the full L: 0.25081138699897565
+  Harmonic part (L1): 0.001623 s
+  Anharmonic part:    0.249188 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.247658 s
+Time for translational projection: 0.000431 s
+Time to apply the full L: 0.2503369659971213
+  Harmonic part (L1): 0.001628 s
+  Anharmonic part:    0.248709 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_2 = 3.05340495e-06
+b_2 = 5.08952925e-07
+c_2 = 2.46819278e-06
+
+Lanczos step 3 ultimated.
+
+ ===== NEW STEP 4 =====
+
+ 
+Length of the coefficiets: a = 3, b = 3
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.252399 s
+Time for translational projection: 0.000340 s
+Time to apply the full L: 0.25500352500239387
+  Harmonic part (L1): 0.001940 s
+  Anharmonic part:    0.253063 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.252211 s
+Time for translational projection: 0.000334 s
+Time to apply the full L: 0.25472669600276276
+  Harmonic part (L1): 0.001626 s
+  Anharmonic part:    0.253101 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_3 = 5.94204211e-07
+b_3 = 1.33078552e-06
+c_3 = 2.50651979e-07
+
+Lanczos step 4 ultimated.
+
+ ===== NEW STEP 5 =====
+
+ 
+Length of the coefficiets: a = 4, b = 4
+
+Running the BICONJUGATE Lanczos with standard representation!
+
+
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.249842 s
+Time for translational projection: 0.000339 s
+Time to apply the full L: 0.2521105989944772
+  Harmonic part (L1): 0.001617 s
+  Anharmonic part:    0.250493 s
+Applying the anharmonic part of L
+Time for perturb averages (n_syms=48): 0.250996 s
+Time for translational projection: 0.000348 s
+Time to apply the full L: 0.25351691300602397
+  Harmonic part (L1): 0.001619 s
+  Anharmonic part:    0.251898 s
+Time to perform the Gram-Schmidt and retrive the coefficients: 0 s
+
+a_4 = 3.22937208e-06
+b_4 = 7.24289702e-07
+c_4 = 6.59744344e-07
+
+Lanczos step 5 ultimated.
+
+===== TIMING RESULTS =====
+N_configs:                320
+Full symmetries:  n_syms = 384 (n_total = 122880)
+Gamma-only:       n_syms = 48 (n_total = 15360)
+Wall time (full):        19.5 s  (3.9014 s/step)
+Wall time (gamma-only):  2.4 s  (0.4747 s/step)
+Speedup factor:          8.22x
+
+
+GREEN FUNCTION FROM CONTINUED FRACTION
+Am I using Wigner? False
+Should I use the terminator? False
+Perturbation modulus = 0.0001427262798658295
+Sign = 1
+
+
+GREEN FUNCTION FROM CONTINUED FRACTION
+Am I using Wigner? False
+Should I use the terminator? False
+Perturbation modulus = 0.0001427262798658295
+Sign = 1
+
+Figures saved in report/
+Done.

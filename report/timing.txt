@@ -1,0 +1,11 @@
+n_configs 320
+n_syms_full 384
+n_syms_gamma 48
+n_total_full 122880
+n_total_gamma 15360
+wall_full 19.5
+wall_gamma 2.4
+avg_step_full 3.9014
+avg_step_gamma 0.4747
+speedup 8.22
+n_steps 5

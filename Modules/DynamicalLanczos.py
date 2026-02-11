@@ -816,6 +816,10 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 self.sym_julia[i, :, :c, :c] = sblock
                 self.deg_julia[i, :c] = self.degenerate_space[i]
 
+            # Pre-build and cache sparse symmetry matrices in Julia
+            julia.Main.init_sparse_symmetries(
+                self.sym_julia, self.N_degeneracy, self.deg_julia, self.sym_block_id)
+
         # Create the mapping between the modes and the block id.
         t1 = time.time()
         for i in range(self.n_modes):
@@ -3115,44 +3119,44 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 raise ValueError(MSG)
                 
                 
-            # Prepare the parallelization function
-            def get_f_proc(start_end):
+            # Prepare the combined parallelization function
+            # Pack both results (f vector + d2v matrix) into a single flat array
+            # to use GoParallel with "+" reduction (avoids GoParallelTuple bug)
+            n_modes = self.n_modes
+            def get_combined_proc(start_end):
                 start = int(start_end[0])
                 end   = int(start_end[1])
-                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
-                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
-                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                return f_pert_av
-            def get_d2v_proc(start_end):
-                start = int(start_end[0])
-                end   = int(start_end[1])
-                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
-                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                return d2v_dr2
-            
+                result = julia.Main.get_perturb_averages_sym(
+                    self.X.T, self.Y.T, self.w, self.rho, R1, Y1,
+                    np.float64(self.T), bool(apply_d4),
+                    self.sym_julia, self.N_degeneracy, self.deg_julia,
+                    self.sym_block_id, start, end)
+                return np.concatenate([result[0], result[1].ravel()])
+
             # Divide the configurations and symmetries on different processors (Here we get the range of work for each process)
-            n_total = self.n_syms * self.N 
+            n_total = self.n_syms * self.N
             n_processors = Parallel.GetNProc()
             count = n_total // n_processors
             remainer = n_total % n_processors
-            
+
             # Assign which configurations should be computed by each processor
             indices = []
             for rank in range(n_processors):
 
                 if rank < remainer:
                     start = np.int64(rank * (count + 1))
-                    stop = np.int64(start + count + 1) 
+                    stop = np.int64(start + count + 1)
                 else:
-                    start = np.int64(rank * count + remainer) 
-                    stop = np.int64(start + count) 
+                    start = np.int64(rank * count + remainer)
+                    stop = np.int64(start + count)
 
                 indices.append([start + 1, stop])
 
-                
-            # Execute the get_f_d2v_proc on each processor in parallel.
-            f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
-            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+
+            # Execute the combined call on each processor in parallel
+            combined = Parallel.GoParallel(get_combined_proc, indices, "+")
+            f_pert_av = combined[:n_modes]
+            d2v_pert_av = combined[n_modes:].reshape(n_modes, n_modes)
 
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
