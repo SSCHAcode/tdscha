@@ -23,19 +23,13 @@ Part of the SSCHA ecosystem: `cellconstructor` → `python-sscha` → `tdscha`.
 8. **API Reference** - Automatically generated documentation:
    - [DynamicalLanczos](api/dynamical_lanczos.md) - Core Lanczos algorithm
    - [StaticHessian](api/static_hessian.md) - Free energy Hessian calculations
-   - [Tools](api/tools.md) - Krylov solvers and linear algebra utilities
-   - [Perturbations](api/perturbations.md) - IR and Raman response functions
-   - [Parallel](api/parallel.md) - MPI parallelization utilities
 
 ## Key Features
 
-- **Dynamical linear response** beyond harmonic approximation
-- **Lanczos algorithm** for efficient spectral function computation
+- **Dynamical linear response** in quantum anharmonic crystals.
 - **Multiple perturbation types**: single phonon mode, IR, Raman (polarized/unpolarized)
-- **Parallel execution**: MPI, Julia fast mode, C extensions
+- **Parallel execution** with MPI
 - **Symmetry-aware** calculations for efficiency
-- **Static Hessian** computation via sparse linear algebra
-- **Integration** with SSCHA equilibrium results
 
 ## Theoretical Foundation
 
@@ -49,12 +43,10 @@ The method computes the dynamical susceptibility via a Lanczos algorithm, yieldi
 
 ## Related Papers
 
-1. **Monacelli et al., Physical Review B** - Core TD-SCHA theory and equations (referenced as Eq. K4 in code)
-2. **Raman intensity formulas** - J. Phys. Chem. DOI: 10.1021/jp5125266
+1. **Monacelli et al., Physical Review B** - Core TD-SCHA theory and equations 
+2. **Siciliano et al., Physical Review B** - Application to IR and Raman spectra of anharmonic materials
 
 ## Getting Help
 
 - Check the [examples](examples.md) for working templates
-- Use the CLI tools for analysis and visualization
- - Refer to automatically generated API documentation for detailed method specifications
 - See the [SSCHA website](http://www.sscha.eu) for tutorials
