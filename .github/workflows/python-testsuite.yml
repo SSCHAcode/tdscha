@@ -80,3 +80,8 @@ jobs:
         rm -rf __pycache__
         # Test excluding very long running tests
         pytest -v -m "not release"
+    
+    - name: Validate documentation
+      run: |
+        # Validate code snippets in documentation
+        python scripts/validate_docs.py --test-imports --doctest
