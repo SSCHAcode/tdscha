@@ -74,6 +74,7 @@ jobs:
     - name: Test with pytest
       env:
         OMP_NUM_THREADS: 1
+        JULIA_NUM_THREADS: 1
       run: |
         cd tests
         rm -rf __pycache__
