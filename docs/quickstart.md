@@ -4,32 +4,48 @@ This guide walks through a complete TD-SCHA calculation from ensemble preparatio
 
 ## Quick Test with Example Data
 
-Before starting with your own data, you can test TD-SCHA using the built-in test data from the test suite:
+To quickly test, we provide a density matrix at equilibrium of the SnTe alloy on a 2x2x2 supercell.
+In the following example, we run a dynamical linear response calculation to compute the IR spectrum, with the radiation field polarized alogn the x-axis.
 
-# doctest: +ELLIPSIS
->>> from tdscha.testing.test_data import load_test_ensemble
->>> ens = load_test_ensemble(n_configs=10)
->>> print(f"Loaded ensemble with {ens.N} configurations")
-Loaded ensemble with 10 configurations
->>> import tdscha.DynamicalLanczos as DL
->>> lanczos = DL.Lanczos(ens)
-Generating Real space force constant matrix...
-Time to generate the real space force constant matrix: ... s
-TODO: the last time could be speedup with the FFT algorithm.
->>> lanczos.verbose = False
->>> lanczos.init(use_symmetries=True)
-Time to get the symmetries [...] from spglib: ... s
-Time to convert symmetries in the polarizaion space: ... s
-Time to create the block_id array: ... s
->>> print(f"Initialized Lanczos with {len(lanczos.w)} modes")
-Initialized Lanczos with ... modes
+We first load the SSCHA ensemble (which contains the equilibrium density matrix) and initialize the Lanczos algorithm:
 
-Note: The exact number of modes depends on the test system.
+```python
+import sscha, sscha.Ensemble
+import tdscha, tdscha.DynamicalLanczos as DL
 
+# Load the ensemble (here we use one provided by the tdscha package for testing)
+ens = load_test_ensemble(n_configs = 10)
+
+# Initialize the TD-SCHA calculation via the Lanczos algorithm
+lanczos = DL.Lanczos(ens)
+lanczos.init()
+
+# Prepare the IR perturbation with polarization along x
+lanczos.prepare_ir(pol_vec=[1, 0, 0])
+
+# Run the linear-response calculation at finite temperature (this is specified in the ensemble) 
+# For 10 Lanczos steps. Usually 100-200 steps are needed for convergence, but this is just a quick test.
+lanczos.run_FT(10)
+
+# Save the results
+lanczos.save_status("ir_spectrum_x.npz")
+```
+
+Then you can plot the spectrum using the CLI tool:
+
+```bash
+tdscha-plot-data ir_spectrum_x.npz 0 1000 2
+```
+
+Here the parameters specify the frequency range (0-1000 cm⁻¹) and the smearing (2 cm⁻¹) for the plot.
+
+
+```pycon
 ### Basic Lanczos Workflow
 
 Here's a complete example showing mode perturbation and a few Lanczos steps:
 
+```pycon
 # doctest: +ELLIPSIS
 >>> from tdscha.testing.test_data import load_test_ensemble
 >>> import tdscha.DynamicalLanczos as DL
@@ -49,14 +65,11 @@ Time to create the block_id array: ... s
 
 ...
 >>> # Run 2 Lanczos steps
->>> import sys
->>> from io import StringIO
->>> old_stdout = sys.stdout
->>> sys.stdout = StringIO()
 >>> lanczos.run_FT(2, debug=False)
->>> sys.stdout = old_stdout
+...
 >>> print(f"Lanczos coefficients after 2 steps: a={lanczos.a_coeffs[:2]}")
 Lanczos coefficients after 2 steps: a=[np.float64(...), np.float64(...)]
+```
 
 ## Prerequisites
 
