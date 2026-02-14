@@ -17,7 +17,7 @@ conda activate sscha
 pip install ase julia mpi4py
 
 # Install the SSCHA ecosystem
-pip install cellconstructor python-sscha tdscha
+pip install --no-build-isolation cellconstructor python-sscha tdscha
 ```
 
 ### Option B: Micromamba (Lightweight Alternative)
@@ -31,7 +31,7 @@ micromamba activate sscha
 
 # Install dependencies
 pip install ase julia mpi4py
-pip install cellconstructor python-sscha tdscha
+pip install --no-build-isolation  cellconstructor python-sscha tdscha
 ```
 
 ### Setting Up Julia for Maximum Performance
@@ -87,23 +87,6 @@ export CPPFLAGS="-I/usr/local/opt/openblas/include"
 pip install ase spglib
 ```
 
-### Julia Speedup (Highly Recommended)
-
-TD-SCHA benefits significantly from Julia. Install it via:
-
-```bash
-# Install Julia using Juliaup (Linux/macOS)
-curl -fsSL https://install.julialang.org | sh
-
-# Or download from https://julialang.org/downloads/
-
-# Install Python bindings
-pip install julia
-
-# Configure Julia (in a Julia REPL, type ']' then):
-pkg> add SparseArrays LinearAlgebra InteractiveUtils PyCall
-```
-
 ## 3. Installing TD-SCHA
 
 ### From PyPI (Simplest)
@@ -146,19 +129,7 @@ pip install mpi4py
 mpirun -np 4 python your_script.py
 ```
 
-**Note**: For maximum performance, combine MPI with Julia speedup. The MPI parallelization is automatically enabled if `mpi4py` is available and you use the Julia fast mode.
-
-### Compiling with MPI Support
-
-If using the C implementation (without Julia), compile from source with MPI:
-
-```bash
-git clone https://github.com/SSCHAcode/tdscha.git
-cd tdscha
-pip install --no-build-isolation .
-```
-
-Check the output for "PARALLEL ENVIRONMENT DETECTED SUCCESSFULLY".
+**Note**: For maximum performance, combine MPI with Julia speedup.
 
 ## 5. Build System Details
 
@@ -227,38 +198,6 @@ pytest -v -m "not release"
 # Test specific components
 pytest tests/test_lanczos_fast/test_lanczos_fast_rt.py -v
 pytest tests/test_julia/test_julia.py -v
-```
-
-**Note**: CI sets `OMP_NUM_THREADS=1` and `JULIA_NUM_THREADS=1` for reproducibility.
-
-### Documentation Validation
-
-The repository includes a script to validate code snippets in documentation:
-
-```bash
-# Validate all documentation files
-python scripts/validate_docs.py
-
-# Validate with import checking
-python scripts/validate_docs.py --test-imports
-
-# Validate specific files
-python scripts/validate_docs.py docs/installation.md docs/quickstart.md
-```
-
-## 7. Environment Variables for Performance Tuning
-
-| Variable | Purpose | Recommended Setting |
-|----------|---------|---------------------|
-| `OMP_NUM_THREADS` | OpenMP threads for C extensions | Number of physical cores |
-| `JULIA_NUM_THREADS` | Julia threads (set before importing) | Number of physical cores |
-| `MKL_NUM_THREADS` | MKL threads (if using Intel MKL) | 1 for MPI jobs, cores otherwise |
-| `MPIEXEC` | Path to MPI executable | Auto-detected |
-
-Example for a 16-core machine:
-```bash
-export OMP_NUM_THREADS=16
-export JULIA_NUM_THREADS=16
 ```
 
 ## 8. Troubleshooting Common Issues
