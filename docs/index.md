@@ -6,21 +6,17 @@ Part of the SSCHA ecosystem: `cellconstructor` → `python-sscha` → `tdscha`.
 
 ## Documentation Structure
 
-1. **[Theory](theory.md)** - What is TD-SCHA, why linear response, and what quantities can be calculated with it. Theoretical background with main TDSCHA equations and the Lanczos algorithm.
+1. **[Installation](installation.md)** - Complete installation guide following the official SSCHA.eu instructions, with emphasis on Julia for performance.
 
-2. **[Installation](installation.md)** - Complete installation guide following the official SSCHA.eu instructions, with emphasis on Julia for performance.
+2. **[Quick Start](quickstart.md)** - Working example showing calculation and analysis via CLI commands.
 
-3. **[Quick Start](quickstart.md)** - Working example showing calculation and analysis via CLI commands.
+3. **[In-Depth Usage](usage.md)** - Choosing perturbations, parallel execution, gamma-only trick, Wigner vs normal representation.
 
-4. **[In-Depth Usage](usage.md)** - Choosing perturbations, parallel execution, gamma-only trick, Wigner vs normal representation.
+4. **[StaticHessian](static-hessian.md)** - Computing free energy Hessian of large systems via sparse linear algebra.
 
-5. **[StaticHessian](static-hessian.md)** - Computing free energy Hessian of large systems via sparse linear algebra.
+5. **[CLI Tools](cli.md)** - Command-line interface for analysis and visualization.
 
-6. **[CLI Tools](cli.md)** - Command-line interface for analysis and visualization.
-
-7. **[Examples](examples.md)** - Detailed examples and templates.
-
-8. **API Reference** - Automatically generated documentation:
+6. **API Reference** - Automatically generated documentation:
    - [DynamicalLanczos](api/dynamical_lanczos.md) - Core Lanczos algorithm
    - [StaticHessian](api/static_hessian.md) - Free energy Hessian calculations
 
@@ -56,12 +52,14 @@ You can prepare the system in the quantum/thermal equilibrium state by running a
 then use the `tdscha` code to compute the suscieptibility $\chi_{AA}(\omega)$ for the desired observable $\hat A$.
 
 
-## Related Papers
+## Related Papers - How to cite
 
-1. **Monacelli et al., Physical Review B** 103, 104305 (2021) - Core TD-SCHA theory and Lanczos algorithm for linear response of anharmonic systems.
-2. **Siciliano et al., Physical Review B** 107, 174307 (2023) - Wigner formulation of the TD-SCHA equations and application to phonon spectral functions - IR and Raman. 
+If you use the TDSCHA code, please cite the following papers:
+
+1. [L Monacelli and F Mauri, Physical Review B 103, 104305 (2021)](https://journals.aps.org/prb/abstract/10.1103/PhysRevB.103.104305) - Core TD-SCHA theory and Lanczos algorithm for linear response of anharmonic systems.
+2. [Siciliano et al., Physical Review B 107, 174307 (2023)](https://journals.aps.org/prb/abstract/10.1103/PhysRevB.107.174307) - Wigner formulation of the TD-SCHA equations and application to phonon spectral functions - IR and Raman. 
 
 ## Getting Help
 
-- Check the [examples](examples.md) for working templates
+- Check the [quick start guide](quickstart.md) for working templates
 - See the [SSCHA website](http://www.sscha.eu) for tutorials

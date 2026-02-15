@@ -14,6 +14,7 @@ conda create -n sscha -c conda-forge python gfortran libblas lapack openmpi juli
 conda activate sscha
 
 # Install additional Python dependencies
+pip install meson meson-python ninja
 pip install ase julia mpi4py
 
 # Install the SSCHA ecosystem
@@ -30,6 +31,7 @@ micromamba create -n sscha -c conda-forge python gfortran libblas lapack openmpi
 micromamba activate sscha
 
 # Install dependencies
+pip install meson meson-python ninja
 pip install ase julia mpi4py
 pip install --no-build-isolation  cellconstructor python-sscha tdscha
 ```
@@ -84,7 +86,8 @@ export CPPFLAGS="-I/usr/local/opt/openblas/include"
 ### Python Dependencies
 
 ```bash
-pip install ase spglib
+pip install meson meson-python ninja
+pip install ase spglib mpi4py julia
 ```
 
 ## 3. Installing TD-SCHA
@@ -172,20 +175,6 @@ import tdscha.Tools
 import tdscha.Perturbations
 print("All TD-SCHA modules imported successfully")
 ```
-
-**Doctest verification** (automatically validated):
-
-# doctest: +ELLIPSIS
->>> import tdscha
->>> import tdscha.DynamicalLanczos as DL
->>> print("Julia enabled:", DL.is_julia_enabled())
-Julia enabled: ...
->>> import tdscha.StaticHessian
->>> import tdscha.Tools
->>> import tdscha.Perturbations
->>> print("All TD-SCHA modules imported successfully")
-All TD-SCHA modules imported successfully
-
 ### Running Tests
 
 ```bash
@@ -268,13 +257,11 @@ curl -fsSL https://install.julialang.org | sh
 After successful installation:
 
 1. **Run the [Quick Start](quickstart.md)** guide for your first calculation
-2. **Explore [Examples](examples.md)** for complete workflows
-3. **Check [In-Depth Usage](usage.md)** for advanced features
-4. **Learn about [StaticHessian](static-hessian.md)** for free energy calculations
+2. **Check [In-Depth Usage](usage.md)** for advanced features
 
 ## 10. Getting Help
 
-- **Documentation**: This guide and other pages in `docs/`
+- **Documentation**: This guide and other pages in [tdscha docs](https://sscha.eu/tdscha)
 - **GitHub Issues**: [SSCHAcode/tdscha/issues](https://github.com/SSCHAcode/tdscha/issues)
 - **SSCHA Website**: [sscha.eu](https://sscha.eu) with tutorials and FAQs
 - **Community**: Check the SSCHA website for community forums and contact information

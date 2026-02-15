@@ -41,13 +41,11 @@ plugins:
 # Navigation
 nav:
   - Home: index.md
-  - Theory: theory.md
   - Installation: installation.md
   - Quick Start: quickstart.md
   - In-Depth Usage: usage.md
   - StaticHessian: static-hessian.md
   - CLI Tools: cli.md
-  - Examples: examples.md
   - API Reference:
     - DynamicalLanczos: api/dynamical_lanczos.md
     - StaticHessian: api/static_hessian.md
