@@ -3603,7 +3603,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         # Apply the quick_lanczos
         t4 = timer()
         if fast_lanczos and (not self.ignore_v3):
-            print('Applying the anharmonic part of L')
             # AN-HARMONIC evolution finite temperature
             output += self.apply_anharmonic_FT(transpose)
             t3 = timer()
@@ -5067,8 +5066,9 @@ Should I use the terminator? {}
 Perturbation modulus = {}
 Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, sign)
         
-        print()
-        print(INFO)
+        if self.verbose:
+            print()
+            print(INFO)
 
         # Get the terminator
         if use_terminator:

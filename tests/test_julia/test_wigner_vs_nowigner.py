@@ -20,12 +20,12 @@ from tdscha.Parallel import pprint as print
 
 
 MODE_INDEX = 10
-N_STEPS = 10
+N_STEPS = 50
 T = 250
 NQIRR = 3
 
 # Tolerance on the Green function comparison (relative)
-GF_RTOL = 0.05  # 5% relative tolerance on spectral function values
+GF_RTOL = 0.001  # 0.1% relative tolerance on spectral function values
 
 
 def _setup_lanczos(use_wigner):
@@ -49,7 +49,7 @@ def _setup_lanczos(use_wigner):
     return lanc
 
 
-def test_wigner_vs_nowigner_green_function():
+def test_wigner_vs_nowigner_green_function(verbose=False):
     """
     Compare Green functions from Wigner and non-Wigner Lanczos
     at omega=0 and at the perturbed mode frequency.
@@ -70,10 +70,10 @@ def test_wigner_vs_nowigner_green_function():
     w_points = np.array([0.0, w_mode])
 
     gf_wigner = lanc_wigner.get_green_function_continued_fraction(
-        w_points, use_terminator=True, smearing=smearing
+        w_points, use_terminator=False, smearing=smearing
     )
     gf_nowigner = lanc_nowigner.get_green_function_continued_fraction(
-        w_points, use_terminator=True, smearing=smearing
+        w_points, use_terminator=False, smearing=smearing
     )
 
     spectral_wigner = -np.imag(gf_wigner)
@@ -83,22 +83,24 @@ def test_wigner_vs_nowigner_green_function():
     real_nowigner = np.real(gf_nowigner)
 
     # --- Benchmark at omega = 0 ---
-    print()
-    print("=== Green function comparison: Wigner vs non-Wigner ===")
-    print()
-    print(f"At omega = 0:")
-    print(f"  Re[G] Wigner:    {real_wigner[0]:.10e}")
-    print(f"  Re[G] noWigner:  {real_nowigner[0]:.10e}")
-    print(f"  Im[G] Wigner:    {spectral_wigner[0]:.10e}")
-    print(f"  Im[G] noWigner:  {spectral_nowigner[0]:.10e}")
+    if verbose:
+        print()
+        print("=== Green function comparison: Wigner vs non-Wigner ===")
+        print()
+        print(f"At omega = 0:")
+        print(f"  Origina w {lanc_wigner.w[MODE_INDEX] * CC.Units.RY_TO_CM:.2f} cm-1")
+        print(f"  Re[G] Wigner:    {real_wigner[0]:.10e}")
+        print(f"  Re[G] noWigner:  {real_nowigner[0]:.10e}")
+        print(f"  Im[G] Wigner:    {spectral_wigner[0]:.10e}")
+        print(f"  Im[G] noWigner:  {spectral_nowigner[0]:.10e}")
 
-    # --- Benchmark at omega = w_mode ---
-    print()
-    print(f"At omega = w_mode ({w_mode * CC.Units.RY_TO_CM:.2f} cm-1):")
-    print(f"  Re[G] Wigner:    {real_wigner[1]:.10e}")
-    print(f"  Re[G] noWigner:  {real_nowigner[1]:.10e}")
-    print(f"  Im[G] Wigner:    {spectral_wigner[1]:.10e}")
-    print(f"  Im[G] noWigner:  {spectral_nowigner[1]:.10e}")
+        # --- Benchmark at omega = w_mode ---
+        print()
+        print(f"At omega = w_mode ({w_mode * CC.Units.RY_TO_CM:.2f} cm-1):")
+        print(f"  Re[G] Wigner:    {real_wigner[1]:.10e}")
+        print(f"  Re[G] noWigner:  {real_nowigner[1]:.10e}")
+        print(f"  Im[G] Wigner:    {spectral_wigner[1]:.10e}")
+        print(f"  Im[G] noWigner:  {spectral_nowigner[1]:.10e}")
 
     # --- Assertions ---
     # At omega=0, the real part of the Green function gives the
@@ -109,13 +111,14 @@ def test_wigner_vs_nowigner_green_function():
     freq_wigner = np.sign(w2_wigner) * np.sqrt(np.abs(w2_wigner)) * CC.Units.RY_TO_CM
     freq_nowigner = np.sign(w2_nowigner) * np.sqrt(np.abs(w2_nowigner)) * CC.Units.RY_TO_CM
 
-    print()
-    print(f"Renormalized frequency (Wigner):    {freq_wigner:.6f} cm-1")
-    print(f"Renormalized frequency (noWigner):  {freq_nowigner:.6f} cm-1")
-    print(f"Difference:                         {abs(freq_wigner - freq_nowigner):.6f} cm-1")
+    if verbose:
+        print()
+        print(f"Renormalized frequency (Wigner):    {freq_wigner:.6f} cm-1")
+        print(f"Renormalized frequency (noWigner):  {freq_nowigner:.6f} cm-1")
+        print(f"Difference:                         {abs(freq_wigner - freq_nowigner):.6f} cm-1")
 
-    # Frequency difference should be small (< 5 cm-1)
-    assert abs(freq_wigner - freq_nowigner) < 5.0, (
+    # Frequency difference should be small (< 0.01 cm-1)
+    assert abs(freq_wigner - freq_nowigner) < 0.01, (
         f"Renormalized frequencies differ too much: "
         f"Wigner={freq_wigner:.4f}, noWigner={freq_nowigner:.4f} cm-1"
     )
@@ -141,9 +144,10 @@ def test_wigner_vs_nowigner_green_function():
             f"(tolerance: {GF_RTOL})"
         )
 
-    print()
-    print("=== All benchmarks passed ===")
+    if verbose:
+        print()
+        print("=== All benchmarks passed ===")
 
 
 if __name__ == "__main__":
-    test_wigner_vs_nowigner_green_function()
+    test_wigner_vs_nowigner_green_function(verbose=True)
