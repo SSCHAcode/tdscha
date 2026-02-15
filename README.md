@@ -1,5 +1,5 @@
 
-[![Documentation](https://img.shields.io/badge/docs-sscha.github.io%2Ftdscha-blue)](https://sscha.github.io/tdscha/)
+[![Documentation](https://img.shields.io/badge/docs-sscha.github.io%2Ftdscha-blue)](http://sscha.eu/tdscha/)
 
 # Introduction
 
