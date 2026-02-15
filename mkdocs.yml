@@ -51,9 +51,6 @@ nav:
   - API Reference:
     - DynamicalLanczos: api/dynamical_lanczos.md
     - StaticHessian: api/static_hessian.md
-    - Tools: api/tools.md
-    - Perturbations: api/perturbations.md
-    - Parallel: api/parallel.md
 
 # Extra JavaScript for MathJax
 extra_javascript:
