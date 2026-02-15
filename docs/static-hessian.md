@@ -11,7 +11,7 @@ $$
 $$
 
 where $\Phi$ is the SSCHA auxiliary force constant matrix, $\stackrel{(3)}{\Phi}$ and $\stackrel{(4)}{\Phi}$ are the third and fourth order force constant tensors, and $\Lambda$ is proportional to the static limit of the two phonons free propagator (of the SSCHA auxiliary phonons).
-The inversion in the square brakets is extremely memory demanding, as both $\stackref{(4)}{\Phi}$ and $\Lambda$ are dense tensors in the $N_\text{modes}^2\times N_\text{modes}^2$ space.
+The inversion in the square brakets is extremely memory demanding, as both $\stackrel{(4)}{\Phi}$ and $\Lambda$ are dense tensors in the $N_\text{modes}^2\times N_\text{modes}^2$ space.
 For this reason, the direct approach scales as $N_\text{modes}^4$ in memory and $N_\text{modes}^6$ in time, which becomes easily prohibitive for systems with more than 50 atoms in the supercell.
 
 The `tdscha` package offers an alternative approach, by reformulating the free energy Hessian as the inverse of the static limit of the dynamical Green's function, as proved by [L Monacelli, Physical Review B 112, 014109 (2025)](https://journals.aps.org/prb/abstract/10.1103/8611-5k5v).
