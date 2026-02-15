@@ -28,7 +28,7 @@ def test_lanczos():
     ens.load_bin("data", 1)
     
 
-    lanc = DL.Lanczos(ens)
+    lanc = DL.Lanczos(ens, use_wigner=False)
     N_STEPS = 5
     lanc.ignore_harmonic = False
     lanc.ignore_v3 = False

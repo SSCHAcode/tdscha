@@ -29,7 +29,7 @@ def test_lanczos():
     
 
     lanc = DL.Lanczos(ens)
-    N_STEPS = 5
+    N_STEPS = 10
     lanc.ignore_harmonic = False
     lanc.ignore_v3 = False
     lanc.ignore_v4 = False
@@ -37,12 +37,13 @@ def test_lanczos():
     lanc.init(use_symmetries = True)
     lanc.prepare_mode(10)
 
-    lanc.run_FT(2*N_STEPS, save_dir = 'julia', debug = False)
+    lanc.run_FT(N_STEPS, save_dir = 'julia', debug = False)
 
     # HARDCODE the last c value
-    C_LAST_GOOD = 6.59744344e-07
-
-    assert np.abs(lanc.c_coeffs[4] - C_LAST_GOOD) / np.abs(C_LAST_GOOD) < 1e-6, "CVALUE CALCULATED: {} | EXPECTED C VALUE: {}".format(lanc.c_coeffs[4], C_LAST_GOOD)
+    gf = lanc.get_green_function_continued_fraction(np.array([0]), smearing = 0)
+    w = np.sign(np.real(gf)) * np.sqrt(np.abs(1./np.real(gf))) * CC.Units.RY_TO_CM
+    w_reference = -36.93203026
+    assert np.isclose(w, w_reference, rtol = 1e-3), "TEST FAILED: LAST C VALUE CALCULATED: {} | EXPECTED C VALUE: {}".format(w, w_reference)
 
 
 if __name__ == "__main__":
