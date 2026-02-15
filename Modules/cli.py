@@ -81,6 +81,7 @@ Arguments:
 """
 
 def plot_hessian_convergence():
+    print(MSG_HESSIAN_CONV)
 
     nargs = len(sys.argv)
 

@@ -180,7 +180,7 @@ def is_julia_enabled():
 
 
 class Lanczos(object):
-    def __init__(self, ensemble = None, mode = None, unwrap_symmetries = False, select_modes = None, use_wigner = False, lo_to_split = "random"):
+    def __init__(self, ensemble = None, mode = None, unwrap_symmetries = False, select_modes = None, use_wigner = True, lo_to_split = "random"):
         """
         INITIALIZE THE LANCZOS
         ======================
@@ -294,7 +294,13 @@ class Lanczos(object):
         self.f_tilde = None
 
         self.sym_block_id = None
-        
+
+        # Gamma-only optimization: use only point-group symmetries in replicas,
+        # impose translations directly on f_pert_av and d2v_pert_av
+        self.gamma_only = False
+        self.trans_projector = None    # (n_modes, n_modes) matrix P = (1/n_cells) Σ_R T_R^mode
+        self.trans_operators = None    # list of (n_modes, n_modes) T_R^mode matrices
+
         # Set to True if we want to use the Wigner equations
         self.use_wigner = use_wigner
         
@@ -738,6 +744,46 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         if verbose:
             print("Time to get the symmetries [{}] from spglib: {} s".format(len(super_symmetries), t2-t1))
 
+        # Gamma-only optimization: separate point-group and translational symmetries
+        if self.gamma_only:
+            n_total_syms = len(super_symmetries)
+            identity = np.eye(3)
+            translations = []
+            unique_rotations = {}
+            for sym in super_symmetries:
+                rot = sym[:, :3]
+                rot_key = np.round(rot, 8).tobytes()
+                if np.allclose(rot, identity, atol=1e-8):
+                    translations.append(sym)
+                if rot_key not in unique_rotations:
+                    unique_rotations[rot_key] = sym
+            pg_symmetries = list(unique_rotations.values())
+
+            if verbose:
+                print("Gamma-only: {} PG syms instead of {} total (speedup: {}x)".format(
+                    len(pg_symmetries), n_total_syms, n_total_syms // max(len(pg_symmetries), 1)))
+
+            # Build translation operators in mode space: T_R^mode = pols^T @ P_R @ pols
+            self.trans_operators = []
+            nat_sc = super_structure.N_atoms
+            for t_sym in translations:
+                irt = CC.symmetries.GetIRT(super_structure, t_sym)
+                # Build Cartesian permutation matrix P_R (3*nat_sc x 3*nat_sc)
+                P_R = np.zeros((3 * nat_sc, 3 * nat_sc), dtype=np.double)
+                for i_at in range(nat_sc):
+                    j_at = irt[i_at]
+                    P_R[3*j_at:3*j_at+3, 3*i_at:3*i_at+3] = np.eye(3)
+                # Project into mode space
+                T_mode = self.pols.T @ P_R @ self.pols  # (n_modes, n_modes)
+                self.trans_operators.append(T_mode)
+
+            self.trans_projector = np.mean(self.trans_operators, axis=0)
+
+            if verbose:
+                print("Built {} translation operators in mode space".format(len(translations)))
+
+            # Replace super_symmetries with PG-only for the rest of the function
+            super_symmetries = pg_symmetries
 
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
@@ -769,6 +815,10 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 nsym, c, _ = np.shape(sblock)
                 self.sym_julia[i, :, :c, :c] = sblock
                 self.deg_julia[i, :c] = self.degenerate_space[i]
+
+            # Pre-build and cache sparse symmetry matrices in Julia
+            julia.Main.init_sparse_symmetries(
+                self.sym_julia, self.N_degeneracy, self.deg_julia, self.sym_block_id)
 
         # Create the mapping between the modes and the block id.
         t1 = time.time()
@@ -3048,6 +3098,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         # Compute the perturbed averages (the time consuming part is HERE !!!)
         #print("Entering in get pert...")
+        _t_pert_start = time.time()
         n_syms, _, _ = np.shape(self.symmetries[0])
         #print("DEG:")
         #print(self.degenerate_space)
@@ -3068,51 +3119,68 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                 raise ValueError(MSG)
                 
                 
-            # Prepare the parallelization function
-            def get_f_proc(start_end):
+            # Prepare the combined parallelization function
+            # Pack both results (f vector + d2v matrix) into a single flat array
+            # to use GoParallel with "+" reduction (avoids GoParallelTuple bug)
+            n_modes = self.n_modes
+            def get_combined_proc(start_end):
                 start = int(start_end[0])
                 end   = int(start_end[1])
-                #Parallel.all_print("Processor {} is doing:".format(Parallel.get_rank()), start_end)
-                f_pert_av = julia.Main.get_perturb_f_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
-                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                return f_pert_av
-            def get_d2v_proc(start_end):
-                start = int(start_end[0])
-                end   = int(start_end[1])
-                d2v_dr2 = julia.Main.get_perturb_d2v_averages_sym(self.X.T, self.Y.T, self.w, self.rho, R1, Y1, np.float64(self.T), bool(apply_d4),\
-                                                                  self.sym_julia, self.N_degeneracy, self.deg_julia ,self.sym_block_id, start, end)
-                return d2v_dr2
-            
+                result = julia.Main.get_perturb_averages_sym(
+                    self.X.T, self.Y.T, self.w, self.rho, R1, Y1,
+                    np.float64(self.T), bool(apply_d4),
+                    self.sym_julia, self.N_degeneracy, self.deg_julia,
+                    self.sym_block_id, start, end)
+                return np.concatenate([result[0], result[1].ravel()])
+
             # Divide the configurations and symmetries on different processors (Here we get the range of work for each process)
-            n_total = self.n_syms * self.N 
+            n_total = self.n_syms * self.N
             n_processors = Parallel.GetNProc()
             count = n_total // n_processors
             remainer = n_total % n_processors
-            
+
             # Assign which configurations should be computed by each processor
             indices = []
             for rank in range(n_processors):
 
                 if rank < remainer:
                     start = np.int64(rank * (count + 1))
-                    stop = np.int64(start + count + 1) 
+                    stop = np.int64(start + count + 1)
                 else:
-                    start = np.int64(rank * count + remainer) 
-                    stop = np.int64(start + count) 
+                    start = np.int64(rank * count + remainer)
+                    stop = np.int64(start + count)
 
                 indices.append([start + 1, stop])
 
-                
-            # Execute the get_f_d2v_proc on each processor in parallel.
-            f_pert_av   = Parallel.GoParallel(get_f_proc, indices, "+")
-            d2v_pert_av = Parallel.GoParallel(get_d2v_proc, indices, "+")
+
+            # Execute the combined call on each processor in parallel
+            combined = Parallel.GoParallel(get_combined_proc, indices, "+")
+            f_pert_av = combined[:n_modes]
+            d2v_pert_av = combined[n_modes:].reshape(n_modes, n_modes)
 
         else:
             raise ValueError("Error, mode running {} not implemented.".format(self.mode))
 
+        _t_pert_end = time.time()
+        if self.verbose:
+            print("Time for perturb averages (n_syms={}): {:.6f} s".format(n_syms, _t_pert_end - _t_pert_start))
 
-            
-              
+        # Gamma-only: impose translational symmetry on the perturbed averages
+        if self.gamma_only and self.trans_projector is not None:
+            _t_trans_start = time.time()
+            # Project f_pert_av: P_trans @ f
+            f_pert_av = self.trans_projector @ f_pert_av
+
+            # Project d2v_pert_av: (1/n_cells) Σ_R T_R @ d2v @ T_R^T
+            n_cells = len(self.trans_operators)
+            d2v_proj = np.zeros_like(d2v_pert_av)
+            for T_R in self.trans_operators:
+                d2v_proj += T_R @ d2v_pert_av @ T_R.T
+            d2v_pert_av = d2v_proj / n_cells
+            _t_trans_end = time.time()
+            if self.verbose:
+                print("Time for translational projection: {:.6f} s".format(_t_trans_end - _t_trans_start))
+
         # OLD PART OF THE CODE
         #print("D2V:")
         #np.set_printoptions(threshold = 10000)
@@ -3535,7 +3603,6 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         # Apply the quick_lanczos
         t4 = timer()
         if fast_lanczos and (not self.ignore_v3):
-            print('Applying the anharmonic part of L')
             # AN-HARMONIC evolution finite temperature
             output += self.apply_anharmonic_FT(transpose)
             t3 = timer()
@@ -3554,8 +3621,8 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
         if self.verbose:
             print("Time to apply the full L: {}".format(t4 - t1))
-        #print("Time to apply L2: {}".format(t3-t2))
-        #print("Time to apply L3: {}".format(t4-t3))
+            print("  Harmonic part (L1): {:.6f} s".format(t2 - t1))
+            print("  Anharmonic part:    {:.6f} s".format(t4 - t2))
 
         # Apply the shift reverse
         #print ("Output before:")
@@ -4999,8 +5066,9 @@ Should I use the terminator? {}
 Perturbation modulus = {}
 Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, sign)
         
-        print()
-        print(INFO)
+        if self.verbose:
+            print()
+            print(INFO)
 
         # Get the terminator
         if use_terminator:
@@ -5845,7 +5913,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
 
 
             
-    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False, optimized = False):
+    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = None, optimized = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -5886,7 +5954,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
             run_simm : bool
-                If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product
+                If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product. This is only possible if we are using the Wigner representation, where the Lanczos matrix is symmetric in the full space.
             optimized : bool
                 If True we pop the vectors P and Q that we do not use during the Lanczos
         """
@@ -5918,6 +5986,10 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
          
+        # Automatically use the symmetric Lanczos if we are using the Wigner representation
+        if run_simm is None:
+            run_simm = self.use_wigner
+
         # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
             raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True and make sure that you are not using the analytic wigner L!')

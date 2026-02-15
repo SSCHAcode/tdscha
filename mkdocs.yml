@@ -1,0 +1,58 @@
+site_name: TD-SCHA Documentation
+site_description: Time-Dependent Self-Consistent Harmonic Approximation
+site_url: https://sscha.github.io/tdscha/
+repo_url: https://github.com/SSCHAcode/tdscha
+repo_name: SSCHAcode/tdscha
+
+# Theme
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - search.suggest
+    - content.code.copy
+
+# Markdown extensions
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+
+# Plugins
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [Modules]
+          options:
+            docstring_style: numpy
+            show_root_heading: true
+            show_source: true
+            merge_init_into_class: true
+            filters: ["!^_"]
+            members_order: source
+
+# Navigation
+nav:
+  - Home: index.md
+  - Theory: theory.md
+  - Installation: installation.md
+  - Quick Start: quickstart.md
+  - In-Depth Usage: usage.md
+  - StaticHessian: static-hessian.md
+  - CLI Tools: cli.md
+  - Examples: examples.md
+  - API Reference:
+    - DynamicalLanczos: api/dynamical_lanczos.md
+    - StaticHessian: api/static_hessian.md
+
+# Extra JavaScript for MathJax
+extra_javascript:
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
