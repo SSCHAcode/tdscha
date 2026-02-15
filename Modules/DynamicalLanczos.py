@@ -180,7 +180,7 @@ def is_julia_enabled():
 
 
 class Lanczos(object):
-    def __init__(self, ensemble = None, mode = None, unwrap_symmetries = False, select_modes = None, use_wigner = False, lo_to_split = "random"):
+    def __init__(self, ensemble = None, mode = None, unwrap_symmetries = False, select_modes = None, use_wigner = True, lo_to_split = "random"):
         """
         INITIALIZE THE LANCZOS
         ======================
@@ -5913,7 +5913,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
 
 
             
-    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = False, optimized = False):
+    def run_FT(self, n_iter, save_dir = None, save_each = 5, verbose = True, n_rep_orth = 0, n_ortho = 10, flush_output = True, debug = False, prefix = "LANCZOS", run_simm = None, optimized = False):
         """
         RUN LANCZOS ITERATIONS FOR FINITE TEMPERATURE
         =============================================
@@ -5954,7 +5954,7 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
                 as the gram-shmidth procdeure and checks on the coefficients. 
                 This is usefull to spot an error or the appeareance of ghost states due to numerical inaccuracy.
             run_simm : bool
-                If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product
+                If true the biconjugate Lanczos is transformed in a simple Lanczos with corrections in the scalar product. This is only possible if we are using the Wigner representation, where the Lanczos matrix is symmetric in the full space.
             optimized : bool
                 If True we pop the vectors P and Q that we do not use during the Lanczos
         """
@@ -5986,6 +5986,10 @@ Use prepare_raman/ir or prepare_perturbation before calling the run method.
                 if not os.path.exists(save_dir):
                     os.makedirs(save_dir)
          
+        # Automatically use the symmetric Lanczos if we are using the Wigner representation
+        if run_simm is None:
+            run_simm = self.use_wigner
+
         # run_simm is allowed only if we use the wigner representation
         if run_simm and not self.use_wigner:
             raise NotImplementedError('The symmetric Lanczos works only with Wigner. Set use_wigner to True and make sure that you are not using the analytic wigner L!')
