@@ -1,6 +1,6 @@
 project('tdscha',
   ['c'],
-  version: '1.5.1',
+  version: '1.6.0',
   license: 'GPL',
   meson_version: '>= 1.1.0', # <- set min version of meson.
   default_options : [
