@@ -1,4 +1,6 @@
 
+[![Documentation](https://img.shields.io/badge/docs-sscha.github.io%2Ftdscha-blue)](https://sscha.github.io/tdscha/)
+
 # Introduction
 
 ## What is TD-SCHA?
