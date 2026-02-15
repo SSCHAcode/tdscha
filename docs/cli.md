@@ -1,6 +1,6 @@
 # Command-Line Interface (CLI) Tools
 
-TD-SCHA provides four CLI tools for analysis and visualization of calculation results. These tools work with output files from both Python and C++ executables.
+TD-SCHA provides four CLI tools for analysis and visualization of calculation results.
 
 ## Installation and Availability
 
@@ -48,7 +48,7 @@ tdscha-convergence-analysis lanczos_final.npz
 # Custom smearing (5 cm⁻¹)
 tdscha-convergence-analysis lanczos_final.npz 5
 
-# From .abc file (C++ executable output)
+# From .abc file (after converting the output of the calculation)
 tdscha-convergence-analysis lanczos.abc 2
 ```
 
@@ -103,15 +103,9 @@ Single figure showing:
 - Y-axis: Spectrum [a.u.]
 - Title includes number of Lanczos poles
 
-### Notes
-
-- Uses continued fraction **without terminator** for plotting
-- For terminator-included spectra, use convergence analysis tool
-- Spectrum is normalized by perturbation modulus
-
 ## tdscha-output2abc
 
-Converts stdout from C++ executable `tdscha-lanczos.x` to `.abc` format.
+Converts stdout of the run to `.abc` format for plotting the results.
 
 ### Usage
 
@@ -122,19 +116,6 @@ tdscha-output2abc output_file abc_file
 **Arguments**:
 - `output_file`: Text file containing stdout of `tdscha-lanczos.x`
 - `abc_file`: Output `.abc` file name
-
-### Example
-
-```bash
-# Run C++ executable
-./tdscha-lanczos.x > lanczos.stdout
-
-# Convert to .abc
-tdscha-output2abc lanczos.stdout lanczos.abc
-
-# Now use .abc with other tools
-tdscha-plot-data lanczos.abc
-```
 
 ### File Format
 
@@ -216,37 +197,11 @@ Single figure showing:
 - **Flat lines** show converged eigenvalues
 - **Reference lines** help identify mode correspondence
 
-## Integration with Workflows
-
-### Python Script Integration
-
-```python
-import subprocess
-import sys
-
-# After Lanczos calculation
-lanczos.save_status("output.npz")
-
-# Run CLI analysis
-subprocess.run(["tdscha-convergence-analysis", "output.npz", "5"])
-subprocess.run(["tdscha-plot-data", "output.npz", "0", "1000", "2"])
-```
-
-### Batch Processing
-
-```bash
-#!/bin/bash
-# Process multiple calculations
-for file in results/*.npz; do
-    basename=$(basename $file .npz)
-    tdscha-convergence-analysis "$file" 5
-    mv convergence.png "${basename}_convergence.png"
-    tdscha-plot-data "$file" 0 1000 2
-    mv spectrum.png "${basename}_spectrum.png"
-done
-```
-
 ### C++ Executable Workflow
+
+We also provide a C++ executable for the Lanczos algorithm, which can be used in place of the Python implementation for large systems or high-performance needs. The workflow is similar, but requires an additional conversion step for the initialization.
+Note that the C++ code is less efficient than the Julia version available with the Python library, however it is much easier to install on clusters without the need of properly configured Julia and Python environments.
+You can use the python library locally to prepare all the input files used by the C++ code, and then run the C++ executable on the cluster, and finally use the CLI tools to analyze the results.
 
 ```bash
 # 1. Prepare input files (from Python)
@@ -261,6 +216,49 @@ tdscha-convergence-analysis lanczos.abc 5
 tdscha-plot-data lanczos.abc 0 500 2
 ```
 
+The input preparation script should generate the necessary files for the C++ executable, including the initial Lanczos vector and any required parameters.
+A premade script to prepare the input for the cluster is available in the repository under `Examples/Templates/prepare_input_for_cluster.py`
+The workflow is very similar to a standard python one, but instead of running the Lanczos algorithm, we save the prepared Lanczos object to a file, in the following way
+
+
+```python
+import tdscha, tdscha.DynamicalLanczos as DL
+import sscha, sscha.Ensemble
+import cellconstructor as CC, cellconstructor.Phonons
+
+# Load the ensemble from a previous SSCHA calculation
+start_dyn = CC.Phonons.Phonons("dyn_", nqirr=3)
+ensemble = sscha.Ensemble.Ensemble(start_dyn, 300) # Temperature in K
+ensemble.load_dir("ensemble", 1) # Load from directory, sscha iteration 1
+final_dyn = CC.Phonons.Phonons("final_dyn_", nqirr=3) # load the converged dynamical matrix
+ensemble.update_weights(final_dyn, 300) # Update the ensemble
+
+
+# Initialize the Lanczos object
+lanczos = DL.DynamicalLanczos(ensemble)
+lanczos.init()
+
+# Setup the perturbation - in this case IR spectrum polarized along the x axis
+lanczos.prepare_ir([1.0, 0.0, 0.0])
+
+# Save the Lanczos object to a file for the C++ executable
+lanczos.prepare_input_files(n_steps = 100,                # Number of Lanczos steps
+                            directory = "lanczos_input",  # Directory in which to save the input files
+                            root_name = "lanzos_ir_xpol") # Prefix
+
+```
+
+The script will create a directory called `lanczos_input` containing the necessary input files for the C++ executable, which can then be transferred to the cluster and used to run the Lanczos algorithm.
+The C executable must be run inside the directory containing the input files, passing as only argument the `root_name` used in the preparation step, in the following way
+
+```bash
+cd lanczos_input
+mpirun -np 16 /path/to/tdscha-lanczos.x lanzos_ir_xpol > lanczos.stdout
+```
+
+The parameters for the Lanczos run can also by edited manually, as they are written in a clear text json format called `root_name.json` (where `root_name` is the prefix used in the preparation step).
+
+
 ## Advanced Usage
 
 ### Custom Frequency Ranges
@@ -271,57 +269,6 @@ For high-resolution plots:
 # High resolution: 0-200 cm⁻¹, 0.5 cm⁻¹ smearing
 tdscha-plot-data lanczos.npz 0 200 0.5
 ```
-
-### Comparing Multiple Calculations
-
-```bash
-# Generate .abc files for comparison
-tdscha-output2abc calc1.stdout calc1.abc
-tdscha-output2abc calc2.stdout calc2.abc
-
-# Plot together (requires custom script)
-python plot_comparison.py calc1.abc calc2.abc
-```
-
-### Scripting with Python
-
-```python
-from tdscha import cli
-import sys
-
-# Mock command-line arguments
-sys.argv = ["tdscha-plot-data", "lanczos.npz", "0", "500", "2"]
-cli.plot()  # Calls the plot function directly
-```
-
-## Troubleshooting
-
-### "File not found" Errors
-- Ensure file paths are correct
-- `.npz` files must contain Lanczos object data
-- `.abc` files must have 3 columns of numbers
-
-### Plotting Issues
-- Install matplotlib: `pip install matplotlib`
-- Set backend for headless systems: `export MPLBACKEND=Agg`
-- For terminator plots, use convergence analysis tool
-
-### Conversion Errors
-- Ensure stdout contains Lanczos coefficient lines
-- Check C++ executable compiled correctly
-- Verify no extraneous output in stdout
-
-### Hessian Convergence Issues
-- Step files must follow naming convention
-- Initial status file must be `.json` or `.npz`
-- Reference dynamical matrix must have correct prefix
-
-## Environment Variables
-
-- `MPLBACKEND`: Matplotlib backend (e.g., `Agg` for headless)
-- `OMP_NUM_THREADS`: OpenMP threads for C++ executable
-- `MPIEXEC`: MPI executable path for C++ version
-
 ## See Also
 
 - [Quick Start Guide](quickstart.md) for complete workflows
