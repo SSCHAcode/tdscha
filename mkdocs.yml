@@ -48,6 +48,7 @@ nav:
   - CLI Tools: cli.md
   - API Reference:
     - DynamicalLanczos: api/dynamical_lanczos.md
+    - QSpaceLanczos: api/qspace_lanczos.md
     - StaticHessian: api/static_hessian.md
 
 # Extra JavaScript for MathJax
