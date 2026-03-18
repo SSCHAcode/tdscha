@@ -158,6 +158,9 @@ class QSpaceLanczos(DL.Lanczos):
         self.w_q = w_q        # (n_bands, n_q) from DiagonalizeSupercell
         self.pols_q = pols_q  # (3*n_at, n_bands, n_q) complex eigenvectors
 
+        # The masses needs to be restricted to the primitive cell only
+        self.m = self.m[:self.n_bands]
+
         # Small frequency threshold for acoustic mode masking
         self.acoustic_eps = 1e-6
 
@@ -999,6 +1002,38 @@ Starting from step %d
         self.reset_q()
         self.psi[band_index] = 1.0 + 0j
         self.perturbation_modulus = 1.0
+
+    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1.0, 0.0, 0.0])):
+        """
+        PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
+        =================================================
+
+        In this subroutine we prepare the lanczos algorithm for the computation of the
+        infrared spectrum signal.
+
+        Parameters
+        ----------
+            effective_charges : ndarray(size = (n_atoms, 3, 3), dtype = np.double)
+                The effective charges. Indices are: Number of atoms in the unit cell,
+                electric field component, atomic coordinate. If None, the effective charges
+                contained in the dynamical matrix will be considered.
+            pol_vec : ndarray(size = 3)
+                The polarization vector of the light.
+        """
+
+        ec = self.dyn.effective_charges
+        if not effective_charges is None:
+            ec = effective_charges
+
+        assert not ec is None, "Error, no effective charge found. Cannot initialize IR responce"
+
+        z_eff = np.einsum("abc, b", ec, pol_vec)
+
+        # Get the gamma effective charge
+        new_zeff = z_eff.ravel() / np.sqrt(self.m)
+
+        # This is a Gamma perturbation
+        self.prepare_perturbation_q(0, new_zeff)
 
     def prepare_perturbation_q(self, iq, vector):
         """Prepare perturbation at q from a real-space vector (3*n_at_uc,).
