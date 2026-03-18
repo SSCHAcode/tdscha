@@ -121,11 +121,13 @@ py.install_sources(
     [
       'Modules/__init__.py',
       'Modules/DynamicalLanczos.py',
+      'Modules/QSpaceLanczos.py',
       'Modules/Dynamical.py',
       'Modules/Parallel.py',
       'Modules/Perturbations.py',
       'Modules/StaticHessian.py',
       'Modules/tdscha_core.jl',
+      'Modules/tdscha_qspace.jl',
       'Modules/Tools.py',
       'Modules/cli.py'
     ],
