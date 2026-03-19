@@ -122,6 +122,7 @@ py.install_sources(
       'Modules/__init__.py',
       'Modules/DynamicalLanczos.py',
       'Modules/QSpaceLanczos.py',
+      'Modules/QSpaceHessian.py',
       'Modules/Dynamical.py',
       'Modules/Parallel.py',
       'Modules/Perturbations.py',
