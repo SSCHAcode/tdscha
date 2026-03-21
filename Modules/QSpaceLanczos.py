@@ -1036,7 +1036,9 @@ Starting from step %d
         z_eff = np.einsum("abc, b", ec, pol_vec)
 
         # Get the gamma effective charge
-        new_zeff = z_eff.ravel() / np.sqrt(self.m)
+        # FIX: remove double mass scaling and add supercell factor
+        n_cell = np.prod(self.dyn.GetSupercell())
+        new_zeff = z_eff.ravel() * np.sqrt(n_cell)
 
         # This is a Gamma perturbation
         self.prepare_perturbation_q(0, new_zeff)
