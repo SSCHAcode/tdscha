@@ -553,6 +553,7 @@ class QSpaceHessian:
         # 5. Solve L_static x_i = e_i for each non-acoustic band
         G_q = np.zeros((nb, nb), dtype=np.complex128)
         total_iters = 0
+        L_dense = None  # Built lazily if iterative solvers fail
 
         for band_i in non_acoustic:
             rhs = np.zeros(psi_size, dtype=np.complex128)
@@ -582,9 +583,25 @@ class QSpaceHessian:
                 x_tilde, info = scipy.sparse.linalg.bicgstab(
                     L_op, rhs_tilde, x0=x_tilde, rtol=tol, maxiter=max_iters,
                     M=M_op)
-                if info != 0 and self.verbose:
-                    print("    WARNING: BiCGSTAB also did not converge "
-                          "for band {} (info={})".format(band_i, info))
+                if info != 0:
+                    if self.verbose:
+                        print("    BiCGSTAB also did not converge "
+                              "for band {} (info={}), using dense solve"
+                              .format(band_i, info))
+                    # Build dense L matrix once, reuse for all failing bands
+                    if L_dense is None:
+                        if self.verbose:
+                            print("    Building dense L matrix "
+                                  "(size {})...".format(psi_size))
+                        L_dense = np.zeros((psi_size, psi_size),
+                                           dtype=np.complex128)
+                        for j in range(psi_size):
+                            e_j = np.zeros(psi_size, dtype=np.complex128)
+                            e_j[j] = 1.0
+                            L_dense[:, j] = apply_L_tilde(e_j)
+                        L_dense = (L_dense + L_dense.conj().T) / 2
+                    x_tilde, _, _, _ = np.linalg.lstsq(
+                        L_dense, rhs_tilde, rcond=1e-10)
 
             t2 = time.time()
             total_iters += n_iters[0]

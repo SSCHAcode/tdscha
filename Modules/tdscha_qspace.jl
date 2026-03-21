@@ -224,15 +224,13 @@ function get_d2v_from_Y_pert_qspace(
             end
 
             # If iq1 != iq2, also accumulate buffer_u at iq2
-            # buffer_u at iq2: sum_nu1 alpha1[p][nu1, nu2]^H * x_q1[nu1]
-            # = sum_nu1 conj(alpha1[p][nu2, nu1]) * x_q1[nu1] if alpha1 is not Hermitian
-            # Actually: alpha1[p] connects (iq1, iq2). For the reverse pair (iq2, iq1),
-            # the alpha1 would be alpha1[p]^T (since alpha1 is symmetric in the real-space version).
-            # In q-space with Hermitian Upsilon: alpha1(q2,q1) = alpha1(q1,q2)^T
+            # For the reverse pair (iq2, iq1), the Hermitian Upsilon satisfies:
+            #   alpha1(q2,q1)[nu2,nu1] = conj(alpha1(q1,q2)[nu1,nu2])
+            # So buffer_u at iq2 uses the Hermitian conjugate of alpha1.
             if iq1 != iq2
                 for nu2 in 1:n_bands
                     for nu1 in 1:n_bands
-                        buffer_u[iq2, nu2] += alpha1_blocks[p][nu1, nu2] * x_q1[nu1]
+                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
                     end
                 end
             end
@@ -244,9 +242,14 @@ function get_d2v_from_Y_pert_qspace(
                     local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
                 end
             end
-            # Multiplicity: 2 if iq1 < iq2 (conjugate pair counted), 1 if iq1 == iq2
-            mult = (iq1 < iq2) ? 2 : 1
-            total_wD4 += mult * local_w
+            # For off-diagonal pairs, the reverse pair (iq2,iq1) contributes conj(local_w),
+            # so total = local_w + conj(local_w). In real-space (real x), this equals 2*local_w,
+            # but in q-space (complex x), we must use the correct Hermitian form.
+            if iq1 < iq2
+                total_wD4 += local_w + conj(local_w)
+            else
+                total_wD4 += local_w
+            end
         end
         total_wD4 *= -rho[i_config] / 8.0
 
@@ -301,7 +304,7 @@ end
 """
     get_f_from_Y_pert_qspace(...)
 
-D4 contribution to f_pert from alpha1 perturbation.
+D3 contribution to f_pert from alpha1/Y1 perturbation.
 Mirrors get_f_average_from_Y_pert in tdscha_core.jl.
 
 For each (config, sym):
@@ -376,10 +379,11 @@ function get_f_from_Y_pert_qspace(
             end
 
             # buffer_u at iq2 (if not diagonal pair)
+            # Reverse pair uses Hermitian conjugate: alpha1(q2,q1) = alpha1(q1,q2)^H
             if iq1 != iq2
                 for nu2 in 1:n_bands
                     for nu1 in 1:n_bands
-                        buffer_u[iq2, nu2] += alpha1_blocks[p][nu1, nu2] * x_q1[nu1]
+                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
                     end
                 end
             end
@@ -391,8 +395,12 @@ function get_f_from_Y_pert_qspace(
                     local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
                 end
             end
-            mult = (iq1 < iq2) ? 2 : 1
-            total_sum += mult * local_w
+            # Reverse pair contributes conj(local_w), not local_w
+            if iq1 < iq2
+                total_sum += local_w + conj(local_w)
+            else
+                total_sum += local_w
+            end
         end
 
         # buf_f_weight = sum_{q,nu} conj(buffer_u[q,nu]) * f_psi[nu,q] * y_rot[q,nu]
@@ -499,8 +507,14 @@ function get_perturb_averages_qspace(
         iq_pert, unique_pairs, n_bands, n_q,
         start_index, end_index)
 
-    # D4 contributions
-    f_pert = zeros(ComplexF64, n_bands)
+    # D3 contribution to f_pert from alpha1/Y1 perturbation
+    # This is a D3 term (not D4), so it must be computed regardless of apply_v4
+    f_pert = get_f_from_Y_pert_qspace(
+        X_q, Y_q, f_Y, f_psi, rho, alpha1_blocks, symmetries,
+        iq_pert, unique_pairs, n_bands, n_q,
+        start_index, end_index)
+
+    # D4 contribution to d2v
     if apply_v4
         d2v_v4 = get_d2v_from_Y_pert_qspace(
             X_q, Y_q, f_Y, f_psi, rho, alpha1_blocks, symmetries,
@@ -509,11 +523,6 @@ function get_perturb_averages_qspace(
         for p in 1:n_pairs
             d2v[p] .+= d2v_v4[p]
         end
-
-        f_pert = get_f_from_Y_pert_qspace(
-            X_q, Y_q, f_Y, f_psi, rho, alpha1_blocks, symmetries,
-            iq_pert, unique_pairs, n_bands, n_q,
-            start_index, end_index)
     end
 
     # Pack result: f_pert followed by flattened d2v blocks

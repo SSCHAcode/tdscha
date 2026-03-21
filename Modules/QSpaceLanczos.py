@@ -654,17 +654,23 @@ class QSpaceLanczos(DL.Lanczos):
         return alpha1_blocks
 
     def _flatten_blocks(self, blocks):
-        """Flatten a list of (n_bands, n_bands) blocks into a contiguous array."""
-        return np.concatenate([b.ravel() for b in blocks])
+        """Flatten a list of (n_bands, n_bands) blocks into a contiguous array.
+
+        Uses Fortran (column-major) order to match Julia's column-major storage.
+        """
+        return np.concatenate([b.ravel(order='F') for b in blocks])
 
     def _unflatten_blocks(self, flat):
-        """Unflatten a contiguous array back into a list of blocks."""
+        """Unflatten a contiguous array back into a list of blocks.
+
+        Uses Fortran (column-major) order to match Julia's column-major storage.
+        """
         nb = self.n_bands
         blocks = []
         offset = 0
         for iq1, iq2 in self.unique_pairs:
             size = nb * nb
-            blocks.append(flat[offset:offset + size].reshape(nb, nb))
+            blocks.append(flat[offset:offset + size].reshape(nb, nb, order='F'))
             offset += size
         return blocks
 
