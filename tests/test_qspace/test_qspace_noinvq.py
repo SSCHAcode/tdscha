@@ -29,7 +29,7 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         '..', 'test_julia', 'data')
 
 
-def test_qspace_noinvq(test_v3 = True, test_v4=True):
+def test_qspace_noinvq(test_v3 = True, test_v4=True, verbose=False):
     # Load the original dynamical matrix
     dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
 
@@ -102,6 +102,5 @@ def test_qspace_noinvq(test_v3 = True, test_v4=True):
     
     
 if __name__ == "__main__":
-    verbose = True
-    test_qspace_noinvq(test_v3=True, test_v4=False)
-    test_qspace_noinvq(test_v3=True, test_v4=True)
+    test_qspace_noinvq(test_v3=True, test_v4=False, verbose=True)
+    test_qspace_noinvq(test_v3=True, test_v4=True, verbose=True)

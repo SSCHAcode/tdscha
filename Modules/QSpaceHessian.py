@@ -250,24 +250,50 @@ class QSpaceHessian:
         """Build mask for static psi inner product.
 
         Same structure as FT mask but only one W sector (not a' + b').
+        Acoustic modes (w < eps) are masked out (set to 0) to keep
+        the null space purely in the W sector and avoid inconsistency.
         """
         psi_size = self._get_static_psi_size()
         mask = np.ones(psi_size, dtype=np.float64)
         nb = self.n_bands
+        eps = self.qlanc.acoustic_eps
+
+        # R sector: mask acoustic modes at the perturbation q-point
+        w_qp = self.w_q[:, self.qlanc.iq_pert]
+        for nu in range(nb):
+            if w_qp[nu] < eps:
+                mask[nu] = 0
 
         for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
             offset = self._static_block_offsets[pair_idx]
-            size = self._static_block_sizes[pair_idx]
+            w1 = self.w_q[:, iq1]
+            w2 = self.w_q[:, iq2]
+            # Which modes are acoustic?
+            ac1 = w1 < eps
+            ac2 = w2 < eps
 
             if iq1 < iq2:
-                mask[offset:offset + size] = 2
+                # Full block stored in row-major: element (i,j) at offset + i*nb + j
+                for i in range(nb):
+                    for j in range(nb):
+                        if ac1[i] or ac2[j]:
+                            mask[offset + i * nb + j] = 0
+                        else:
+                            mask[offset + i * nb + j] = 2
             else:
+                # Upper triangle: diagonal then off-diagonal
                 idx = offset
                 for i in range(nb):
-                    mask[idx] = 1  # diagonal
+                    if ac1[i] or ac2[i]:
+                        mask[idx] = 0
+                    else:
+                        mask[idx] = 1  # diagonal
                     idx += 1
                     for j in range(i + 1, nb):
-                        mask[idx] = 2  # off-diagonal
+                        if ac1[i] or ac2[j]:
+                            mask[idx] = 0
+                        else:
+                            mask[idx] = 2  # off-diagonal
                         idx += 1
 
         return mask
@@ -486,7 +512,8 @@ class QSpaceHessian:
     # Core solver
     # ==================================================================
     def compute_hessian_at_q(self, iq, tol=1e-6, max_iters=500,
-                             use_preconditioner=True):
+                             use_preconditioner=True,
+                             dense_fallback=False):
         """Compute the free energy Hessian at a single q-point.
 
         Solves L_static(q) x_i = e_i for each non-acoustic band.
@@ -502,6 +529,10 @@ class QSpaceHessian:
             Maximum number of iterations.
         use_preconditioner : bool
             If True, use harmonic preconditioner.
+        dense_fallback : bool
+            If True, fall back to dense solve when iterative solvers fail.
+            WARNING: this builds a psi_size x psi_size dense matrix, which
+            can be very large for big supercells. Default is False.
 
         Returns
         -------
@@ -584,6 +615,13 @@ class QSpaceHessian:
                     L_op, rhs_tilde, x0=x_tilde, rtol=tol, maxiter=max_iters,
                     M=M_op)
                 if info != 0:
+                    if not dense_fallback:
+                        raise RuntimeError(
+                            "Iterative solvers (GMRES, BiCGSTAB) did not "
+                            "converge for band {} at iq={} (info={}). "
+                            "Set dense_fallback=True to use a dense solve "
+                            "(warning: O(psi_size^2) memory)."
+                            .format(band_i, iq, info))
                     if self.verbose:
                         print("    BiCGSTAB also did not converge "
                               "for band {} (info={}), using dense solve"
@@ -647,7 +685,8 @@ class QSpaceHessian:
         return H_q
 
     def compute_full_hessian(self, tol=1e-6, max_iters=500,
-                             use_preconditioner=True):
+                             use_preconditioner=True,
+                             dense_fallback=False):
         """Compute the Hessian at all q-points and return as CC.Phonons.
 
         Parameters
@@ -658,6 +697,10 @@ class QSpaceHessian:
             Maximum iterations per linear solve.
         use_preconditioner : bool
             If True, use harmonic preconditioner.
+        dense_fallback : bool
+            If True, fall back to dense solve when iterative solvers fail.
+            WARNING: this builds a psi_size x psi_size dense matrix, which
+            can be very large for big supercells. Default is False.
 
         Returns
         -------
@@ -680,7 +723,8 @@ class QSpaceHessian:
                     len(self.irr_qpoints)))
             self.compute_hessian_at_q(
                 iq_irr, tol=tol, max_iters=max_iters,
-                use_preconditioner=use_preconditioner)
+                use_preconditioner=use_preconditioner,
+                dense_fallback=dense_fallback)
 
         # Unfold to full BZ
         for iq_irr in self.irr_qpoints:
