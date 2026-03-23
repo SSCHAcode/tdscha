@@ -437,6 +437,198 @@ end
 
 
 """
+    get_perturb_averages_qspace_fused(...)
+
+Fused single-pass computation of f_pert and d2v_blocks.
+Replaces three separate functions (get_d2v_from_R_pert_qspace,
+get_f_from_Y_pert_qspace, get_d2v_from_Y_pert_qspace) with a single
+loop over (config, sym) that applies the 2 sparse matmuls only once.
+
+For each (config, sym):
+  1. Build x_buf, y_buf and apply symmetry rotation (2 sparse matmuls)
+  2. Compute D3 weights: weight_R, weight_Rf from R1 perturbation
+  3. Compute buffer_u, total_sum (D4 intermediates, shared by f_pert and d2v_v4)
+  4. Compute buf_f_weight from buffer_u (shared by f_pert and d2v_v4)
+  5. Accumulate f_pert (2 terms)
+  6. Accumulate d2v with fused D3 + D4 weights in single inner loop
+"""
+function get_perturb_averages_qspace_fused(
+    X_q::Array{ComplexF64,3},
+    Y_q::Array{ComplexF64,3},
+    f_Y::Matrix{Float64},
+    f_psi::Matrix{Float64},
+    rho::Vector{Float64},
+    R1::Vector{ComplexF64},
+    alpha1_blocks::Vector{Matrix{ComplexF64}},
+    symmetries::Vector{SparseMatrixCSC{ComplexF64,Int32}},
+    apply_v4::Bool,
+    iq_pert::Int64,
+    unique_pairs::Matrix{Int32},
+    n_bands::Int64,
+    n_q::Int64,
+    start_index::Int64,
+    end_index::Int64
+)
+    n_pairs = size(unique_pairs, 1)
+    n_syms = length(symmetries)
+    n_total = n_q * n_bands
+    N_eff = sum(rho)
+
+    # Outputs
+    d2v_blocks = [zeros(ComplexF64, n_bands, n_bands) for _ in 1:n_pairs]
+    f_pert = zeros(ComplexF64, n_bands)
+
+    # Buffers (reused each iteration)
+    x_buf = zeros(ComplexF64, n_total)
+    y_buf = zeros(ComplexF64, n_total)
+    buffer_u = zeros(ComplexF64, n_q, n_bands)
+
+    for bigindex in start_index:end_index
+        i_config = div(bigindex - 1, n_syms) + 1
+        j_sym = mod(bigindex - 1, n_syms) + 1
+
+        # === Step 1: Build combined vector and apply symmetry (ONCE) ===
+        for iq in 1:n_q
+            for nu in 1:n_bands
+                idx = (iq - 1) * n_bands + nu
+                x_buf[idx] = X_q[iq, i_config, nu]
+                y_buf[idx] = Y_q[iq, i_config, nu]
+            end
+        end
+
+        x_rot = symmetries[j_sym] * x_buf
+        y_rot = symmetries[j_sym] * y_buf
+
+        # === Step 2: D3 weights from R1 perturbation ===
+        x_pert = view(x_rot, (iq_pert-1)*n_bands+1:iq_pert*n_bands)
+        y_pert = view(y_rot, (iq_pert-1)*n_bands+1:iq_pert*n_bands)
+
+        weight_R = zero(ComplexF64)
+        for nu in 1:n_bands
+            weight_R += f_Y[nu, iq_pert] * x_pert[nu] * conj(R1[nu])
+        end
+        weight_R *= rho[i_config] / 3.0
+
+        weight_Rf = zero(ComplexF64)
+        for nu in 1:n_bands
+            weight_Rf += conj(R1[nu]) * y_pert[nu]
+        end
+        weight_Rf *= rho[i_config] / 3.0
+
+        # === Step 3: D4 intermediates (buffer_u, total_sum) ===
+        total_sum = zero(ComplexF64)
+        fill!(buffer_u, zero(ComplexF64))
+
+        for p in 1:n_pairs
+            iq1 = unique_pairs[p, 1]
+            iq2 = unique_pairs[p, 2]
+
+            x_q1 = view(x_rot, (iq1-1)*n_bands+1:iq1*n_bands)
+            x_q2 = view(x_rot, (iq2-1)*n_bands+1:iq2*n_bands)
+
+            # buffer_u at iq1: sum_nu2 alpha1[p][nu1, nu2] * x_q2[nu2]
+            for nu1 in 1:n_bands
+                for nu2 in 1:n_bands
+                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                end
+            end
+
+            # buffer_u at iq2 (reverse pair uses Hermitian conjugate)
+            if iq1 != iq2
+                for nu2 in 1:n_bands
+                    for nu1 in 1:n_bands
+                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
+                    end
+                end
+            end
+
+            # total_sum = sum of conj(x_q1)^T * alpha1 * x_q2
+            local_w = zero(ComplexF64)
+            for nu1 in 1:n_bands
+                for nu2 in 1:n_bands
+                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                end
+            end
+            if iq1 < iq2
+                total_sum += local_w + conj(local_w)
+            else
+                total_sum += local_w
+            end
+        end
+
+        # === Step 4: buf_f_weight from buffer_u ===
+        buf_f_weight = zero(ComplexF64)
+        for iq in 1:n_q
+            for nu in 1:n_bands
+                y_val = y_rot[(iq-1)*n_bands + nu]
+                buf_f_weight += conj(buffer_u[iq, nu]) * f_psi[nu, iq] * y_val
+            end
+        end
+
+        # === Step 5: Accumulate f_pert ===
+        # Term 1: (-total_sum/2) * rho/3 * y_rot[q_pert]
+        w1 = -total_sum / 2.0 * rho[i_config] / 3.0
+        for nu in 1:n_bands
+            f_pert[nu] += w1 * y_pert[nu]
+        end
+
+        # Term 2: (-buf_f_weight) * rho/3 * f_Y[nu,q_pert] * x_rot[q_pert,nu]
+        w2 = -buf_f_weight * rho[i_config] / 3.0
+        for nu in 1:n_bands
+            f_pert[nu] += w2 * f_Y[nu, iq_pert] * x_pert[nu]
+        end
+
+        # === Step 6: Fused d2v accumulation (D3 + D4 in single loop) ===
+        # D4 total weights (from get_d2v_from_Y_pert_qspace)
+        # total_wb = -buf_f_weight * rho/4 (same sum, opposite sign, different rho scaling)
+        total_wD4 = zero(ComplexF64)
+        total_wb = zero(ComplexF64)
+        if apply_v4
+            total_wD4 = -total_sum * rho[i_config] / 8.0
+            total_wb = -buf_f_weight * rho[i_config] / 4.0
+        end
+
+        # Combined weights for fused inner loop
+        w_cross = weight_R + total_wD4
+        w_diag = weight_Rf + total_wb
+
+        for p in 1:n_pairs
+            iq1 = unique_pairs[p, 1]
+            iq2 = unique_pairs[p, 2]
+
+            x_q1 = view(x_rot, (iq1-1)*n_bands+1:iq1*n_bands)
+            y_q1 = view(y_rot, (iq1-1)*n_bands+1:iq1*n_bands)
+            x_q2 = view(x_rot, (iq2-1)*n_bands+1:iq2*n_bands)
+            y_q2 = view(y_rot, (iq2-1)*n_bands+1:iq2*n_bands)
+
+            for nu1 in 1:n_bands
+                r1_1 = f_Y[nu1, iq1] * x_q1[nu1]
+                r2_1 = y_q1[nu1]
+                for nu2 in 1:n_bands
+                    r1_2 = f_Y[nu2, iq2] * x_q2[nu2]
+                    r2_2 = y_q2[nu2]
+
+                    contrib = -w_cross * (r1_1 * conj(r2_2) + r2_1 * conj(r1_2))
+                    contrib -= w_diag * r1_1 * conj(r1_2)
+
+                    d2v_blocks[p][nu1, nu2] += contrib
+                end
+            end
+        end
+    end
+
+    # Normalize
+    norm_factor = n_syms * N_eff
+    f_pert ./= norm_factor
+    for p in 1:n_pairs
+        d2v_blocks[p] ./= norm_factor
+    end
+
+    return f_pert, d2v_blocks
+end
+
+
+"""
     get_perturb_averages_qspace(...)
 
 Combined entry point called from Python. Computes f_pert and d2v_blocks,
@@ -501,29 +693,11 @@ function get_perturb_averages_qspace(
         offset += n_bands^2
     end
 
-    # D3 contribution to d2v
-    d2v = get_d2v_from_R_pert_qspace(
-        X_q, Y_q, f_Y, rho, R1, symmetries,
-        iq_pert, unique_pairs, n_bands, n_q,
+    # Fused single-pass computation
+    f_pert, d2v = get_perturb_averages_qspace_fused(
+        X_q, Y_q, f_Y, f_psi, rho, R1, alpha1_blocks, symmetries,
+        apply_v4, iq_pert, unique_pairs, n_bands, n_q,
         start_index, end_index)
-
-    # D3 contribution to f_pert from alpha1/Y1 perturbation
-    # This is a D3 term (not D4), so it must be computed regardless of apply_v4
-    f_pert = get_f_from_Y_pert_qspace(
-        X_q, Y_q, f_Y, f_psi, rho, alpha1_blocks, symmetries,
-        iq_pert, unique_pairs, n_bands, n_q,
-        start_index, end_index)
-
-    # D4 contribution to d2v
-    if apply_v4
-        d2v_v4 = get_d2v_from_Y_pert_qspace(
-            X_q, Y_q, f_Y, f_psi, rho, alpha1_blocks, symmetries,
-            iq_pert, unique_pairs, n_bands, n_q,
-            start_index, end_index)
-        for p in 1:n_pairs
-            d2v[p] .+= d2v_v4[p]
-        end
-    end
 
     # Pack result: f_pert followed by flattened d2v blocks
     result = zeros(ComplexF64, n_bands + n_pairs * n_bands^2)

@@ -332,6 +332,13 @@ class QSpaceLanczos(DL.Lanczos):
             raise ValueError("Must call build_q_pair_map first")
         return self._psi_size
 
+    def get_static_psi_size(self):
+        """Return psi size for the static layout: [R, one W sector].
+
+        This equals the end of the a' sector, i.e. the start of b'.
+        """
+        return self._block_offsets_b[0]
+
     def get_block_offset(self, pair_idx, sector='a'):
         """Get the offset into psi for a given pair index.
 
@@ -383,7 +390,7 @@ class QSpaceLanczos(DL.Lanczos):
             idx += length
         return flat
 
-    def get_block(self, pair_idx, sector='a'):
+    def get_block(self, pair_idx, sector='a', source=None):
         """Reconstruct full (n_bands, n_bands) matrix from psi storage.
 
         Parameters
@@ -392,6 +399,8 @@ class QSpaceLanczos(DL.Lanczos):
             Index into self.unique_pairs.
         sector : str
             'a' or 'b'.
+        source : ndarray or None
+            If provided, read from this array instead of self.psi.
 
         Returns
         -------
@@ -402,7 +411,8 @@ class QSpaceLanczos(DL.Lanczos):
         offset = self.get_block_offset(pair_idx, sector)
         size = self.get_block_size(pair_idx)
 
-        raw = self.psi[offset:offset + size]
+        data = self.psi if source is None else source
+        raw = data[offset:offset + size]
 
         if iq1 < iq2:
             # Full block, row-major

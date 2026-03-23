@@ -11,6 +11,7 @@ import pytest
 
 import cellconstructor as CC
 import cellconstructor.Phonons
+from cellconstructor.Settings import ParallelPrint as print
 
 import sscha, sscha.Ensemble
 
