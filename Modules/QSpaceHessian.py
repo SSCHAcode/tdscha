@@ -87,10 +87,15 @@ class QSpaceHessian:
         self.irr_qpoints = None
         self.q_star_map = None
 
-        # Static psi layout (set by _compute_static_block_layout)
-        self._static_psi_size = None
-        self._static_block_offsets = None
-        self._static_block_sizes = None
+        # Cached static quantities (set by _precompute_static_quantities)
+        self._cached_w_qp_sq = None
+        self._cached_inv_w_qp_sq = None
+        self._cached_inv_lambda = None
+        self._cached_lambda = None
+        self._cached_yw_outer = None
+
+        # Cached spglib symmetry data (set by _find_irreducible_qpoints)
+        self._has_symmetry_data = False
 
     def init(self, use_symmetries=True):
         """Initialize the Lanczos engine and find irreducible q-points.
@@ -126,6 +131,14 @@ class QSpaceHessian:
             if key not in unique_pg:
                 unique_pg[key] = i
         pg_indices = list(unique_pg.values())
+
+        # Cache symmetry data for reuse (e.g. by _find_degenerate_blocks)
+        self._rot_frac_all = rot_frac_all
+        self._trans_frac_all = trans_frac_all
+        self._pg_indices = pg_indices
+        self._M = M
+        self._Minv = Minv
+        self._has_symmetry_data = True
 
         bg = uci.get_reciprocal_vectors() / (2 * np.pi)
 
@@ -169,6 +182,46 @@ class QSpaceHessian:
             print("Q-space Hessian: {} irreducible q-points out of {}".format(
                 len(self.irr_qpoints), self.n_q))
 
+    def _find_degenerate_blocks(self, iq):
+        """Group non-acoustic modes at q-point iq by frequency degeneracy.
+
+        Uses CC.symmetries.get_degeneracies to identify degenerate multiplets,
+        then returns unique groups (filtering out acoustic modes).
+
+        Parameters
+        ----------
+        iq : int
+            Q-point index.
+
+        Returns
+        -------
+        blocks : list of lists of int
+            Each inner list contains band indices forming a degenerate block.
+            E.g. [[3], [4, 5, 6], [7, 8, 9]] for a singlet + two triplets.
+        """
+        w_qp = self.w_q[:, iq]
+        eps = self.qlanc.acoustic_eps
+
+        deg_lists = CC.symmetries.get_degeneracies(w_qp)
+
+        seen = set()
+        blocks = []
+        for nu in range(self.n_bands):
+            if nu in seen:
+                continue
+            if w_qp[nu] < eps:
+                seen.add(nu)
+                continue
+            block = sorted(deg_lists[nu].tolist())
+            # Filter out any acoustic modes that crept in
+            block = [b for b in block if w_qp[b] >= eps]
+            for b in block:
+                seen.add(b)
+            if len(block) > 0:
+                blocks.append(block)
+
+        return blocks
+
     def _build_D_matrix(self, R_cart, t_cart, iq_from, iq_to):
         """Compute the mode representation matrix D for symmetry {R|t}."""
         from tdscha.QSpaceLanczos import QSpaceLanczos
@@ -194,57 +247,20 @@ class QSpaceHessian:
         return D
 
     # ==================================================================
-    # Static psi layout: (R[nb], W[blocks])
-    # Only ONE 2-phonon sector (unlike spectral a'/b')
+    # Static psi layout delegates to QSpaceLanczos
+    # The static layout [R, W_blocks] is structurally identical to
+    # [R, a'_blocks] (the first half of the spectral layout).
     # ==================================================================
-    def _compute_static_block_layout(self):
-        """Pre-compute block layout for the static psi vector.
-
-        Layout: [R sector (nb)] [W blocks (one per unique pair)]
-        """
-        nb = self.n_bands
-        sizes = []
-        for iq1, iq2 in self.qlanc.unique_pairs:
-            if iq1 < iq2:
-                sizes.append(nb * nb)
-            else:
-                sizes.append(nb * (nb + 1) // 2)
-        self._static_block_sizes = sizes
-
-        offsets = []
-        offset = nb  # R sector first
-        for s in sizes:
-            offsets.append(offset)
-            offset += s
-        self._static_block_offsets = offsets
-        self._static_psi_size = offset
-
     def _get_static_psi_size(self):
-        return self._static_psi_size
+        return self.qlanc.get_static_psi_size()
 
     def _get_W_block(self, psi, pair_idx):
         """Extract full (nb, nb) W block from static psi."""
-        nb = self.n_bands
-        iq1, iq2 = self.qlanc.unique_pairs[pair_idx]
-        offset = self._static_block_offsets[pair_idx]
-        size = self._static_block_sizes[pair_idx]
-        raw = psi[offset:offset + size]
-        if iq1 < iq2:
-            return raw.reshape(nb, nb).copy()
-        else:
-            return self.qlanc._unpack_upper_triangle(raw, nb)
+        return self.qlanc.get_block(pair_idx, sector='a', source=psi)
 
     def _set_W_block(self, psi, pair_idx, matrix):
         """Write full (nb, nb) matrix into W sector of static psi."""
-        nb = self.n_bands
-        iq1, iq2 = self.qlanc.unique_pairs[pair_idx]
-        offset = self._static_block_offsets[pair_idx]
-        if iq1 < iq2:
-            psi[offset:offset + nb * nb] = matrix.ravel()
-        else:
-            size = self._static_block_sizes[pair_idx]
-            psi[offset:offset + size] = \
-                self.qlanc._pack_upper_triangle(matrix, nb)
+        self.qlanc.set_block_in_psi(pair_idx, matrix, 'a', psi)
 
     def _static_mask(self):
         """Build mask for static psi inner product.
@@ -260,46 +276,41 @@ class QSpaceHessian:
 
         # R sector: mask acoustic modes at the perturbation q-point
         w_qp = self.w_q[:, self.qlanc.iq_pert]
-        for nu in range(nb):
-            if w_qp[nu] < eps:
-                mask[nu] = 0
+        mask[:nb] = np.where(w_qp < eps, 0.0, 1.0)
 
         for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
-            offset = self._static_block_offsets[pair_idx]
+            offset = self.qlanc.get_block_offset(pair_idx, 'a')
             w1 = self.w_q[:, iq1]
             w2 = self.w_q[:, iq2]
-            # Which modes are acoustic?
             ac1 = w1 < eps
             ac2 = w2 < eps
+            # acoustic_any[i,j] = True if either mode i or j is acoustic
+            acoustic_any = ac1[:, None] | ac2[None, :]
 
             if iq1 < iq2:
-                # Full block stored in row-major: element (i,j) at offset + i*nb + j
-                for i in range(nb):
-                    for j in range(nb):
-                        if ac1[i] or ac2[j]:
-                            mask[offset + i * nb + j] = 0
-                        else:
-                            mask[offset + i * nb + j] = 2
+                # Full block: 0 if acoustic, 2 if not
+                block_mask = np.where(acoustic_any, 0.0, 2.0)
+                mask[offset:offset + nb * nb] = block_mask.ravel()
             else:
-                # Upper triangle: diagonal then off-diagonal
-                idx = offset
+                # Upper triangle storage: pack diag (weight=1) + off-diag (weight=2)
+                size = self.qlanc.get_block_size(pair_idx)
+                # Build full matrix of weights: diag=1, off-diag=2, acoustic=0
+                full_weights = np.where(acoustic_any, 0.0, 2.0)
+                np.fill_diagonal(full_weights, np.where(
+                    ac1 | ac2, 0.0, 1.0))
+                # Pack upper triangle in row-major order
+                tri = np.zeros(size, dtype=np.float64)
+                idx = 0
                 for i in range(nb):
-                    if ac1[i] or ac2[i]:
-                        mask[idx] = 0
-                    else:
-                        mask[idx] = 1  # diagonal
-                    idx += 1
-                    for j in range(i + 1, nb):
-                        if ac1[i] or ac2[j]:
-                            mask[idx] = 0
-                        else:
-                            mask[idx] = 2  # off-diagonal
-                        idx += 1
+                    length = nb - i
+                    tri[idx:idx + length] = full_weights[i, i:]
+                    idx += length
+                mask[offset:offset + size] = tri
 
         return mask
 
     # ==================================================================
-    # Lambda: static 2-phonon propagator
+    # Precompute static quantities (called once per q-point)
     # ==================================================================
     def _compute_lambda_q(self, iq1, iq2):
         """Compute the static 2-phonon propagator Lambda for pair (iq1, iq2).
@@ -366,6 +377,62 @@ class QSpaceHessian:
 
         return Lambda
 
+    def _compute_Y_w(self, iq):
+        """Compute Y_w = 2*w/(2*n+1) for all bands at q-point iq.
+
+        Acoustic modes (w < eps) get Y_w = 0.
+        """
+        w = self.w_q[:, iq]
+        T = self.qlanc.T
+
+        n = np.zeros_like(w)
+        if T > __EPSILON__:
+            valid = w > self.qlanc.acoustic_eps
+            n[valid] = 1.0 / (np.exp(w[valid] * __RyToK__ / T) - 1.0)
+
+        Y_w = np.zeros_like(w)
+        valid = w > self.qlanc.acoustic_eps
+        Y_w[valid] = 2.0 * w[valid] / (2.0 * n[valid] + 1.0)
+        return Y_w
+
+    def _precompute_static_quantities(self):
+        """Cache all (w,T)-dependent quantities for the current q-point.
+
+        Called once per q-point before the GMRES loop. Caches:
+          - _cached_w_qp_sq: w^2 for R sector
+          - _cached_inv_w_qp_sq: 1/w^2 for preconditioner R sector
+          - _cached_inv_lambda[pair_idx]: 1/Lambda for harmonic W sector
+          - _cached_lambda[pair_idx]: Lambda for preconditioner W sector
+          - _cached_yw_outer[pair_idx]: -2*outer(Y_w1,Y_w2) for anharmonic
+        """
+        nb = self.n_bands
+        eps = self.qlanc.acoustic_eps
+
+        # R sector
+        w_qp = self.w_q[:, self.qlanc.iq_pert]
+        self._cached_w_qp_sq = w_qp ** 2
+        self._cached_inv_w_qp_sq = np.where(
+            w_qp > eps, 1.0 / np.where(w_qp > eps, w_qp, 1.0) ** 2, 0.0)
+
+        # W sector: per-pair Lambda and Y_w caches
+        n_pairs = len(self.qlanc.unique_pairs)
+        self._cached_inv_lambda = [None] * n_pairs
+        self._cached_lambda = [None] * n_pairs
+        self._cached_yw_outer = [None] * n_pairs
+
+        for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
+            Lambda = self._compute_lambda_q(iq1, iq2)
+            self._cached_lambda[pair_idx] = Lambda
+
+            # 1/Lambda with safe division (acoustic → 0)
+            safe_Lambda = np.where(np.abs(Lambda) > 1e-30, Lambda, 1.0)
+            self._cached_inv_lambda[pair_idx] = np.where(
+                np.abs(Lambda) > 1e-30, 1.0 / safe_Lambda, 0.0)
+
+            Y_w1 = self._compute_Y_w(iq1)
+            Y_w2 = self._compute_Y_w(iq2)
+            self._cached_yw_outer[pair_idx] = -2.0 * np.outer(Y_w1, Y_w2)
+
     # ==================================================================
     # Static L operator
     # ==================================================================
@@ -390,21 +457,12 @@ class QSpaceHessian:
 
         # --- Harmonic part ---
         # R sector: w² * R
-        w_qp = self.w_q[:, self.qlanc.iq_pert]
-        out[:nb] = (w_qp ** 2) * psi[:nb]
+        out[:nb] = self._cached_w_qp_sq * psi[:nb]
 
         # W sector: (1/Lambda) * W
-        for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
-            Lambda = self._compute_lambda_q(iq1, iq2)
+        for pair_idx in range(len(self.qlanc.unique_pairs)):
             W_block = self._get_W_block(psi, pair_idx)
-
-            # 1/Lambda * W, with Lambda=0 for acoustic modes → set to 0
-            safe_Lambda = np.where(np.abs(Lambda) > 1e-30, Lambda, 1.0)
-            inv_Lambda_W = np.where(
-                np.abs(Lambda) > 1e-30,
-                W_block / safe_Lambda,
-                0.0)
-
+            inv_Lambda_W = self._cached_inv_lambda[pair_idx] * W_block
             self._set_W_block(out, pair_idx, inv_Lambda_W)
 
         # --- Anharmonic part ---
@@ -417,7 +475,7 @@ class QSpaceHessian:
         """Apply the anharmonic part of the static L operator.
 
         1. Extract R1 from R sector
-        2. Transform W blocks → Y1 (Upsilon perturbation)
+        2. Transform W blocks -> Y1 (Upsilon perturbation)
         3. Call Julia q-space extension
         4. R output = -f_pert, W output = d2v blocks
 
@@ -435,15 +493,10 @@ class QSpaceHessian:
         R1 = psi[:nb].copy()
 
         # Build Y1 blocks from W: Y1 = -2 * Y_w1 * Y_w2 * W
-        # Y_w[nu] = 2*w/(2*n+1) for each q-point
         Y1_blocks = []
-        for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
+        for pair_idx in range(len(self.qlanc.unique_pairs)):
             W_block = self._get_W_block(psi, pair_idx)
-
-            Y_w1 = self._compute_Y_w(iq1)  # (nb,)
-            Y_w2 = self._compute_Y_w(iq2)  # (nb,)
-
-            Y1_block = -2.0 * np.outer(Y_w1, Y_w2) * W_block
+            Y1_block = self._cached_yw_outer[pair_idx] * W_block
             Y1_blocks.append(Y1_block)
 
         Y1_flat = self.qlanc._flatten_blocks(Y1_blocks)
@@ -451,32 +504,14 @@ class QSpaceHessian:
         # Call Julia via the same interface as the spectral case
         f_pert, d2v_blocks = self.qlanc._call_julia_qspace(R1, Y1_flat)
 
-        # Output: R ← -f_pert (note the sign!)
+        # Output: R <- -f_pert (note the sign!)
         out[:nb] = -f_pert
 
-        # Output: W ← d2v (direct, no chi± transformation)
+        # Output: W <- d2v (direct, no chi± transformation)
         for pair_idx in range(len(self.qlanc.unique_pairs)):
             self._set_W_block(out, pair_idx, d2v_blocks[pair_idx])
 
         return out
-
-    def _compute_Y_w(self, iq):
-        """Compute Y_w = 2*w/(2*n+1) for all bands at q-point iq.
-
-        Acoustic modes (w < eps) get Y_w = 0.
-        """
-        w = self.w_q[:, iq]
-        T = self.qlanc.T
-
-        n = np.zeros_like(w)
-        if T > __EPSILON__:
-            valid = w > self.qlanc.acoustic_eps
-            n[valid] = 1.0 / (np.exp(w[valid] * __RyToK__ / T) - 1.0)
-
-        Y_w = np.zeros_like(w)
-        valid = w > self.qlanc.acoustic_eps
-        Y_w[valid] = 2.0 * w[valid] / (2.0 * n[valid] + 1.0)
-        return Y_w
 
     # ==================================================================
     # Preconditioner: inverse of harmonic L_static
@@ -493,17 +528,13 @@ class QSpaceHessian:
         psi = psi_tilde * inv_sqrt_mask
         result = np.zeros_like(psi)
 
-        # R sector: 1/w²
-        w_qp = self.w_q[:, self.qlanc.iq_pert]
-        for nu in range(nb):
-            if w_qp[nu] > self.qlanc.acoustic_eps:
-                result[nu] = psi[nu] / (w_qp[nu] ** 2)
+        # R sector: 1/w² (vectorized)
+        result[:nb] = self._cached_inv_w_qp_sq * psi[:nb]
 
         # W sector: Lambda (inverse of 1/Lambda)
-        for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
-            Lambda = self._compute_lambda_q(iq1, iq2)
+        for pair_idx in range(len(self.qlanc.unique_pairs)):
             W_block = self._get_W_block(psi, pair_idx)
-            result_block = Lambda * W_block
+            result_block = self._cached_lambda[pair_idx] * W_block
             self._set_W_block(result, pair_idx, result_block)
 
         return result * sqrt_mask
@@ -513,11 +544,17 @@ class QSpaceHessian:
     # ==================================================================
     def compute_hessian_at_q(self, iq, tol=1e-6, max_iters=500,
                              use_preconditioner=True,
-                             dense_fallback=False):
+                             dense_fallback=False,
+                             use_mode_symmetry=True):
         """Compute the free energy Hessian at a single q-point.
 
         Solves L_static(q) x_i = e_i for each non-acoustic band.
         G_q[j,i] = x_i[j] (R-sector), H_q = inv(G_q).
+
+        When use_mode_symmetry=True and degenerate modes are present,
+        exploits Schur's lemma: L_static commutes with the little group
+        of q, so G_q restricted to a d-dimensional irrep block is c*I_d.
+        Only one solve per degenerate block is needed instead of d solves.
 
         Parameters
         ----------
@@ -533,6 +570,10 @@ class QSpaceHessian:
             If True, fall back to dense solve when iterative solvers fail.
             WARNING: this builds a psi_size x psi_size dense matrix, which
             can be very large for big supercells. Default is False.
+        use_mode_symmetry : bool
+            If True, exploit mode degeneracy to reduce the number of GMRES
+            solves. Within each degenerate block, only one solve is performed
+            and G_q is filled using Schur's lemma (G_block = c * I).
 
         Returns
         -------
@@ -543,8 +584,11 @@ class QSpaceHessian:
 
         # 1. Setup pair map and block layout
         self.qlanc.build_q_pair_map(iq)
-        self._compute_static_block_layout()
         psi_size = self._get_static_psi_size()
+
+        # 2. Precompute all static quantities (Lambda, Y_w, w²) once
+        self._precompute_static_quantities()
+
         mask = self._static_mask()
 
         # Similarity transform arrays
@@ -553,7 +597,7 @@ class QSpaceHessian:
         nonzero = mask > 0
         inv_sqrt_mask[nonzero] = 1.0 / sqrt_mask[nonzero]
 
-        # 2. Define transformed operator: L_tilde = D^{1/2} L_static D^{-1/2}
+        # 3. Define transformed operator: L_tilde = D^{1/2} L_static D^{-1/2}
         def apply_L_tilde(x_tilde):
             x = x_tilde * inv_sqrt_mask
             Lx = self._apply_L_static_q(x)
@@ -562,7 +606,7 @@ class QSpaceHessian:
         L_op = scipy.sparse.linalg.LinearOperator(
             (psi_size, psi_size), matvec=apply_L_tilde, dtype=np.complex128)
 
-        # 3. Preconditioner
+        # 4. Preconditioner
         M_op = None
         if use_preconditioner:
             def apply_M_tilde(x_tilde):
@@ -572,21 +616,35 @@ class QSpaceHessian:
                 (psi_size, psi_size), matvec=apply_M_tilde,
                 dtype=np.complex128)
 
-        # 4. Identify non-acoustic bands
+        # 5. Identify non-acoustic bands and degenerate blocks
         w_qp = self.w_q[:, iq]
         non_acoustic = [nu for nu in range(nb)
                         if w_qp[nu] > self.qlanc.acoustic_eps]
 
-        if self.verbose:
-            print("  Solving at q={} ({} non-acoustic bands out of {})".format(
-                iq, len(non_acoustic), nb))
+        # Build solve schedule: list of (band_to_solve, block_members)
+        if use_mode_symmetry:
+            blocks = self._find_degenerate_blocks(iq)
+            solve_schedule = [(block[0], block) for block in blocks]
+            n_solves = len(solve_schedule)
+            n_skipped = len(non_acoustic) - n_solves
+        else:
+            solve_schedule = [(nu, [nu]) for nu in non_acoustic]
+            n_solves = len(solve_schedule)
+            n_skipped = 0
 
-        # 5. Solve L_static x_i = e_i for each non-acoustic band
+        if self.verbose:
+            msg = "  Solving at q={} ({} non-acoustic bands, {} solves".format(
+                iq, len(non_acoustic), n_solves)
+            if n_skipped > 0:
+                msg += ", {} skipped via degeneracy".format(n_skipped)
+            print(msg + ")")
+
+        # 6. Solve L_static x_i = e_i (one per degenerate block)
         G_q = np.zeros((nb, nb), dtype=np.complex128)
         total_iters = 0
         L_dense = None  # Built lazily if iterative solvers fail
 
-        for band_i in non_acoustic:
+        for band_i, block in solve_schedule:
             rhs = np.zeros(psi_size, dtype=np.complex128)
             rhs[band_i] = 1.0
             rhs_tilde = rhs * sqrt_mask
@@ -647,17 +705,46 @@ class QSpaceHessian:
             # Un-transform
             x = x_tilde * inv_sqrt_mask
 
-            # Extract R-sector
-            G_q[:, band_i] = x[:nb]
+            # Fill G_q using Schur's lemma for degenerate blocks.
+            # G commutes with the little group, so between two d-dim
+            # copies of the same irrep, G = c_cross * I_d.
+            if len(block) == 1:
+                # Non-degenerate: full column from R-sector
+                G_q[:, band_i] = x[:nb]
+            else:
+                d = len(block)
+                # Representative column: store the full solved column
+                G_q[:, band_i] = x[:nb]
+                # Non-rep columns: derive from Schur identity structure.
+                # Within the block: G[block[i], block[j]] = c * delta(i,j)
+                # Between two d-dim blocks A,B of same irrep:
+                #   G[B[k], A[j]] = G[B[0], A[0]] * delta(k, j)
+                for j in range(1, d):
+                    non_rep = block[j]
+                    # Within-block diagonal
+                    G_q[non_rep, non_rep] = x[band_i]
+                    # Cross-coupling with other same-dimension blocks
+                    for _, other_block in solve_schedule:
+                        if other_block[0] == band_i:
+                            continue
+                        if len(other_block) == d:
+                            # Same irrep type: shifted diagonal
+                            G_q[other_block[j], non_rep] = \
+                                x[other_block[0]]
+                    # Entries with different-dimension blocks and singlets
+                    # are zero by Schur (different irreps), left as 0.
 
             if self.verbose:
-                print("    Band {}: {} iters, {:.2f}s".format(
-                    band_i, n_iters[0], t2 - t1))
+                block_str = "{}".format(block) if len(block) > 1 else ""
+                print("    Band {}{}: {} iters, {:.2f}s".format(
+                    band_i,
+                    " (block {})".format(block_str) if block_str else "",
+                    n_iters[0], t2 - t1))
 
-        # 6. Symmetrize G_q (should be Hermitian)
+        # 7. Symmetrize G_q (should be Hermitian)
         G_q = (G_q + G_q.conj().T) / 2
 
-        # 7. Invert to get H_q
+        # 8. Invert to get H_q
         H_q = np.zeros((nb, nb), dtype=np.complex128)
         if len(non_acoustic) > 0:
             na = np.array(non_acoustic)
@@ -686,7 +773,8 @@ class QSpaceHessian:
 
     def compute_full_hessian(self, tol=1e-6, max_iters=500,
                              use_preconditioner=True,
-                             dense_fallback=False):
+                             dense_fallback=False,
+                             use_mode_symmetry=True):
         """Compute the Hessian at all q-points and return as CC.Phonons.
 
         Parameters
@@ -701,6 +789,8 @@ class QSpaceHessian:
             If True, fall back to dense solve when iterative solvers fail.
             WARNING: this builds a psi_size x psi_size dense matrix, which
             can be very large for big supercells. Default is False.
+        use_mode_symmetry : bool
+            If True, exploit mode degeneracy to reduce GMRES solves.
 
         Returns
         -------
@@ -724,7 +814,8 @@ class QSpaceHessian:
             self.compute_hessian_at_q(
                 iq_irr, tol=tol, max_iters=max_iters,
                 use_preconditioner=use_preconditioner,
-                dense_fallback=dense_fallback)
+                dense_fallback=dense_fallback,
+                use_mode_symmetry=use_mode_symmetry)
 
         # Unfold to full BZ
         for iq_irr in self.irr_qpoints:

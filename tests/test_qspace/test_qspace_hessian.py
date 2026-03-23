@@ -165,6 +165,115 @@ def test_qspace_hessian_symmetry():
 
     print("=== Test the complete Hessian matrix  PASSED ===")
 
+def test_hessian_L_operator_timing():
+    """Benchmark Hessian L-operator to verify caching works.
+
+    Compares the L-operator cost against the Lanczos harmonic-only part
+    (apply_L1_FT) to verify that cached quantities keep per-iteration
+    overhead reasonable. The Hessian L includes anharmonic (Julia) cost
+    while the harmonic part is pure numpy, so we just check it's not
+    unreasonably slow.
+    """
+    import time
+    try:
+        import tdscha.QSpaceHessian as QH
+        import tdscha.QSpaceLanczos as QL
+        if not QL.__JULIA_EXT__:
+            pytest.skip("Julia extension not loaded")
+    except ImportError:
+        pytest.skip("Julia or QSpaceHessian not available")
+
+    ens = _load_ensemble()
+
+    # Setup Hessian
+    qh = QH.QSpaceHessian(ens, verbose=False, lo_to_split=None)
+    qh.init(use_symmetries=True)
+    qh.qlanc.build_q_pair_map(0)
+    qh._precompute_static_quantities()
+    psi_size_h = qh._get_static_psi_size()
+    psi_h = np.random.randn(psi_size_h) + 1j * np.random.randn(psi_size_h)
+
+    # Setup Lanczos for harmonic-only comparison
+    qlanc = QL.QSpaceLanczos(ens, lo_to_split=None)
+    qlanc.init(use_symmetries=True)
+    qlanc.build_q_pair_map(0)
+    psi_size_l = qlanc.get_psi_size()
+    qlanc.psi = np.random.randn(psi_size_l) + 1j * np.random.randn(psi_size_l)
+
+    # Warmup
+    qh._apply_L_static_q(psi_h)
+    qlanc.apply_L1_FT()
+
+    # Benchmark Hessian L-operator (harmonic + anharmonic, cached)
+    n_reps = 5
+    t0 = time.time()
+    for _ in range(n_reps):
+        qh._apply_L_static_q(psi_h)
+    t_hessian = (time.time() - t0) / n_reps
+
+    # Benchmark Lanczos harmonic-only L-operator
+    t0 = time.time()
+    for _ in range(n_reps):
+        qlanc.apply_L1_FT()
+    t_lanczos_harm = (time.time() - t0) / n_reps
+
+    print()
+    print("=== L-operator timing benchmark ===")
+    print("  Hessian L (full, cached): {:.4f}s per call".format(t_hessian))
+    print("  Lanczos harmonic L:       {:.4f}s per call".format(t_lanczos_harm))
+    print("  (Hessian includes anharmonic Julia call; Lanczos is harmonic only)")
+
+    # The Hessian L includes the Julia anharmonic call so it will be
+    # slower than harmonic-only. Just verify it completes in reasonable time.
+    assert t_hessian < 10.0, (
+        "Hessian L-operator took {:.1f}s per call — too slow".format(t_hessian))
+
+
+def test_qspace_hessian_mode_symmetry():
+    """Verify that mode symmetry optimization gives same Hessian eigenvalues.
+
+    For each irreducible q-point, computes the Hessian with
+    use_mode_symmetry=False (full solves) and use_mode_symmetry=True
+    (degenerate block reduction), then compares eigenvalues.
+    """
+    try:
+        import tdscha.QSpaceHessian as QH
+        import tdscha.QSpaceLanczos as QL
+        if not QL.__JULIA_EXT__:
+            pytest.skip("Julia extension not loaded")
+    except ImportError:
+        pytest.skip("Julia or QSpaceHessian not available")
+
+    ens = _load_ensemble()
+
+    # -- Without mode symmetry (reference) --
+    qh_ref = QH.QSpaceHessian(ens, verbose=True, lo_to_split=None)
+    qh_ref.init(use_symmetries=True)
+
+    # -- With mode symmetry --
+    qh_sym = QH.QSpaceHessian(ens, verbose=True, lo_to_split=None)
+    qh_sym.init(use_symmetries=True)
+
+    print()
+    print("=== Mode symmetry optimization test ===")
+
+    for iq_irr in qh_ref.irr_qpoints:
+        H_ref = qh_ref.compute_hessian_at_q(
+            iq_irr, tol=1e-8, max_iters=1000, use_mode_symmetry=False)
+        H_sym = qh_sym.compute_hessian_at_q(
+            iq_irr, tol=1e-8, max_iters=1000, use_mode_symmetry=True)
+
+        max_diff = np.max(np.abs(H_ref - H_sym))
+
+        assert max_diff < 1e-8, (
+            "Mode symmetry optimization changed eigenvalues at iq={}: "
+            "max diff = {:.2e}".format(iq_irr, max_diff))
+
+    print("=== Mode symmetry optimization test PASSED ===")
+
+
 if __name__ == "__main__":
     test_qspace_hessian_gamma()
     test_qspace_hessian_symmetry()
+    test_hessian_L_operator_timing()
+    test_qspace_hessian_mode_symmetry()
