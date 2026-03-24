@@ -21,6 +21,9 @@ population_id = 10
 # Temperature of the ensemble (in K)
 temperature = 450.0
 
+# Final dynamical matrix (if None, SSCHA minimization will be run)
+final_dyn = None
+
 # Account for fourth-order scattering?
 include_v4 = True
 
