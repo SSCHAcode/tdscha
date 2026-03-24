@@ -76,24 +76,22 @@ freqs_cm = np.sqrt(np.abs(eigvals)) * np.sign(eigvals) * CC.Units.RY_TO_CM
 print("Frequencies at Gamma (cm-1):", np.sort(freqs_cm))
 ```
 
-### Comparison with the Direct Method
+### Controlling Anharmonic Contributions
 
-To verify your results or for small systems where both methods are feasible:
+By default, `QSpaceHessian` includes both third-order (cubic, D3) and fourth-order (quartic, D4) anharmonic terms. You can control which terms are included using the `ignore_v3` and `ignore_v4` flags:
 
 ```python
-# Direct method (from python-sscha)
-hessian_direct = ensemble.get_free_energy_hessian(include_v4=True)
+# Full anharmonic Hessian (default)
+hess = QH.QSpaceHessian(ensemble)  # ignore_v3=False, ignore_v4=False
 
-# Q-space method
-hess = QH.QSpaceHessian(ensemble)
-hess.init()
-hessian_qspace = hess.compute_full_hessian()
+# Exclude v4 only
+hess = QH.QSpaceHessian(ensemble, ignore_v4=True)
 
-# Compare eigenvalues at each q-point
-for iq in range(len(dyn.q_tot)):
-    w_direct = np.linalg.eigvalsh(hessian_direct.dynmats[iq])
-    w_qspace = np.linalg.eigvalsh(hessian_qspace.dynmats[iq])
-    print(f"iq={iq}: max diff = {np.max(np.abs(w_direct - w_qspace)):.2e}")
+# Harmonic only (both D3 and D4 excluded)
+hess = QH.QSpaceHessian(ensemble, ignore_v3=True, ignore_v4=True)
+
+# Or modify flags dynamically after initialization
+hess.ignore_v4 = True  # Automatically propagates to underlying QSpaceLanczos
 ```
 
 ## Tuning the Solver
@@ -160,7 +158,7 @@ $$
 \mathcal{L}^\text{(anh)} = \begin{pmatrix} \overset{(4)}{D} & \overset{(3)}{D} \\ \overset{(3)}{D} & 0 \end{pmatrix}
 $$
 
-The harmonic part is trivially invertible ($W^{-1}$ is the inverse of the two-phonon propagator, $\overset{(2)}{D}$ contains the squared SSCHA frequencies $\omega_\mu^2$). The anharmonic part is applied efficiently via importance-sampled ensemble averages, scaling as $O(N^2)$ per application instead of $O(N^4)$ to store $\overset{(4)}{D}$.
+The harmonic part is trivially invertible ($W^{-1}$ is the inverse of the two-phonon propagator, $\overset{(2)}{D}$ contains the squared SSCHA frequencies $\omega_\mu^2$). The anharmonic part is applied efficiently via importance-sampled ensemble averages, scaling as $O(N^2)$ per application instead of $O(N^4)$ to store $\overset{(4)}{D}$. Setting `ignore_v3=True` puts $\overset{(3)}{D}$ to zero; setting `ignore_v4=True` puts $\overset{(4)}{D}$ to zero.
 
 ### Q-Space Block Diagonality
 

@@ -66,12 +66,18 @@ class QSpaceHessian:
         Additional keyword arguments passed to QSpaceLanczos.
     """
 
-    def __init__(self, ensemble, verbose=True, **kwargs):
+    def __init__(self, ensemble, verbose=True, ignore_v3=False, ignore_v4=False, **kwargs):
         from tdscha.QSpaceLanczos import QSpaceLanczos
 
         self.qlanc = QSpaceLanczos(ensemble, **kwargs)
         self.ensemble = ensemble
         self.verbose = verbose
+
+        # Store flags locally AND set on QSpaceLanczos
+        self.ignore_v3 = ignore_v3
+        self.ignore_v4 = ignore_v4
+        self.qlanc.ignore_v3 = ignore_v3
+        self.qlanc.ignore_v4 = ignore_v4
 
         # Shortcuts
         self.n_q = self.qlanc.n_q
@@ -96,6 +102,15 @@ class QSpaceHessian:
 
         # Cached spglib symmetry data (set by _find_irreducible_qpoints)
         self._has_symmetry_data = False
+
+    def __setattr__(self, name, value):
+        """Override setattr to propagate ignore_v3/ignore_v4 to qlanc."""
+        super().__setattr__(name, value)
+        # Propagate flag changes to the underlying QSpaceLanczos
+        if name == 'ignore_v3' and hasattr(self, 'qlanc') and self.qlanc is not None:
+            self.qlanc.ignore_v3 = value
+        elif name == 'ignore_v4' and hasattr(self, 'qlanc') and self.qlanc is not None:
+            self.qlanc.ignore_v4 = value
 
     def init(self, use_symmetries=True):
         """Initialize the Lanczos engine and find irreducible q-points.
@@ -490,7 +505,15 @@ class QSpaceHessian:
         nb = self.n_bands
         out = np.zeros_like(psi)
 
+        # If both D3 and D4 are ignored, return zero (harmonic only)
+        if self.ignore_v3 and self.ignore_v4:
+            return out
+
         R1 = psi[:nb].copy()
+
+        # If D3 is ignored, zero out R1 so that D3 weight is zero
+        if self.ignore_v3:
+            R1[:] = 0.0
 
         # Build Y1 blocks from W: Y1 = -2 * Y_w1 * Y_w2 * W
         Y1_blocks = []
@@ -502,6 +525,7 @@ class QSpaceHessian:
         Y1_flat = self.qlanc._flatten_blocks(Y1_blocks)
 
         # Call Julia via the same interface as the spectral case
+        # The ignore_v4 flag is handled inside _call_julia_qspace
         f_pert, d2v_blocks = self.qlanc._call_julia_qspace(R1, Y1_flat)
 
         # Output: R <- -f_pert (note the sign!)
