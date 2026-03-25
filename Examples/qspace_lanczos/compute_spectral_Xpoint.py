@@ -101,7 +101,7 @@ def main():
         print("=" * 50)
 
         qlanc.prepare_mode_q(iq_pert, band)
-        qlanc.run_FT(N_STEPS, save_each=10, save_dir=SAVE_DIR,
+        qlanc.run_FT(N_STEPS, save_dir=SAVE_DIR,
                       prefix="Xpoint_band{}".format(band), verbose=True)
         qlanc.save_status(os.path.join(SAVE_DIR,
                           "Xpoint_band{}_final.npz".format(band)))
