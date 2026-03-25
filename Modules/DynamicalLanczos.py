@@ -300,6 +300,7 @@ class Lanczos(object):
         self.gamma_only = False
         self.trans_projector = None    # (n_modes, n_modes) matrix P = (1/n_cells) Σ_R T_R^mode
         self.trans_operators = None    # list of (n_modes, n_modes) T_R^mode matrices
+        self.trans_cart_perms = None   # list of Cartesian permutation index arrays for fast projection
 
         # Set to True if we want to use the Wigner equations
         self.use_wigner = use_wigner
@@ -764,15 +765,21 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                     len(pg_symmetries), n_total_syms, n_total_syms // max(len(pg_symmetries), 1)))
 
             # Build translation operators in mode space: T_R^mode = pols^T @ P_R @ pols
+            # Also store Cartesian permutation index arrays for fast projection
             self.trans_operators = []
+            self.trans_cart_perms = []
             nat_sc = super_structure.N_atoms
             for t_sym in translations:
                 irt = CC.symmetries.GetIRT(super_structure, t_sym)
                 # Build Cartesian permutation matrix P_R (3*nat_sc x 3*nat_sc)
                 P_R = np.zeros((3 * nat_sc, 3 * nat_sc), dtype=np.double)
+                # Build inverse permutation index array for fast O(n^2) projection
+                inv_perm = np.zeros(3 * nat_sc, dtype=np.intp)
                 for i_at in range(nat_sc):
                     j_at = irt[i_at]
                     P_R[3*j_at:3*j_at+3, 3*i_at:3*i_at+3] = np.eye(3)
+                    inv_perm[3*j_at:3*j_at+3] = [3*i_at, 3*i_at+1, 3*i_at+2]
+                self.trans_cart_perms.append(inv_perm)
                 # Project into mode space
                 T_mode = self.pols.T @ P_R @ self.pols  # (n_modes, n_modes)
                 self.trans_operators.append(T_mode)
@@ -3171,12 +3178,16 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             # Project f_pert_av: P_trans @ f
             f_pert_av = self.trans_projector @ f_pert_av
 
-            # Project d2v_pert_av: (1/n_cells) Σ_R T_R @ d2v @ T_R^T
-            n_cells = len(self.trans_operators)
-            d2v_proj = np.zeros_like(d2v_pert_av)
-            for T_R in self.trans_operators:
-                d2v_proj += T_R @ d2v_pert_av @ T_R.T
-            d2v_pert_av = d2v_proj / n_cells
+            # Project d2v_pert_av using Cartesian-space permutations (O(n^2) per translation)
+            # Math: (1/N) Σ_R T_R @ d2v @ T_R^T = pols^T @ [(1/N) Σ_R P_R @ (pols @ d2v @ pols^T) @ P_R^T] @ pols
+            # where P_R @ M @ P_R^T is just row/column permutation (fancy indexing)
+            n_cells = len(self.trans_cart_perms)
+            d2v_cart = self.pols @ d2v_pert_av @ self.pols.T
+            d2v_cart_avg = np.zeros_like(d2v_cart)
+            for inv_perm in self.trans_cart_perms:
+                d2v_cart_avg += d2v_cart[np.ix_(inv_perm, inv_perm)]
+            d2v_cart_avg /= n_cells
+            d2v_pert_av = self.pols.T @ d2v_cart_avg @ self.pols
             _t_trans_end = time.time()
             if self.verbose:
                 print("Time for translational projection: {:.6f} s".format(_t_trans_end - _t_trans_start))

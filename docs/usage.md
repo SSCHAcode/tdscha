@@ -222,6 +222,158 @@ gf = lanczos.get_green_function_continued_fraction(
 ```
 
 
+## Q-Space Lanczos
+
+The `QSpaceLanczos` module provides a reformulation of the Lanczos algorithm in q-space (Bloch basis), exploiting momentum conservation from Bloch's theorem. This can give a significant speedup over the standard real-space calculation, proportional to the number of unit cells in the supercell ($N_\text{cell}$).
+
+### How It Works
+
+In the standard real-space Lanczos, the two-phonon sector has dimension $\sim n_\text{modes}^2 / 2$, where $n_\text{modes} = 3 N_\text{atoms,sc}$ is the number of supercell modes. For a 4x4x4 supercell of a 2-atom unit cell, this means $\sim 460{,}000$ entries.
+
+By working in q-space, momentum conservation ($\mathbf{q}_1 + \mathbf{q}_2 = \mathbf{q}_\text{pert} + \mathbf{G}$) makes the two-phonon sector **block-diagonal**: only pairs of q-points satisfying the conservation law contribute. The total two-phonon size drops from $\sim n_\text{modes}^2/2$ to $\sim N_\text{cell} \cdot n_\text{bands}^2/2$ (where $n_\text{bands} = 3 N_\text{atoms,uc}$). Moreover, translational symmetries are handled analytically via the Fourier transform, so only point-group symmetries need to be applied explicitly.
+
+### Requirements
+
+- **Julia** must be installed and configured (see [Installation](installation.md))
+- **spglib** for symmetry detection
+- The Q-space Lanczos always uses the **Wigner representation** and **Julia backend**
+
+### Basic Usage
+
+The workflow mirrors the standard Lanczos but uses `QSpaceLanczos` instead of `Lanczos`, and specifies perturbations by q-point index and band index rather than supercell mode index.
+
+```python
+import cellconstructor as CC
+import cellconstructor.Phonons
+import sscha, sscha.Ensemble
+import tdscha.QSpaceLanczos as QL
+
+# Load ensemble (same as standard workflow)
+dyn = CC.Phonons.Phonons("dyn_final_", nqirr=3)
+ens = sscha.Ensemble.Ensemble(dyn, 300)
+ens.load_bin("ensemble_dir", 1)
+
+# Create the Q-space Lanczos object
+qlanc = QL.QSpaceLanczos(ens)
+qlanc.init(use_symmetries=True)
+
+# Perturb a specific phonon mode at q-point 0 (Gamma), band 3
+qlanc.prepare_mode_q(iq=0, band_index=3)
+
+# Run the Lanczos iteration
+qlanc.run_FT(100)
+
+# Extract the Green function (same interface as standard Lanczos)
+import numpy as np
+w = np.linspace(0, 500, 1000) / CC.Units.RY_TO_CM  # frequency grid in Ry
+smearing = 5 / CC.Units.RY_TO_CM
+gf = qlanc.get_green_function_continued_fraction(w, smearing=smearing)
+spectral = -np.imag(gf)
+```
+
+### Choosing the Perturbation
+
+#### Single mode at a q-point
+
+To perturb a single phonon band at a specific q-point:
+
+```python
+qlanc.prepare_mode_q(iq, band_index)
+```
+
+- `iq`: index of the q-point in `qlanc.q_points` (0 = $\Gamma$)
+- `band_index`: band index (0-based, excluding acoustic modes is your responsibility)
+
+You can inspect the available q-points and frequencies:
+
+```python
+# Print q-points (Cartesian, 2pi/alat units)
+for i, q in enumerate(qlanc.q_points):
+    print(f"iq={i}: q = {q}")
+
+# Print band frequencies at a given q-point (in cm-1)
+iq = 0
+for nu in range(qlanc.n_bands):
+    freq = qlanc.w_q[nu, iq] * CC.Units.RY_TO_CM
+    print(f"  band {nu}: {freq:.2f} cm-1")
+```
+
+#### Custom perturbation vector
+
+To perturb with an arbitrary displacement pattern at a q-point (e.g., for IR-like perturbations):
+
+```python
+# vector is a real-space displacement pattern (3*n_atoms_uc,) in Cartesian coords
+qlanc.prepare_perturbation_q(iq, vector)
+```
+
+This projects the vector onto the q-space eigenmodes at `iq`.
+
+### Looping Over Multiple Modes
+
+To compute the full spectral function, you need to run one Lanczos calculation per mode.
+You can reset the state and prepare a new perturbation between runs:
+
+```python
+import cellconstructor as CC
+import cellconstructor.Phonons
+import sscha, sscha.Ensemble
+import tdscha.QSpaceLanczos as QL
+
+dyn = CC.Phonons.Phonons("dyn_final_", nqirr=3)
+ens = sscha.Ensemble.Ensemble(dyn, 300)
+ens.load_bin("ensemble_dir", 1)
+
+qlanc = QL.QSpaceLanczos(ens)
+qlanc.init(use_symmetries=True)
+
+# Loop over modes at Gamma
+iq = 0
+for band in range(qlanc.n_bands):
+    # Skip acoustic modes (zero frequency)
+    if qlanc.w_q[band, iq] < 1e-6:
+        continue
+
+    qlanc.prepare_mode_q(iq, band)
+    qlanc.run_FT(100)
+    qlanc.save_status(f"qspace_iq{iq}_band{band}.npz")
+```
+
+### Saving and Loading
+
+Checkpoint saving and loading works the same as the standard Lanczos:
+
+```python
+# Save during calculation
+qlanc.run_FT(100, save_each=10, save_dir="output", prefix="qlanc")
+
+# Save final result
+qlanc.save_status("qspace_result.npz")
+```
+
+!!! note "Restart limitations"
+    Restarting from a saved checkpoint currently requires re-creating the `QSpaceLanczos` object from the same ensemble, loading the status, and then continuing. The q-space internal state (pair maps, symmetries) is reconstructed from the ensemble on `init()`.
+
+### When to Use Q-Space vs Real-Space Lanczos
+
+| Feature | Real-space (`Lanczos`) | Q-space (`QSpaceLanczos`) |
+|---------|----------------------|--------------------------|
+| Backend | C, MPI, or Julia | Julia only |
+| Representation | Real or Wigner | Wigner only |
+| Perturbation | Supercell mode index | (q-point, band) index |
+| Symmetry handling | Full space group | Point group (translations analytic) |
+| Two-phonon size | $\sim n_\text{modes}^2/2$ | $\sim N_\text{cell} \cdot n_\text{bands}^2/2$ |
+| Best for | Small supercells, $\Gamma$-only | Large supercells, finite-q perturbations |
+
+The Q-space approach is most advantageous when:
+
+- The supercell is large (large $N_\text{cell}$), since the speedup scales as $\sim N_\text{cell}$
+- You want to study phonon spectral functions at specific q-points
+- Julia is available and configured
+
+For $\Gamma$-point-only calculations on small supercells, the standard Lanczos with `gamma_only=True` may be comparable or faster due to lower overhead.
+
+
 ## Advanced Features
 
 ### Custom Perturbations

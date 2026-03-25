@@ -18,14 +18,16 @@ Part of the SSCHA ecosystem: `cellconstructor` → `python-sscha` → `tdscha`.
 
 6. **API Reference** - Automatically generated documentation:
    - [DynamicalLanczos](api/dynamical_lanczos.md) - Core Lanczos algorithm
+   - [QSpaceLanczos](api/qspace_lanczos.md) - Q-space (Bloch basis) Lanczos algorithm
    - [StaticHessian](api/static_hessian.md) - Free energy Hessian calculations
 
 ## Key Features
 
 - **Simulating the vibrational anharmonic spectra**: IR absorption, Raman scattering, Nuclear inelastic scattering, and phonon spectral functions.
-- **Full quantum treatment of atomic nuclei** 
+- **Full quantum treatment of atomic nuclei**
 - **Parallel execution** with MPI
 - **Symmetry-aware** calculations for efficiency
+- **Q-space Lanczos**: Bloch-basis formulation exploiting momentum conservation for large supercells (see [In-Depth Usage](usage.md#q-space-lanczos))
 
 ## Theoretical Foundation
 

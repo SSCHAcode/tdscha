@@ -11,7 +11,7 @@ build-backend = "mesonpy"
 [project]
 # Project metadata, which was previously in the `setup()` call of setup.py.
 name = "tdscha"
-version = "1.6.0" # Make sure this version matches meson.build
+version = "1.7.0" # Make sure this version matches meson.build
 description = "Time Dependent Self Consistent Harmonic Approximation"
 authors = [{name = "Lorenzo Monacelli"}]
 readme = "README.md"
