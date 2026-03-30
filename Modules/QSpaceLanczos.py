@@ -142,7 +142,7 @@ class QSpaceLanczos(DL.Lanczos):
         # -- Add the q-space attributes --
         qspace_attrs = [
             'q_points', 'n_q', 'n_bands', 'w_q', 'pols_q',
-            'acoustic_eps', 'X_q', 'Y_q',
+            'acoustic_eps', 'valid_modes_q', 'X_q', 'Y_q',
             'iq_pert', 'q_pair_map', 'unique_pairs',
             '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
             '_qspace_sym_data', '_qspace_sym_q_map', 'n_syms_qspace',
@@ -163,6 +163,14 @@ class QSpaceLanczos(DL.Lanczos):
 
         # Small frequency threshold for acoustic mode masking
         self.acoustic_eps = 1e-6
+
+        # Build translation-based valid mask for acoustic modes
+        # At Gamma (iq=0), identify translations from polarization vectors
+        # At q != 0, all modes are valid (acoustic modes only have zero freq at Gamma)
+        masses_uc = self.dyn.structure.get_masses_array()
+        self.valid_modes_q = np.ones((self.n_bands, self.n_q), dtype=bool)
+        trans_mask = CC.Methods.get_translations(np.real(self.pols_q[:, :, 0]), masses_uc)
+        self.valid_modes_q[:, 0] = ~trans_mask
 
         # == 2. Bloch transform ensemble data ==
         self._bloch_transform_ensemble()
@@ -514,22 +522,28 @@ class QSpaceLanczos(DL.Lanczos):
         if self.ignore_harmonic:
             return out
 
-        # R sector
+        # R sector — mask acoustic modes
         w_qp = self.w_q[:, self.iq_pert]  # (n_bands,)
+        v_pert = self.valid_modes_q[:, self.iq_pert]
         out[:self.n_bands] = -(w_qp ** 2) * self.psi[:self.n_bands]
+        out[:self.n_bands] *= v_pert  # zero out acoustic
 
-        # a' and b' sectors
+        # a' and b' sectors — mask pairs involving acoustic modes
         for pair_idx, (iq1, iq2) in enumerate(self.unique_pairs):
             w1 = self.w_q[:, iq1]  # (n_bands,)
             w2 = self.w_q[:, iq2]  # (n_bands,)
+            v1 = self.valid_modes_q[:, iq1]
+            v2 = self.valid_modes_q[:, iq2]
+            valid_mask = np.outer(v1, v2)
+
             a_block = self.get_a1_block(pair_idx)
             b_block = self.get_b1_block(pair_idx)
 
             w_minus2 = np.subtract.outer(w1, w2) ** 2  # (n_bands, n_bands)
             w_plus2 = np.add.outer(w1, w2) ** 2
 
-            self.set_block_in_psi(pair_idx, -w_minus2 * a_block, 'a', out)
-            self.set_block_in_psi(pair_idx, -w_plus2 * b_block, 'b', out)
+            self.set_block_in_psi(pair_idx, -w_minus2 * a_block * valid_mask, 'a', out)
+            self.set_block_in_psi(pair_idx, -w_plus2 * b_block * valid_mask, 'b', out)
 
         return out
 
@@ -547,7 +561,7 @@ class QSpaceLanczos(DL.Lanczos):
             True for non-acoustic bands.
         """
         w = self.w_q[:, iq]
-        valid = w > self.acoustic_eps
+        valid = self.valid_modes_q[:, iq]
         n = np.zeros_like(w)
         if self.T > __EPSILON__:
             n[valid] = 1.0 / (np.exp(w[valid] * __RyToK__ / self.T) - 1.0)
