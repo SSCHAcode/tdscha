@@ -116,13 +116,17 @@ class QSpaceLanczos(DL.Lanczos):
     Only Wigner formalism is supported. Requires Julia extension.
     """
 
-    def __init__(self, ensemble, **kwargs):
+    def __init__(self, ensemble, lo_to_split=None, **kwargs):
         """Initialize the Q-Space Lanczos.
 
         Parameters
         ----------
         ensemble : sscha.Ensemble.Ensemble
             The SSCHA ensemble.
+        lo_to_split : string, ndarray, or None
+            LO-TO splitting mode. If None (default), LO-TO splitting correction
+            is neglected. If "random", a random direction is used. If an ndarray,
+            it specifies the q-direction for the LO-TO splitting correction.
         **kwargs
             Additional keyword arguments passed to the parent Lanczos class.
         """
@@ -131,7 +135,7 @@ class QSpaceLanczos(DL.Lanczos):
         kwargs['use_wigner'] = True
 
         self.ensemble = ensemble
-        super().__init__(ensemble, unwrap_symmetries=False, **kwargs)
+        super().__init__(ensemble, unwrap_symmetries=False, lo_to_split=lo_to_split, **kwargs)
 
         if not __JULIA_EXT__:
             raise ImportError(
@@ -150,7 +154,8 @@ class QSpaceLanczos(DL.Lanczos):
         self.__total_attributes__.extend(qspace_attrs)
 
         # == 1. Get q-space eigenmodes ==
-        ws_sc, pols_sc, w_q, pols_q = self.dyn.DiagonalizeSupercell(return_qmodes=True)
+        ws_sc, pols_sc, w_q, pols_q = self.dyn.DiagonalizeSupercell(
+            return_qmodes=True, lo_to_split=lo_to_split)
 
         self.q_points = np.array(self.dyn.q_tot)  # (n_q, 3)
         self.n_q = len(self.q_points)
