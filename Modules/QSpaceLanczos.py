@@ -142,7 +142,7 @@ class QSpaceLanczos(DL.Lanczos):
         # -- Add the q-space attributes --
         qspace_attrs = [
             'q_points', 'n_q', 'n_bands', 'w_q', 'pols_q',
-            'acoustic_eps', 'valid_modes_q', 'X_q', 'Y_q',
+            'valid_modes_q', 'X_q', 'Y_q',
             'iq_pert', 'q_pair_map', 'unique_pairs',
             '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
             '_qspace_sym_data', '_qspace_sym_q_map', 'n_syms_qspace',
@@ -161,16 +161,18 @@ class QSpaceLanczos(DL.Lanczos):
         # The masses needs to be restricted to the primitive cell only
         self.m = self.m[:self.n_bands]
 
-        # Small frequency threshold for acoustic mode masking
-        self.acoustic_eps = 1e-6
-
-        # Build translation-based valid mask for acoustic modes
-        # At Gamma (iq=0), identify translations from polarization vectors
-        # At q != 0, all modes are valid (acoustic modes only have zero freq at Gamma)
+        # Build valid_modes_q mask for acoustic mode exclusion
+        # Always apply translation-based mask at Gamma (iq=0)
         masses_uc = self.dyn.structure.get_masses_array()
         self.valid_modes_q = np.ones((self.n_bands, self.n_q), dtype=bool)
         trans_mask = CC.Methods.get_translations(np.real(self.pols_q[:, :, 0]), masses_uc)
         self.valid_modes_q[:, 0] = ~trans_mask
+
+        # If ignore_small_w is True, also mask small frequencies at ALL q-points
+        if ensemble.ignore_small_w:
+            for iq in range(self.n_q):
+                small_freq_mask = np.abs(self.w_q[:, iq]) < CC.Phonons.__EPSILON_W__
+                self.valid_modes_q[:, iq] &= ~small_freq_mask
 
         # == 2. Bloch transform ensemble data ==
         self._bloch_transform_ensemble()
@@ -780,7 +782,8 @@ class QSpaceLanczos(DL.Lanczos):
                 np.int64(self.iq_pert + 1),
                 self.q_pair_map + 1,  # 1-indexed
                 unique_pairs_arr,
-                int(start_end[0]), int(start_end[1])
+                int(start_end[0]), int(start_end[1]),
+                self.valid_modes_q  # Pass mask to Julia
             )
 
         combined = Parallel.GoParallel(get_combined, indices, "+")

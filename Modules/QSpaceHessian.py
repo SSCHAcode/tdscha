@@ -215,7 +215,6 @@ class QSpaceHessian:
             E.g. [[3], [4, 5, 6], [7, 8, 9]] for a singlet + two triplets.
         """
         w_qp = self.w_q[:, iq]
-        eps = self.qlanc.acoustic_eps
 
         deg_lists = CC.symmetries.get_degeneracies(w_qp)
 
@@ -224,12 +223,12 @@ class QSpaceHessian:
         for nu in range(self.n_bands):
             if nu in seen:
                 continue
-            if w_qp[nu] < eps:
+            if not self.qlanc.valid_modes_q[nu, iq]:
                 seen.add(nu)
                 continue
             block = sorted(deg_lists[nu].tolist())
-            # Filter out any acoustic modes that crept in
-            block = [b for b in block if w_qp[b] >= eps]
+            # Filter out any masked modes that crept in
+            block = [b for b in block if self.qlanc.valid_modes_q[b, iq]]
             for b in block:
                 seen.add(b)
             if len(block) > 0:
@@ -281,38 +280,35 @@ class QSpaceHessian:
         """Build mask for static psi inner product.
 
         Same structure as FT mask but only one W sector (not a' + b').
-        Acoustic modes (w < eps) are masked out (set to 0) to keep
+        Masked modes (acoustic/small-w) are set to 0 to keep
         the null space purely in the W sector and avoid inconsistency.
         """
         psi_size = self._get_static_psi_size()
         mask = np.ones(psi_size, dtype=np.float64)
         nb = self.n_bands
-        eps = self.qlanc.acoustic_eps
 
-        # R sector: mask acoustic modes at the perturbation q-point
-        w_qp = self.w_q[:, self.qlanc.iq_pert]
-        mask[:nb] = np.where(w_qp < eps, 0.0, 1.0)
+        # R sector: mask modes at the perturbation q-point
+        valid_pert = self.qlanc.valid_modes_q[:, self.qlanc.iq_pert]
+        mask[:nb] = np.where(valid_pert, 1.0, 0.0)
 
         for pair_idx, (iq1, iq2) in enumerate(self.qlanc.unique_pairs):
             offset = self.qlanc.get_block_offset(pair_idx, 'a')
-            w1 = self.w_q[:, iq1]
-            w2 = self.w_q[:, iq2]
-            ac1 = w1 < eps
-            ac2 = w2 < eps
-            # acoustic_any[i,j] = True if either mode i or j is acoustic
-            acoustic_any = ac1[:, None] | ac2[None, :]
+            valid1 = self.qlanc.valid_modes_q[:, iq1]
+            valid2 = self.qlanc.valid_modes_q[:, iq2]
+            # invalid_any[i,j] = True if either mode i or j is masked
+            invalid_any = ~valid1[:, None] | ~valid2[None, :]
 
             if iq1 < iq2:
-                # Full block: 0 if acoustic, 2 if not
-                block_mask = np.where(acoustic_any, 0.0, 2.0)
+                # Full block: 0 if masked, 2 if not
+                block_mask = np.where(invalid_any, 0.0, 2.0)
                 mask[offset:offset + nb * nb] = block_mask.ravel()
             else:
                 # Upper triangle storage: pack diag (weight=1) + off-diag (weight=2)
                 size = self.qlanc.get_block_size(pair_idx)
-                # Build full matrix of weights: diag=1, off-diag=2, acoustic=0
-                full_weights = np.where(acoustic_any, 0.0, 2.0)
+                # Build full matrix of weights: diag=1, off-diag=2, masked=0
+                full_weights = np.where(invalid_any, 0.0, 2.0)
                 np.fill_diagonal(full_weights, np.where(
-                    ac1 | ac2, 0.0, 1.0))
+                    valid1 & valid2, 1.0, 0.0))
                 # Pack upper triangle in row-major order
                 tri = np.zeros(size, dtype=np.float64)
                 idx = 0
@@ -350,16 +346,16 @@ class QSpaceHessian:
         n2 = np.zeros_like(w2)
         if T > __EPSILON__:
             beta = __RyToK__ / T
-            valid1 = w1 > self.qlanc.acoustic_eps
-            valid2 = w2 > self.qlanc.acoustic_eps
+            valid1 = self.qlanc.valid_modes_q[:, iq1]
+            valid2 = self.qlanc.valid_modes_q[:, iq2]
             n1[valid1] = 1.0 / (np.exp(w1[valid1] * beta) - 1.0)
             n2[valid2] = 1.0 / (np.exp(w2[valid2] * beta) - 1.0)
 
         n1_mat = np.tile(n1, (self.n_bands, 1)).T
         n2_mat = np.tile(n2, (self.n_bands, 1))
 
-        valid_mask = np.outer(w1 > self.qlanc.acoustic_eps,
-                              w2 > self.qlanc.acoustic_eps)
+        valid_mask = np.outer(self.qlanc.valid_modes_q[:, iq1],
+                              self.qlanc.valid_modes_q[:, iq2])
 
         # (n1 - n2) / (w1 - w2), regularized for w1 ≈ w2
         diff_n = np.zeros_like(w1_mat)
@@ -395,18 +391,18 @@ class QSpaceHessian:
     def _compute_Y_w(self, iq):
         """Compute Y_w = 2*w/(2*n+1) for all bands at q-point iq.
 
-        Acoustic modes (w < eps) get Y_w = 0.
+        Masked modes (acoustic/small-w) get Y_w = 0.
         """
         w = self.w_q[:, iq]
         T = self.qlanc.T
 
         n = np.zeros_like(w)
         if T > __EPSILON__:
-            valid = w > self.qlanc.acoustic_eps
+            valid = self.qlanc.valid_modes_q[:, iq]
             n[valid] = 1.0 / (np.exp(w[valid] * __RyToK__ / T) - 1.0)
 
         Y_w = np.zeros_like(w)
-        valid = w > self.qlanc.acoustic_eps
+        valid = self.qlanc.valid_modes_q[:, iq]
         Y_w[valid] = 2.0 * w[valid] / (2.0 * n[valid] + 1.0)
         return Y_w
 
@@ -421,13 +417,13 @@ class QSpaceHessian:
           - _cached_yw_outer[pair_idx]: -2*outer(Y_w1,Y_w2) for anharmonic
         """
         nb = self.n_bands
-        eps = self.qlanc.acoustic_eps
 
         # R sector
         w_qp = self.w_q[:, self.qlanc.iq_pert]
         self._cached_w_qp_sq = w_qp ** 2
+        valid_pert = self.qlanc.valid_modes_q[:, self.qlanc.iq_pert]
         self._cached_inv_w_qp_sq = np.where(
-            w_qp > eps, 1.0 / np.where(w_qp > eps, w_qp, 1.0) ** 2, 0.0)
+            valid_pert, 1.0 / np.where(valid_pert, w_qp, 1.0) ** 2, 0.0)
 
         # W sector: per-pair Lambda and Y_w caches
         n_pairs = len(self.qlanc.unique_pairs)
@@ -643,7 +639,7 @@ class QSpaceHessian:
         # 5. Identify non-acoustic bands and degenerate blocks
         w_qp = self.w_q[:, iq]
         non_acoustic = [nu for nu in range(nb)
-                        if w_qp[nu] > self.qlanc.acoustic_eps]
+                        if self.qlanc.valid_modes_q[nu, iq]]
 
         # Build solve schedule: list of (band_to_solve, block_members)
         if use_mode_symmetry:

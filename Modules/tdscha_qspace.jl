@@ -649,7 +649,8 @@ function get_perturb_averages_qspace(
     q_pair_map::Vector{Int32},
     unique_pairs::Matrix{Int32},
     start_index::Int64,
-    end_index::Int64
+    end_index::Int64,
+    valid_modes_q::Matrix{Bool}  # Mask from Python: false for acoustic/small-w modes
 )
     n_q = size(X_q, 1)
     n_bands = size(X_q, 3)
@@ -662,19 +663,18 @@ function get_perturb_averages_qspace(
     end
 
     # Precompute occupation numbers and scaling factors
-    # Acoustic modes (w < threshold) get f_Y=0, f_psi=0 to avoid NaN/Inf
+    # Masked modes (valid_modes_q == false) get f_Y=0, f_psi=0 to avoid NaN/Inf
     f_Y = zeros(Float64, n_bands, n_q)
     f_psi = zeros(Float64, n_bands, n_q)
-    acoustic_eps = 1e-6
 
     for iq in 1:n_q
         for nu in 1:n_bands
-            w = w_q[nu, iq]
-            if w < acoustic_eps
+            if !valid_modes_q[nu, iq]  # Masked mode -> zero out
                 f_Y[nu, iq] = 0.0
                 f_psi[nu, iq] = 0.0
                 continue
             end
+            w = w_q[nu, iq]
             if temperature > 0
                 nw = 1.0 / (exp(w * RY_TO_K_Q / temperature) - 1.0)
             else
