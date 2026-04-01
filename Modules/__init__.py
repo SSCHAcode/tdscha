@@ -5,4 +5,4 @@ EMPTY
 """
 
 
-__all__ = ["DynamicalLanczos", "QSpaceLanczos", "QSpaceHessian", "cli"]
+__all__ = ["DynamicalLanczos", "QSpaceLanczos", "QSpaceKPM", "QSpaceHessian", "cli"]
