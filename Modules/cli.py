@@ -13,6 +13,7 @@ import cellconstructor.Phonons
 
 import sscha
 import tdscha, tdscha.DynamicalLanczos as DL
+import tdscha.QSpaceKPM as QKPM
 import sscha.Ensemble
 MSG = """
 TDSCHA  
@@ -47,15 +48,17 @@ abcfile is generated from the output
 
 MSG_PLOT = """
 TDSCHA  
-======
+ ======
 
 Plot the spectrum of a TDSCHA calculation.
 
 Usage: 
 
-tdscha-plot file.abc [w_start w_end [smearing]]
+tdscha-plot file [w_start w_end [smearing]]
 
-Pass a .abc or .npz file resulting from a linear response calculation.
+Pass a .abc, .npz, or .kpm file resulting from a linear response calculation.
+- .abc / .npz : use Lanczos continued fraction
+- .kpm        : use KPM spectral function
 Optionally you can pass a range of frequencies (cm-1) and the smearing.
 
 """
@@ -179,17 +182,23 @@ def plot():
     assert os.path.exists(fname), "Error, file {} does not exist".format(fname)
     
 
-    lanc = DL.Lanczos()
+    use_kpm = fname.endswith(".kpm")
 
-    print("Loading file {}".format(fname))
-
-    if fname.endswith(".abc"):
-        lanc.load_abc(fname)
-    elif fname.endswith(".npz"):
-        lanc.load_status(fname)
+    if use_kpm:
+        print("Loading KPM file {}".format(fname))
+        kpm = QKPM.QSpaceKPM(None)
+        kpm.load_kpm(fname)
+        lanc = None
     else:
-        print("ERROR, the specified file must either be a .abc, or .npz file.")
-    
+        print("Loading file {}".format(fname))
+        lanc = DL.Lanczos()
+        if fname.endswith(".abc"):
+            lanc.load_abc(fname)
+        elif fname.endswith(".npz"):
+            lanc.load_status(fname)
+        else:
+            print("ERROR, the specified file must be a .abc, .npz, or .kpm file.")
+            exit()
 
     w_start = 0
     w_end = 5000
@@ -206,12 +215,19 @@ def plot():
     w_ry = w / CC.Units.RY_TO_CM
     smearing /= CC.Units.RY_TO_CM
 
-    gf = lanc.get_green_function_continued_fraction(w_ry, smearing = smearing, use_terminator=False)
-    spectrum = - np.imag(gf)
+    if use_kpm:
+        # KPM spectral function does not use smearing parameter
+        spectrum = kpm.get_spectral_function_KPM(w_ry, regularization="jackson")
+    else:
+        gf = lanc.get_green_function_continued_fraction(w_ry, smearing = smearing, use_terminator=False)
+        spectrum = - np.imag(gf)
 
     # Print some info about the calculation
     print()
-    print("Number of poles: {}".format(len(lanc.a_coeffs)))
+    if use_kpm:
+        print("Number of KPM moments: {}".format(kpm.kpm_n_moments))
+    else:
+        print("Number of poles: {}".format(len(lanc.a_coeffs)))
     
     plt.plot(w, spectrum)
     plt.xlabel("Frequency [cm-1]")
