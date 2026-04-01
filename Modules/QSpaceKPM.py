@@ -13,12 +13,39 @@ class QSpaceKPM(QSpaceLanczos):
     """Kernel Polynomial Method using the q-space Liouvillian."""
 
     def __init__(self, ensemble, lo_to_split=None, **kwargs):
+        # Handle ensemble=None case (for loading KPM files for plotting)
+        if ensemble is None:
+            # Call grandparent's __init__ with None to get bare initialization
+            import tdscha.DynamicalLanczos as DL
+            DL.Lanczos.__init__(self, ensemble=None)
+            # Set default for use_wigner (needed for spectral function computation)
+            self.use_wigner = True
+            # Register KPM attributes
+            self.__total_attributes__.extend([
+                "kpm_moments", "kpm_vector_norm", "kpm_n_moments",
+                "kpm_lambda_min", "kpm_lambda_max", "kpm_rescale_a",
+                "kpm_rescale_b", "kpm_bound_factor"
+            ])
+            self._init_kpm_attributes()
+            return
+        
         super().__init__(ensemble, lo_to_split=lo_to_split, **kwargs)
         self.__total_attributes__.extend([
             "kpm_moments", "kpm_vector_norm", "kpm_n_moments",
             "kpm_lambda_min", "kpm_lambda_max", "kpm_rescale_a",
             "kpm_rescale_b", "kpm_bound_factor"
         ])
+        self._init_kpm_attributes()
+
+    def _init_kpm_attributes(self):
+        self.kpm_moments = None
+        self.kpm_vector_norm = None
+        self.kpm_n_moments = 0
+        self.kpm_lambda_min = None
+        self.kpm_lambda_max = None
+        self.kpm_rescale_a = None
+        self.kpm_rescale_b = None
+        self.kpm_bound_factor = None
         self.kpm_moments = None
         self.kpm_vector_norm = None
         self.kpm_n_moments = 0
@@ -52,9 +79,18 @@ class QSpaceKPM(QSpaceLanczos):
             raise ValueError("lambda_min and lambda_max must be both specified or both omitted")
         if lambda_min is None:
             max_w = np.max(np.abs(self.w_q[self.valid_modes_q]))
-            bound = (2 * bound_factor * max_w) ** 2
-            bound *= (1 + edge_buffer)
-            return -bound, bound
+            spectral_width = (2 * max_w) ** 2
+            margin = (bound_factor - 1) * spectral_width
+            if self.use_wigner:
+                # Wigner eigenvalues in [-(2*w_max)^2, 0]
+                lmin = -spectral_width - margin
+                lmax = margin
+            else:
+                # Non-Wigner eigenvalues in [0, (2*w_max)^2]
+                lmin = -margin
+                lmax = spectral_width + margin
+            span = lmax - lmin
+            return lmin - edge_buffer * span, lmax + edge_buffer * span
         if lambda_min >= lambda_max:
             raise ValueError("Invalid KPM bounds: lambda_min must be smaller than lambda_max")
         span = lambda_max - lambda_min
@@ -65,6 +101,15 @@ class QSpaceKPM(QSpaceLanczos):
 
     def run_KPM(self, n_moments, lambda_min=None, lambda_max=None, bound_factor=2.5,
                 edge_buffer=1e-8, verbose=True):
+        """Run the Kernel Polynomial Method to compute Chebyshev moments.
+
+        Uses the two-vector Chebyshev trick to extract two moments per
+        L application, halving the number of expensive operator calls.
+        The identity  mu_{m+n} + mu_{|m-n|} = 2 <T_m v, T_n v>_M
+        (valid because L is self-adjoint under the Wigner metric) gives:
+            mu_{2n}   = 2 <t_n, t_n>_M - mu_0
+            mu_{2n+1} = 2 <t_{n+1}, t_n>_M - mu_1
+        """
         if n_moments < 1:
             raise ValueError("n_moments must be positive")
         if self.psi is None:
@@ -88,28 +133,47 @@ class QSpaceKPM(QSpaceLanczos):
         v0 = psi0 / self.kpm_vector_norm
         moments = np.zeros(self.kpm_n_moments, dtype=np.float64)
         moments[0] = 1.0
+        n_L_applications = 0
 
         if verbose:
-            print("KPM: moment 0 = {:.8e}, norm = {:.8e}".format(moments[0], self.kpm_vector_norm))
+            print("KPM: moment 0 = {:.8e}, norm = {:.8e}".format(
+                moments[0], self.kpm_vector_norm))
 
         if self.kpm_n_moments > 1:
             v1 = self._apply_rescaled_L(v0)
+            n_L_applications += 1
             moments[1] = self._metric_dot(v0, v1, mask)
             if verbose:
                 print("KPM: moment 1 = {:.8e}".format(moments[1]))
+
+            # Two-vector Chebyshev iteration: t_n stored in v, t_{n-1} in vm
             vm, v = v0, v1
-            for i in range(2, self.kpm_n_moments):
-                vp = 2 * self._apply_rescaled_L(v) - vm
-                moments[i] = self._metric_dot(v0, vp, mask)
+            n = 1
+            while 2 * n < self.kpm_n_moments:
+                # Even moment from <t_n, t_n>_M (no L needed)
+                moments[2 * n] = 2 * self._metric_dot(v, v, mask) - moments[0]
                 if verbose:
-                    print("KPM: moment {} = {:.8e}".format(i, moments[i]))
+                    print("KPM: moment {} = {:.8e}".format(
+                        2 * n, moments[2 * n]))
+                if 2 * n + 1 >= self.kpm_n_moments:
+                    break
+                # Odd moment needs t_{n+1}
+                vp = 2 * self._apply_rescaled_L(v) - vm
+                n_L_applications += 1
+                moments[2 * n + 1] = (
+                    2 * self._metric_dot(vp, v, mask) - moments[1])
+                if verbose:
+                    print("KPM: moment {} = {:.8e}".format(
+                        2 * n + 1, moments[2 * n + 1]))
                 vm, v = v, vp
+                n += 1
 
         self.kpm_moments = moments
         self.psi = psi0
 
         if verbose:
-            print("KPM completed with {} moments".format(self.kpm_n_moments))
+            print("KPM completed: {} moments, {} L applications".format(
+                self.kpm_n_moments, n_L_applications))
 
     def save_kpm(self, file):
         """

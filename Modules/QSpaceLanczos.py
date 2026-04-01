@@ -153,6 +153,10 @@ class QSpaceLanczos(DL.Lanczos):
         ]
         self.__total_attributes__.extend(qspace_attrs)
 
+        # If ensemble is None, perform a bare initialization like the parent
+        if ensemble is None:
+            return
+
         # == 1. Get q-space eigenmodes ==
         ws_sc, pols_sc, w_q, pols_q = self.dyn.DiagonalizeSupercell(
             return_qmodes=True, lo_to_split=lo_to_split)
@@ -829,7 +833,7 @@ class QSpaceLanczos(DL.Lanczos):
     def run_FT(self, n_iter, save_dir=None, save_each=5, verbose=True,
                n_rep_orth=0, n_ortho=10, flush_output=True, debug=False,
                prefix="LANCZOS", run_simm=None, optimized=False,
-               reorthogonalize=False):
+               reorthogonalize=True):
         """Run the Hermitian Lanczos algorithm for q-space.
 
         This is the same structure as the parent run_FT but with:
