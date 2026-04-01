@@ -125,11 +125,17 @@ class QSpaceHessian:
             self._find_irreducible_qpoints()
         else:
             self.irr_qpoints = list(range(self.n_q))
-            self.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3))]
+            self.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3), False)]
                                for iq in range(self.n_q)}
 
     def _find_irreducible_qpoints(self):
-        """Find irreducible q-points under point-group symmetries."""
+        """Find irreducible q-points under point-group + time-reversal symmetries.
+
+        Time-reversal symmetry guarantees Phi(-q) = Phi(q)* for any crystal,
+        so q and -q always belong to the same star.  For crystals without
+        inversion symmetry the point group alone does not map q -> -q;
+        we therefore also check -R@q for every point-group rotation R.
+        """
         from tdscha.QSpaceLanczos import find_q_index
 
         uci = self.qlanc.uci_structure
@@ -175,14 +181,30 @@ class QSpaceHessian:
                 t_cart = M @ t_frac
 
                 Rq = R_cart @ self.q_points[iq]
+
+                # --- point-group operation: q_rot = R @ q ---
                 try:
                     iq_rot = find_q_index(Rq, self.q_points, bg)
                 except ValueError:
-                    continue
+                    iq_rot = None
 
-                if iq_rot not in visited:
-                    visited.add(iq_rot)
-                star.append((iq_rot, R_cart.copy(), t_cart.copy()))
+                if iq_rot is not None:
+                    if iq_rot not in visited:
+                        visited.add(iq_rot)
+                    # is_time_reversal = False
+                    star.append((iq_rot, R_cart.copy(), t_cart.copy(), False))
+
+                # --- time-reversal + point-group: q_rot = -R @ q ---
+                try:
+                    iq_tr = find_q_index(-Rq, self.q_points, bg)
+                except ValueError:
+                    iq_tr = None
+
+                if iq_tr is not None:
+                    if iq_tr not in visited:
+                        visited.add(iq_tr)
+                    # is_time_reversal = True
+                    star.append((iq_tr, R_cart.copy(), t_cart.copy(), True))
 
             seen_iqs = set()
             unique_star = []
@@ -236,8 +258,17 @@ class QSpaceHessian:
 
         return blocks
 
-    def _build_D_matrix(self, R_cart, t_cart, iq_from, iq_to):
-        """Compute the mode representation matrix D for symmetry {R|t}."""
+    def _build_D_matrix(self, R_cart, t_cart, iq_from, iq_to,
+                        time_reversal=False):
+        """Compute the mode representation matrix D for symmetry {R|t}.
+
+        Parameters
+        ----------
+        time_reversal : bool
+            If True, the operation is time-reversal composed with {R|t},
+            mapping q_from -> -R q_from = q_to.  The D matrix then satisfies
+            H(q_to) = D @ H(q_from)* @ D^dag  (note the conjugation of H).
+        """
         from tdscha.QSpaceLanczos import QSpaceLanczos
 
         uci = self.qlanc.uci_structure
@@ -257,7 +288,13 @@ class QSpaceHessian:
             phase = np.exp(-2j * np.pi * q_to @ L)
             P_uc[3 * kp:3 * kp + 3, 3 * kappa:3 * kappa + 3] = phase * R_cart
 
-        D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ self.pols_q[:, :, iq_from]
+        e_from = self.pols_q[:, :, iq_from]
+        if time_reversal:
+            # D_TR = e_to^dag @ P_uc @ e_from*  (conjugated polarizations)
+            # so that H(q_to) = D_TR @ conj(H(q_from)) @ D_TR^dag
+            D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ np.conj(e_from)
+        else:
+            D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ e_from
         return D
 
     # ==================================================================
@@ -840,11 +877,16 @@ class QSpaceHessian:
         # Unfold to full BZ
         for iq_irr in self.irr_qpoints:
             H_irr = self.H_q_dict[iq_irr]
-            for iq_rot, R_cart, t_cart in self.q_star_map[iq_irr]:
+            for iq_rot, R_cart, t_cart, is_tr in self.q_star_map[iq_irr]:
                 if iq_rot == iq_irr:
                     continue
-                D = self._build_D_matrix(R_cart, t_cart, iq_irr, iq_rot)
-                self.H_q_dict[iq_rot] = D @ H_irr @ D.conj().T
+                D = self._build_D_matrix(R_cart, t_cart, iq_irr, iq_rot,
+                                         time_reversal=is_tr)
+                if is_tr:
+                    # Time-reversal: H(-Rq) = D_TR @ conj(H(q)) @ D_TR^dag
+                    self.H_q_dict[iq_rot] = D @ np.conj(H_irr) @ D.conj().T
+                else:
+                    self.H_q_dict[iq_rot] = D @ H_irr @ D.conj().T
 
         t_end = time.time()
         if self.verbose:

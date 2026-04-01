@@ -1060,6 +1060,9 @@ Starting from step %d
         band_index : int
             Band index (0-based).
         """
+        if band_index < 0 or band_index >= self.n_bands:
+            raise ValueError("Invalid band index for perturbation: {}".format(band_index))
+
         self.build_q_pair_map(iq)
         self.reset_q()
         self.psi[band_index] = 1.0 + 0j

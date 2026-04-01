@@ -119,7 +119,7 @@ def test_qspace_hessian_symmetry():
         ref_H = qh.H_q_dict[iq_irr]
         ref_evals = np.sort(np.real(np.linalg.eigvalsh(ref_H)))
 
-        for iq_rot, R_cart, t_cart in star:
+        for iq_rot, R_cart, t_cart, is_tr in star:
             if iq_rot == iq_irr:
                 continue
             rot_H = qh.H_q_dict[iq_rot]
