@@ -54,7 +54,7 @@ Plot the spectrum of a TDSCHA calculation.
 
 Usage: 
 
-tdscha-plot file [w_start w_end [smearing]]
+tdscha-plot-data file [w_start] [w_end] [smearing]
 
 Pass a .abc, .npz, or .kpm file resulting from a linear response calculation.
 - .abc / .npz : use Lanczos continued fraction
@@ -174,7 +174,7 @@ def plot_hessian_convergence():
 
 def plot():
     print(MSG_PLOT)
-    if len(sys.argv) not in [2, 4, 5]:
+    if len(sys.argv) not in [2, 3, 4, 5]:
         print("Error, wrong number of arguments.")
         exit()
     
@@ -205,8 +205,9 @@ def plot():
     n_w = 50000
     smearing = 5
 
-    if len(sys.argv) > 2:
+    if len(sys.argv) >= 3:
         w_start = float(sys.argv[2])
+    if len(sys.argv) >= 4:
         w_end = float(sys.argv[3])
     if len(sys.argv) == 5:
         smearing = float(sys.argv[4])
