@@ -828,7 +828,8 @@ class QSpaceLanczos(DL.Lanczos):
     # ====================================================================
     def run_FT(self, n_iter, save_dir=None, save_each=5, verbose=True,
                n_rep_orth=0, n_ortho=10, flush_output=True, debug=False,
-               prefix="LANCZOS", run_simm=None, optimized=False):
+               prefix="LANCZOS", run_simm=None, optimized=False,
+               reorthogonalize=False):
         """Run the Hermitian Lanczos algorithm for q-space.
 
         This is the same structure as the parent run_FT but with:
@@ -971,30 +972,49 @@ Starting from step %d
             psi_q = rk / b_coeff
             psi_p = sk_tilde.copy()
 
-            # Gram-Schmidt
-            new_q = psi_q.copy()
-            new_p = psi_p.copy()
+            # Gram-Schmidt reorthogonalization
+            if reorthogonalize:
+                # Correct Hermitian MGS: orthogonalize against all Q vectors
+                # (which are unit-normalized in the mask inner product)
+                new_q = psi_q.copy()
 
-            for k_orth in range(n_rep_orth):
-                start = max(0, len(self.basis_P) - (n_ortho or len(self.basis_P)))
-
-                for j in range(start, len(self.basis_P)):
-                    coeff1 = np.real(np.conj(self.basis_P[j]).dot(new_q * mask_dot))
-                    coeff2 = np.real(np.conj(self.basis_Q[j]).dot(new_p * mask_dot))
-                    new_q -= coeff1 * self.basis_P[j]
-                    new_p -= coeff2 * self.basis_Q[j]
+                for j in range(len(self.basis_Q)):
+                    coeff = np.real(np.conj(self.basis_Q[j]).dot(new_q * mask_dot))
+                    new_q -= coeff * self.basis_Q[j]
 
                 normq = np.sqrt(np.real(np.conj(new_q).dot(new_q * mask_dot)))
                 if normq < __EPSILON__:
                     next_converged = True
                 new_q /= normq
 
-                normp = np.real(np.conj(new_p).dot(new_p * mask_dot))
-                if np.abs(normp) < __EPSILON__:
-                    next_converged = True
-                new_p /= normp
+                # Hermitian L: P = Q, s_norm = c_coeff (since <P,Q> = <Q,Q> = 1)
+                new_p = new_q.copy()
+                s_norm = c_coeff
+            else:
+                # Existing biconjugate GS (for backward compatibility)
+                new_q = psi_q.copy()
+                new_p = psi_p.copy()
 
-                s_norm = c_coeff / np.real(np.conj(new_p).dot(new_q * mask_dot))
+                for k_orth in range(n_rep_orth):
+                    start = max(0, len(self.basis_P) - (n_ortho or len(self.basis_P)))
+
+                    for j in range(start, len(self.basis_P)):
+                        coeff1 = np.real(np.conj(self.basis_P[j]).dot(new_q * mask_dot))
+                        coeff2 = np.real(np.conj(self.basis_Q[j]).dot(new_p * mask_dot))
+                        new_q -= coeff1 * self.basis_P[j]
+                        new_p -= coeff2 * self.basis_Q[j]
+
+                    normq = np.sqrt(np.real(np.conj(new_q).dot(new_q * mask_dot)))
+                    if normq < __EPSILON__:
+                        next_converged = True
+                    new_q /= normq
+
+                    normp = np.real(np.conj(new_p).dot(new_p * mask_dot))
+                    if np.abs(normp) < __EPSILON__:
+                        next_converged = True
+                    new_p /= normp
+
+                    s_norm = c_coeff / np.real(np.conj(new_p).dot(new_q * mask_dot))
 
             if not converged:
                 self.basis_Q.append(new_q)

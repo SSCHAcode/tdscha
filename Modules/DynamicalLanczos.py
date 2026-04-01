@@ -525,8 +525,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         else:
             super(Lanczos, self).__setattr__(name, value)
 
-            if "ignore_v" in name:
-                warnings.warn("Setting {} is deprecated. It will always be True.".format(name), DeprecationWarning)
         
 
 
