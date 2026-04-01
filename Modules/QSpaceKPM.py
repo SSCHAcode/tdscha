@@ -7,6 +7,7 @@ import numpy as np
 from tdscha.QSpaceLanczos import QSpaceLanczos, __EPSILON__
 from cellconstructor.Settings import ParallelPrint as print
 import cellconstructor.Settings as Parallel
+import cellconstructor.Units as Units
 
 
 class QSpaceKPM(QSpaceLanczos):
@@ -96,10 +97,89 @@ class QSpaceKPM(QSpaceLanczos):
         span = lambda_max - lambda_min
         return lambda_min - edge_buffer * span, lambda_max + edge_buffer * span
 
+    def estimate_kpm_steps(self, precision_cm, bound_factor=1.2, regularization="jackson"):
+        """Estimate the number of KPM steps needed to achieve desired frequency precision.
+
+        The KPM resolution in eigenvalue space (λ = -ω²) scales as:
+            Δλ ≈ π × rescale_a / n_moments (for Jackson kernel)
+        
+        Converting to frequency precision δω via dλ/dω = -2ω:
+            δλ = 2 × ω_min × δω
+        
+        Therefore, the required number of moments is:
+            n_moments ≈ π × rescale_a / (2 × ω_min × δω)
+        
+        where rescale_a ≈ 0.5 × bound_factor × (2 × ω_max)²
+
+        Parameters
+        ----------
+        precision_cm : float
+            Desired frequency precision in cm⁻¹. The KPM will be able to resolve
+            peaks separated by at least this amount at the smallest frequency.
+        bound_factor : float, default=1.2
+            The bound factor to use for KPM bounds. Must be > 1.0.
+        regularization : str, default="jackson"
+            The regularization kernel type. Currently only "jackson" is supported.
+
+        Returns
+        -------
+        int
+            Estimated number of KPM steps (moments) required.
+
+        Raises
+        ------
+        ValueError
+            If precision_cm is not positive, bound_factor <= 1.0, or if
+            no perturbation has been prepared (iq_pert is None).
+        """
+        if precision_cm <= 0:
+            raise ValueError("precision_cm must be positive")
+        if bound_factor <= 1.0:
+            raise ValueError("bound_factor must be > 1.0")
+        if self.iq_pert is None:
+            raise ValueError("Must prepare a perturbation before estimating KPM steps")
+        
+        # Get frequency range
+        max_w = np.max(np.abs(self.w_q[self.valid_modes_q]))
+        
+        # Get smallest non-zero frequency at the perturbation q-point
+        w_at_q = self.w_q[:, self.iq_pert]
+        valid_at_q = self.valid_modes_q[:, self.iq_pert]
+        w_min = np.min(np.abs(w_at_q[valid_at_q]))
+        
+        if w_min < __EPSILON__:
+            raise ValueError("Smallest frequency at q-point is effectively zero; cannot estimate steps")
+        
+        # Convert precision from cm⁻¹ to Ry
+        delta_omega = precision_cm / Units.RY_TO_CM
+        
+        # Compute KPM bounds and rescale_a
+        lambda_min, lambda_max = self._get_kpm_bounds(
+            lambda_min=None, lambda_max=None, 
+            bound_factor=bound_factor, edge_buffer=1e-8)
+        rescale_a = 0.5 * (lambda_max - lambda_min)
+        
+        # Resolution in λ-space: δλ = 2 × ω_min × δω
+        delta_lambda = 2.0 * w_min * delta_omega
+        
+        # For Jackson kernel, resolution is approximately π × rescale_a / n_moments
+        # So n_moments ≈ π × rescale_a / δλ
+        if regularization.lower() == "jackson":
+            n_moments = int(np.ceil(np.pi * rescale_a / delta_lambda))
+        else:
+            # For no regularization, resolution is better but Gibbs oscillations occur
+            # Use a conservative estimate (same as Jackson)
+            n_moments = int(np.ceil(np.pi * rescale_a / delta_lambda))
+        
+        # Ensure at least a minimum number of steps
+        n_moments = max(n_moments, 8)
+        
+        return n_moments
+
     def _apply_rescaled_L(self, vec):
         return (self.apply_full_L(vec) - self.kpm_rescale_b * vec) / self.kpm_rescale_a
 
-    def run_KPM(self, n_moments, lambda_min=None, lambda_max=None, bound_factor=2.5,
+    def run_KPM(self, n_moments, lambda_min=None, lambda_max=None, bound_factor=1.2,
                 edge_buffer=1e-8, verbose=True):
         """Run the Kernel Polynomial Method to compute Chebyshev moments.
 
@@ -109,6 +189,23 @@ class QSpaceKPM(QSpaceLanczos):
         (valid because L is self-adjoint under the Wigner metric) gives:
             mu_{2n}   = 2 <t_n, t_n>_M - mu_0
             mu_{2n+1} = 2 <t_{n+1}, t_n>_M - mu_1
+
+        Parameters
+        ----------
+        n_moments : int
+            Number of Chebyshev moments to compute.
+        lambda_min, lambda_max : float, optional
+            Explicit bounds for the KPM. If not provided, bounds are
+            estimated automatically from the maximum phonon frequency.
+        bound_factor : float, default=1.2
+            Factor controlling the width of the KPM bounds relative to
+            the estimated spectral width. Smaller values (closer to 1.0)
+            give better resolution but require the eigenvalue to be within
+            the bounds. Values > 1.5 may cause significant baseline artifacts.
+        edge_buffer : float, default=1e-8
+            Small buffer added to the bounds to avoid edge effects.
+        verbose : bool, default=True
+            Print progress information.
         """
         if n_moments < 1:
             raise ValueError("n_moments must be positive")
