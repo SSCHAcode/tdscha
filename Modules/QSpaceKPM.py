@@ -5,6 +5,8 @@ from __future__ import print_function, division
 import numpy as np
 
 from tdscha.QSpaceLanczos import QSpaceLanczos, __EPSILON__
+from cellconstructor.Settings import ParallelPrint as print
+import cellconstructor.Settings as Parallel
 
 
 class QSpaceKPM(QSpaceLanczos):
@@ -87,13 +89,20 @@ class QSpaceKPM(QSpaceLanczos):
         moments = np.zeros(self.kpm_n_moments, dtype=np.float64)
         moments[0] = 1.0
 
+        if verbose:
+            print("KPM: moment 0 = {:.8e}, norm = {:.8e}".format(moments[0], self.kpm_vector_norm))
+
         if self.kpm_n_moments > 1:
             v1 = self._apply_rescaled_L(v0)
             moments[1] = self._metric_dot(v0, v1, mask)
+            if verbose:
+                print("KPM: moment 1 = {:.8e}".format(moments[1]))
             vm, v = v0, v1
             for i in range(2, self.kpm_n_moments):
                 vp = 2 * self._apply_rescaled_L(v) - vm
                 moments[i] = self._metric_dot(v0, vp, mask)
+                if verbose:
+                    print("KPM: moment {} = {:.8e}".format(i, moments[i]))
                 vm, v = v, vp
 
         self.kpm_moments = moments
@@ -101,6 +110,65 @@ class QSpaceKPM(QSpaceLanczos):
 
         if verbose:
             print("KPM completed with {} moments".format(self.kpm_n_moments))
+
+    def save_kpm(self, file):
+        """
+        Save KPM moments and parameters to a single text file.
+        The first line is a comment with all parameters, followed by the moments.
+        Only master process saves the file.
+        """
+        if self.kpm_moments is None:
+            raise ValueError("Run run_KPM before saving")
+        Parallel.barrier()
+        if not Parallel.am_i_the_master():
+            return
+        header = "kpm_n_moments={} kpm_vector_norm={} kpm_lambda_min={} kpm_lambda_max={} kpm_rescale_a={} kpm_rescale_b={}".format(
+            self.kpm_n_moments, self.kpm_vector_norm,
+            self.kpm_lambda_min, self.kpm_lambda_max,
+            self.kpm_rescale_a, self.kpm_rescale_b)
+        np.savetxt(file, self.kpm_moments, header=header)
+
+    def load_kpm(self, file):
+        """
+        Load KPM moments and parameters from file.
+        Parses the header to restore state for get_spectral_function_KPM.
+        Only master process loads and broadcasts to others.
+        """
+        Parallel.barrier()
+        if Parallel.am_i_the_master():
+            with open(file, 'r') as f:
+                header_line = f.readline()
+            if not header_line.startswith('#'):
+                raise ValueError("Invalid KPM save file: missing header")
+            parts = header_line[1:].strip().split()
+            params = {}
+            for part in parts:
+                if '=' in part:
+                    key, val = part.split('=')
+                    try:
+                        params[key] = float(val)
+                    except ValueError:
+                        params[key] = int(val)
+            moments = np.loadtxt(file)
+            data = {
+                'kpm_n_moments': int(params['kpm_n_moments']),
+                'kpm_vector_norm': params['kpm_vector_norm'],
+                'kpm_lambda_min': params['kpm_lambda_min'],
+                'kpm_lambda_max': params['kpm_lambda_max'],
+                'kpm_rescale_a': params['kpm_rescale_a'],
+                'kpm_rescale_b': params['kpm_rescale_b'],
+                'kpm_moments': moments
+            }
+        else:
+            data = None
+        data = Parallel.broadcast(data)
+        self.kpm_n_moments = data['kpm_n_moments']
+        self.kpm_vector_norm = data['kpm_vector_norm']
+        self.kpm_lambda_min = data['kpm_lambda_min']
+        self.kpm_lambda_max = data['kpm_lambda_max']
+        self.kpm_rescale_a = data['kpm_rescale_a']
+        self.kpm_rescale_b = data['kpm_rescale_b']
+        self.kpm_moments = data['kpm_moments']
 
     @staticmethod
     def _jackson_kernel(n_moments):
