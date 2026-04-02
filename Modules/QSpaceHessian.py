@@ -913,3 +913,63 @@ class QSpaceHessian:
 
         hessian.AdjustQStar()
         return hessian
+
+    @classmethod
+    def from_qspace_lanczos(cls, qlanc, verbose=True, use_symmetries=True):
+        """Create a QSpaceHessian from an existing QSpaceLanczos object.
+
+        Parameters
+        ----------
+        qlanc : QSpaceLanczos
+            An initialized QSpaceLanczos object (e.g., from load_distributed_tdscha).
+        verbose : bool
+            If True, print progress information.
+        use_symmetries : bool
+            If True, use symmetries to find irreducible q-points.
+
+        Returns
+        -------
+        QSpaceHessian
+            A QSpaceHessian object with the given qlanc as its Lanczos engine.
+        """
+        # Create instance using __new__ (bypass __init__)
+        hess = cls.__new__(cls)
+
+        # Set the qlanc reference (shares data, no copy)
+        hess.qlanc = qlanc
+
+        # Copy shortcuts from qlanc
+        hess.ensemble = qlanc.ensemble
+        hess.n_q = qlanc.n_q
+        hess.n_bands = qlanc.n_bands
+        hess.q_points = qlanc.q_points
+        hess.w_q = qlanc.w_q
+        hess.pols_q = qlanc.pols_q
+
+        # Initialize caches to None
+        hess.H_q_dict = {}
+        hess.irr_qpoints = None
+        hess.q_star_map = None
+        hess._cached_w_qp_sq = None
+        hess._cached_inv_w_qp_sq = None
+        hess._cached_inv_lambda = None
+        hess._cached_lambda = None
+        hess._cached_yw_outer = None
+        hess._has_symmetry_data = False
+
+        # Set verbose flag
+        hess.verbose = verbose
+
+        # Copy ignore flags from qlanc
+        hess.ignore_v3 = qlanc.ignore_v3
+        hess.ignore_v4 = qlanc.ignore_v4
+
+        # Initialize symmetries if requested
+        if use_symmetries and __SPGLIB__:
+            hess._find_irreducible_qpoints()
+        else:
+            hess.irr_qpoints = list(range(hess.n_q))
+            hess.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3), False)]
+                               for iq in range(hess.n_q)}
+
+        return hess

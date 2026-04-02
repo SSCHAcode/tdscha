@@ -21,11 +21,20 @@ class QSpaceKPM(QSpaceLanczos):
             DL.Lanczos.__init__(self, ensemble=None)
             # Set default for use_wigner (needed for spectral function computation)
             self.use_wigner = True
-            # Register KPM attributes
+            # Register KPM attributes AND QSpaceLanczos attributes needed for bare init
             self.__total_attributes__.extend([
+                # KPM attributes
                 "kpm_moments", "kpm_vector_norm", "kpm_n_moments",
                 "kpm_lambda_min", "kpm_lambda_max", "kpm_rescale_a",
-                "kpm_rescale_b", "kpm_bound_factor"
+                "kpm_rescale_b", "kpm_bound_factor",
+                # QSpaceLanczos attributes needed for from_qspace_lanczos
+                "n_q", "n_bands", "q_points", "w_q", "pols_q", "valid_modes_q",
+                "m", "X_q", "Y_q", "rho",
+                "iq_pert", "q_pair_map", "unique_pairs",
+                "_psi_size", "_block_offsets_a", "_block_offsets_b", "_block_sizes",
+                "n_syms_qspace", "_qspace_sym_data", "_qspace_sym_q_map",
+                "_distributed", "_N_global", "_N_eff_global", "_N_local",
+                "lo_to_split",
             ])
             self._init_kpm_attributes()
             return
@@ -376,3 +385,75 @@ class QSpaceKPM(QSpaceLanczos):
         rho *= self.kpm_vector_norm ** 2
         spectral[inside] = np.pi * rho
         return spectral
+
+    @classmethod
+    def from_qspace_lanczos(cls, qlanc):
+        """Create a QSpaceKPM from an existing QSpaceLanczos object.
+
+        This method reuses the qlanc object and extends it with KPM attributes.
+        The object shares the same data (X_q, Y_q, rho, etc.) with the
+        input QSpaceLanczos object.
+
+        Parameters
+        ----------
+        qlanc : QSpaceLanczos
+            An initialized QSpaceLanczos object.
+
+        Returns
+        -------
+        QSpaceKPM
+            A QSpaceKPM object with the same underlying data.
+        """
+        # Get all attributes from qlanc (including those not in __total_attributes__)
+        # that are needed for KPM operation
+        attrs_to_copy = [
+            # Distributed mode attributes
+            '_distributed', '_N_global', '_N_eff_global', '_N_local',
+            # Ensemble data
+            'ensemble', 'T', 'N', 'N_eff', 'rho',
+            # Q-space specific
+            'n_q', 'n_bands', 'q_points', 'w_q', 'pols_q', 'valid_modes_q',
+            'm', 'X_q', 'Y_q',
+            # Lanczos state
+            'iq_pert', 'q_pair_map', 'unique_pairs',
+            '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
+            'n_syms_qspace', '_qspace_sym_data', '_qspace_sym_q_map',
+            # Flags
+            'ignore_v3', 'ignore_v4', 'ignore_harmonic', 'use_wigner',
+            # Dynamical matrix
+            'dyn', 'uci_structure', 'super_structure',
+            # Psi-related
+            'psi', 'initialized', 'verbose',
+        ]
+        
+        # Create a new KPM instance (bare initialization with ensemble=None)
+        kpm = cls(None, lo_to_split=qlanc.lo_to_split if hasattr(qlanc, 'lo_to_split') else None)
+        
+        # Copy all relevant attributes from qlanc to kpm
+        for attr in attrs_to_copy:
+            if hasattr(qlanc, attr):
+                val = getattr(qlanc, attr)
+                try:
+                    setattr(kpm, attr, val)
+                except Exception as e:
+                    # Log but continue - some attributes may not be copyable
+                    pass
+        
+        # Also copy any additional attributes that qlanc has
+        for attr in qlanc.__total_attributes__:
+            if attr not in attrs_to_copy and hasattr(qlanc, attr):
+                val = getattr(qlanc, attr)
+                try:
+                    setattr(kpm, attr, val)
+                except Exception as e:
+                    pass
+        
+        # Ensure __total_attributes__ includes all necessary attributes
+        for attr in attrs_to_copy:
+            if attr not in kpm.__total_attributes__:
+                kpm.__total_attributes__.append(attr)
+
+        # Invalidate KPM cache to ensure fresh start
+        kpm._invalidate_kpm_cache()
+
+        return kpm
