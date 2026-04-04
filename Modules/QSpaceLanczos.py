@@ -34,6 +34,8 @@ import tdscha.DynamicalLanczos as DL
 import cellconstructor.Settings as Parallel
 from cellconstructor.Settings import ParallelPrint as print
 
+import sscha.Ensemble
+
 # MPI support for distributed mode
 __MPI4PY__ = False
 try:
@@ -804,17 +806,20 @@ class QSpaceLanczos(DL.Lanczos):
             indices.append([start + 1, stop])  # 1-indexed for Julia
 
         unique_pairs_arr = np.array(self.unique_pairs, dtype=np.int32) + 1  # 1-indexed
+        valid_modes = np.array(self.valid_modes_q, dtype=np.bool_)
+        iq_pert_jl = int(self.iq_pert) + 1
+        q_pair_map_jl = np.array(self.q_pair_map, dtype=np.int32) + 1
 
         def get_combined(start_end):
             return julia.Main.get_perturb_averages_qspace(
                 self.X_q, self.Y_q, self.w_q, self.rho,
                 R1, alpha1_flat,
-                np.float64(self.T), bool(not self.ignore_v4),
-                np.int64(self.iq_pert + 1),
-                self.q_pair_map + 1,  # 1-indexed
+                float(self.T), bool(not self.ignore_v4),
+                iq_pert_jl,
+                q_pair_map_jl,  # 1-indexed
                 unique_pairs_arr,
                 int(start_end[0]), int(start_end[1]),
-                self.valid_modes_q  # Pass mask to Julia
+                valid_modes  # Pass mask to Julia
             )
 
         combined = Parallel.GoParallel(get_combined, indices, "+")
@@ -887,15 +892,19 @@ class QSpaceLanczos(DL.Lanczos):
             # Julia will process self.N configs (which is now N_local)
             # Use local rho slice
             rho_local = self.rho[:N_local]
+            # Convert types explicitly for Julia
+            valid_modes = np.array(self.valid_modes_q, dtype=np.bool_)
+            iq_pert_jl = int(self.iq_pert) + 1
+            q_pair_map_jl = np.array(self.q_pair_map, dtype=np.int32) + 1
             return julia.Main.get_perturb_averages_qspace(
                 self.X_q, self.Y_q, self.w_q, rho_local,
                 R1, alpha1_flat,
-                np.float64(self.T), bool(not self.ignore_v4),
-                np.int64(self.iq_pert + 1),
-                self.q_pair_map + 1,  # 1-indexed
+                float(self.T), bool(not self.ignore_v4),
+                iq_pert_jl,
+                q_pair_map_jl,  # 1-indexed
                 unique_pairs_arr,
                 int(start_end[0]), int(start_end[1]),
-                self.valid_modes_q  # Pass mask to Julia
+                valid_modes  # Pass mask to Julia
             )
 
         # Call Julia (serial call, local configs only)
@@ -1487,7 +1496,7 @@ Starting from step %d
                 return nothing
             end
             """)
-            julia.Main.init_identity_qspace(np.int64(n_total))
+            julia.Main.init_identity_qspace(int(n_total))
             return
 
         if not __SPGLIB__:
@@ -1640,7 +1649,7 @@ Starting from step %d
         """)
 
         julia.Main.init_sparse_symmetries_qspace(
-            all_rows, all_cols, all_vals, np.int64(n_total))
+            all_rows, all_cols, all_vals, int(n_total))
 
         if verbose:
             print("Q-space symmetry matrices ({} x {}), {} symmetries cached in Julia".format(
@@ -1657,174 +1666,144 @@ Starting from step %d
 # Distributed Configuration Loading
 # =============================================================================
 
-def load_distributed_tdscha(ensemble, lo_to_split=None, use_symmetries=True, **kwargs):
-    """Load QSpaceLanczos with configurations distributed across MPI ranks.
+def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
+                           use_symmetries=True, n_configs=None, **kwargs):
+    """Load QSpaceLanczos with distributed configurations across MPI ranks.
 
-    In distributed mode, each process stores only N / n_procs configs instead of
-    all N configs. This reduces memory usage for large ensembles with many
-    MPI ranks.
+    Loads the ensemble on master rank only, then distributes configuration data
+    across all ranks. Each process stores only N/n_procs configs instead of all N.
+    This avoids having the full ensemble replicated in memory on all ranks.
 
     Parameters
     ----------
-    ensemble : sscha.Ensemble.Ensemble
-        The SSCHA ensemble (full, on master only).
+    data_dir : str
+        Directory containing the ensemble data files.
+    population_id : int
+        Population ID of the ensemble to load.
+    dyn : CC.Phonons.Phonons
+        Dynamical matrix object.
+    T : float
+        Temperature in Kelvin.
     lo_to_split : str, ndarray, or None
-        LO-TO splitting mode. If None (default), LO-TO splitting correction
-        is neglected. If "random", a random direction is used. If an ndarray,
-        it specifies the q-direction for the LO-TO splitting correction.
+        LO-TO splitting mode.
     use_symmetries : bool
-        If True, use q-space symmetries (default True).
+        If True, use q-space symmetries.
+    n_configs : int or None
+        Number of configs to load. If None, loads all available.
     **kwargs
-        Additional keyword arguments passed to QSpaceLanczos.
+        Additional arguments passed to QSpaceLanczos.
 
     Returns
     -------
     QSpaceLanczos
-        A QSpaceLanczos object with distributed configuration data.
-        In serial (n_procs=1), this is equivalent to a normal QSpaceLanczos.
+        QSpaceLanczos with distributed configs. Each rank has N_local = N/n_procs configs.
+        With n_procs=1, rank 0 holds all configs (N_local = N).
 
-    Notes
+    Usage
     -----
-    Flow (serial n_procs=1): Falls back to normal QSpaceLanczos(ensemble) + init().
+    mpirun -np 8 python your_script.py
 
-    Flow (MPI n_procs > 1):
-    1. Master (rank 0): Creates full QSpaceLanczos, calls init().
-    2. Broadcast metadata dict via comm.bcast (pickle).
-    3. Non-master procs: Create bare QSpaceLanczos(ensemble=None), populate from
-       broadcast metadata. Call prepare_symmetrization() to build Julia cache.
-    4. Scatter configs via MPI.Send/Recv (point-to-point).
-    5. Set distributed state: _distributed=True, _N_global, _N_eff_global, _N_local.
-    6. Free full arrays on master; null out unused parent arrays on all procs.
+    Flow:
+    - Rank 0: loads ensemble, creates QSpaceLanczos, broadcasts metadata, sends slices
+    - Ranks 1..n-1: receive metadata, build bare QSpaceLanczos, receive slices
+    - All: have only their local slice, _distributed=True
     """
-    n_procs = Parallel.GetNProc()
-
-    if n_procs == 1:
-        # Serial mode - fall back to normal QSpaceLanczos
-        qlanc = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
-        qlanc.init(use_symmetries=use_symmetries)
-        return qlanc
-
-    if not __MPI4PY__:
-        raise RuntimeError(
-            "load_distributed_tdscha requires mpi4py for MPI parallel execution."
-        )
-
     comm = mpi4py.MPI.COMM_WORLD
     rank = comm.Get_rank()
+    n_procs = Parallel.GetNProc()
 
-    # MPI mode - distributed configuration loading
     if Parallel.am_i_the_master():
         # ========== MASTER (RANK 0) ==========
-        # Create full QSpaceLanczos on master
-        qlanc_full = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
-        qlanc_full.init(use_symmetries=use_symmetries)
+        ensemble = sscha.Ensemble.Ensemble(dyn, T)
+        if n_configs is not None:
+            ensemble.load_bin(data_dir, population_id, n_configs=n_configs)
+        else:
+            ensemble.load_bin(data_dir, population_id)
 
-        # Extract global counts
-        N_global = qlanc_full.N
-        N_eff_global = qlanc_full.N_eff
+        qlanc = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
+        qlanc.init(use_symmetries=use_symmetries)
 
-        # Prepare metadata dict (small structure arrays, NO large config data)
+        # Free ensemble - we only need QSpaceLanczos arrays
+        del ensemble
+
+        # Extract global info
+        N_global = qlanc.N
+        N_eff_global = qlanc.N_eff
+
+        # Broadcast metadata (structure arrays, NO config data)
         metadata = {
-            # Structural data
-            'T': qlanc_full.T,
-            'dyn': qlanc_full.dyn,
-            'uci_structure': qlanc_full.uci_structure,
-            'super_structure': qlanc_full.super_structure,
-            # Q-space data
-            'q_points': qlanc_full.q_points,
-            'n_q': qlanc_full.n_q,
-            'n_bands': qlanc_full.n_bands,
-            'w_q': qlanc_full.w_q,
-            'pols_q': qlanc_full.pols_q,
-            'valid_modes_q': qlanc_full.valid_modes_q,
-            # Mass data
-            'm': qlanc_full.m,
-            # Flags
-            'ignore_v3': qlanc_full.ignore_v3,
-            'ignore_v4': qlanc_full.ignore_v4,
-            # Global counts
-            'N_global': N_global,
-            'N_eff_global': N_eff_global,
-            # Symmetry data (needed for Julia cache reconstruction)
-            'n_syms_qspace': qlanc_full.n_syms_qspace,
-            '_qspace_sym_data': qlanc_full._qspace_sym_data,
-            '_qspace_sym_q_map': qlanc_full._qspace_sym_q_map,
+            'T': qlanc.T, 'dyn': qlanc.dyn,
+            'uci_structure': qlanc.uci_structure,
+            'super_structure': qlanc.super_structure,
+            'q_points': qlanc.q_points, 'n_q': qlanc.n_q,
+            'n_bands': qlanc.n_bands, 'w_q': qlanc.w_q,
+            'pols_q': qlanc.pols_q, 'valid_modes_q': qlanc.valid_modes_q,
+            'm': qlanc.m,
+            'ignore_v3': qlanc.ignore_v3, 'ignore_v4': qlanc.ignore_v4,
+            'N_global': N_global, 'N_eff_global': N_eff_global,
+            'n_syms_qspace': qlanc.n_syms_qspace,
+            '_qspace_sym_data': qlanc._qspace_sym_data,
+            '_qspace_sym_q_map': qlanc._qspace_sym_q_map,
         }
+        comm.bcast(metadata, root=0)
 
-        # Broadcast metadata to all ranks
-        metadata = comm.bcast(metadata, root=0)
+        # Barrier to ensure all ranks have received metadata before we start sending slices
+        comm.barrier()
 
-        # Compute distribution: divide N configs among n_procs
-        # Each proc gets ceil(N / n_procs) configs, but we balance as evenly as possible
+        # Distribute configs to other ranks
         configs_per_proc = N_global // n_procs
         remainder = N_global % n_procs
 
-        # For each non-master rank, send its slice of configs
-        for target_rank in range(1, n_procs):
-            # Determine this rank's slice
-            if target_rank < remainder:
-                start = target_rank * (configs_per_proc + 1)
+        for target in range(1, n_procs):
+            if target < remainder:
+                start = target * (configs_per_proc + 1)
                 end = start + configs_per_proc + 1
             else:
-                start = target_rank * configs_per_proc + remainder
+                start = target * configs_per_proc + remainder
                 end = start + configs_per_proc
 
             N_local = end - start
+            comm.Send(np.array([N_local], dtype=np.int64), dest=target, tag=0)
+            comm.Send(qlanc.X_q[:, start:end, :].copy(), dest=target, tag=1)
+            comm.Send(qlanc.Y_q[:, start:end, :].copy(), dest=target, tag=2)
+            comm.Send(qlanc.rho[start:end].copy(), dest=target, tag=3)
 
-            # Extract local slices
-            X_q_local = qlanc_full.X_q[:, start:end, :].copy()
-            Y_q_local = qlanc_full.Y_q[:, start:end, :].copy()
-            rho_local = qlanc_full.rho[start:end].copy()
-
-            # Send N_local first
-            comm.Send(np.array([N_local], dtype=np.int64), dest=target_rank, tag=0)
-
-            # Send arrays
-            comm.Send(X_q_local, dest=target_rank, tag=1)
-            comm.Send(Y_q_local, dest=target_rank, tag=2)
-            comm.Send(rho_local, dest=target_rank, tag=3)
-
-        # Master keeps its slice
+        # Master keeps its slice (rank 0)
         if remainder > 0:
-            start = 0
-            end = configs_per_proc + 1
+            start, end = 0, configs_per_proc + 1
         else:
-            start = 0
-            end = configs_per_proc
+            start, end = 0, configs_per_proc
 
-        N_local_master = end - start
+        N_local = end - start
+        qlanc.X_q = qlanc.X_q[:, start:end, :].copy()
+        qlanc.Y_q = qlanc.Y_q[:, start:end, :].copy()
+        qlanc.rho = qlanc.rho[start:end].copy()
 
-        # Slice arrays to keep only local configs
-        qlanc_full.X_q = qlanc_full.X_q[:, start:end, :].copy()
-        qlanc_full.Y_q = qlanc_full.Y_q[:, start:end, :].copy()
-        qlanc_full.rho = qlanc_full.rho[start:end].copy()
+        # Set distributed state
+        qlanc._distributed = True
+        qlanc._N_global = N_global
+        qlanc._N_eff_global = N_eff_global
+        qlanc._N_local = N_local
+        qlanc.N = N_local
+        qlanc.N_eff = int(np.sum(qlanc.rho))
 
-        # Set distributed state on master
-        qlanc_full._distributed = True
-        qlanc_full._N_global = N_global
-        qlanc_full._N_eff_global = N_eff_global
-        qlanc_full._N_local = N_local_master
-        qlanc_full.N = qlanc_full._N_local  # Julia sees local count
-        qlanc_full.N_eff = int(np.sum(qlanc_full.rho))
+        # Free unused arrays
+        if hasattr(qlanc, 'X') and qlanc.X is not None:
+            qlanc.X = None
+        if hasattr(qlanc, 'Y') and qlanc.Y is not None:
+            qlanc.Y = None
 
-        # Free parent arrays (X, Y) to save memory - not used in q-space
-        if hasattr(qlanc_full, 'X') and qlanc_full.X is not None:
-            qlanc_full.X = None
-        if hasattr(qlanc_full, 'Y') and qlanc_full.Y is not None:
-            qlanc_full.Y = None
-        # pols and w are already not stored (only q-space versions)
-
-        return qlanc_full
+        return qlanc
 
     else:
-        # ========== NON-MASTER RANKS ==========
-        # Receive metadata broadcast
+        # ========== OTHER RANKS ==========
         metadata = comm.bcast(None, root=0)
 
-        # Create bare QSpaceLanczos with ensemble=None
-        qlanc = QSpaceLanczos(ensemble=None, lo_to_split=lo_to_split, **kwargs)
+        # Barrier to ensure all ranks have received metadata before slices are sent
+        comm.barrier()
 
-        # Populate from metadata
+        # Create bare QSpaceLanczos and populate from metadata
+        qlanc = QSpaceLanczos(ensemble=None, lo_to_split=lo_to_split, **kwargs)
         qlanc.T = metadata['T']
         qlanc.dyn = metadata['dyn']
         qlanc.uci_structure = metadata['uci_structure']
@@ -1842,40 +1821,28 @@ def load_distributed_tdscha(ensemble, lo_to_split=None, use_symmetries=True, **k
         qlanc._qspace_sym_data = metadata['_qspace_sym_data']
         qlanc._qspace_sym_q_map = metadata['_qspace_sym_q_map']
 
-        # Receive config slice
+        # Receive local config slice
         N_local_arr = np.array([0], dtype=np.int64)
         comm.Recv(N_local_arr, source=0, tag=0)
         N_local = int(N_local_arr[0])
 
-        # Allocate local arrays
-        X_q_shape = (qlanc.n_q, N_local, qlanc.n_bands)
-        Y_q_shape = (qlanc.n_q, N_local, qlanc.n_bands)
-        rho_shape = (N_local,)
+        qlanc.X_q = np.zeros((qlanc.n_q, N_local, qlanc.n_bands), dtype=np.complex128)
+        qlanc.Y_q = np.zeros((qlanc.n_q, N_local, qlanc.n_bands), dtype=np.complex128)
+        qlanc.rho = np.zeros(N_local, dtype=np.float64)
 
-        X_q_local = np.zeros(X_q_shape, dtype=np.complex128)
-        Y_q_local = np.zeros(Y_q_shape, dtype=np.complex128)
-        rho_local = np.zeros(rho_shape, dtype=np.float64)
-
-        # Receive arrays
-        comm.Recv(X_q_local, source=0, tag=1)
-        comm.Recv(Y_q_local, source=0, tag=2)
-        comm.Recv(rho_local, source=0, tag=3)
-
-        # Set local data
-        qlanc.X_q = X_q_local
-        qlanc.Y_q = Y_q_local
-        qlanc.rho = rho_local
+        comm.Recv(qlanc.X_q, source=0, tag=1)
+        comm.Recv(qlanc.Y_q, source=0, tag=2)
+        comm.Recv(qlanc.rho, source=0, tag=3)
 
         # Set distributed state
         qlanc._distributed = True
         qlanc._N_global = metadata['N_global']
         qlanc._N_eff_global = metadata['N_eff_global']
         qlanc._N_local = N_local
-        qlanc.N = N_local  # Julia sees local count
-        qlanc.N_eff = int(np.sum(rho_local))
+        qlanc.N = N_local
+        qlanc.N_eff = int(np.sum(qlanc.rho))
 
-        # Build Julia symmetry cache (deterministic, depends only on structure)
-        # This is needed because we need the same symmetries as the master
+        # Build Julia symmetry cache
         qlanc.prepare_symmetrization(no_sym=not use_symmetries)
         qlanc.initialized = True
 

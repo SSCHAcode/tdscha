@@ -7,6 +7,9 @@ Run with MPI (compares GoParallel vs distributed approach):
 The tests compare results from:
 1. Regular QSpaceLanczos (uses GoParallel internally)
 2. load_distributed_tdscha (new distributed approach)
+
+Note: These tests require at least 2 MPI processes and will be skipped if run
+with only 1 process (e.g., via pytest without mpirun).
 """
 from __future__ import print_function
 
@@ -14,10 +17,20 @@ import numpy as np
 import os
 import sys
 
+import pytest
+
 import cellconstructor as CC
 import cellconstructor.Phonons
+import cellconstructor.Settings
 
 import sscha, sscha.Ensemble
+
+import tdscha.QSpaceLanczos as QL
+import tdscha.QSpaceKPM as QK
+import tdscha.QSpaceHessian as QH
+
+from tdscha.QSpaceLanczos import load_distributed_tdscha
+
 
 # Test parameters
 N_STEPS = 5
@@ -31,14 +44,8 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 
 def pprint(*args):
     """Print only on rank 0."""
-    if am_i_the_master():
+    if cellconstructor.Settings.am_i_the_master():
         print(*args)
-
-
-def am_i_the_master():
-    """Check if this is the master rank."""
-    from cellconstructor.Settings import am_i_the_master as _am_i_master
-    return _am_i_master()
 
 
 def _find_gamma_mode(dyn):
@@ -84,116 +91,63 @@ def _find_gamma_mode(dyn):
     return band_index
 
 
-def _tile_qspace_arrays(qlanc, n_repeat):
-    """Tile the q-space arrays to simulate multiple configurations.
-    
-    This modifies the arrays in-place to create n_repeat copies of each config.
-    """
-    n_q = qlanc.n_q
-    n_bands = qlanc.n_bands
-    N_orig = qlanc.N
-    
-    # Tile X_q, Y_q, rho
-    qlanc.X_q = np.tile(qlanc.X_q, (1, n_repeat, 1))
-    qlanc.Y_q = np.tile(qlanc.Y_q, (1, n_repeat, 1))
-    qlanc.rho = np.tile(qlanc.rho, n_repeat)
-    
-    # Normalize rho to sum to n_repeat (original sum was 1)
-    qlanc.rho = qlanc.rho / np.sum(qlanc.rho) * n_repeat
-    
-    # Update N and N_eff
-    qlanc.N = N_orig * n_repeat
-    qlanc.N_eff = int(np.sum(qlanc.rho))
-    
-    return qlanc
+def _get_n_procs():
+    """Get number of MPI processes."""
+    return cellconstructor.Settings.GetNProc()
+
+
+def _create_dyn():
+    """Create a test dynamical matrix."""
+    return CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
 
 
 def test_distributed_attributes_set():
     """Test that distributed attributes are correctly set after load_distributed_tdscha."""
-    try:
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
-
-    from cellconstructor.Settings import GetNProc
-    n_procs = GetNProc()
-    
+    n_procs = _get_n_procs()
     if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("This test requires mpirun -np 2")
 
     pprint("=" * 60)
     pprint("TEST: Distributed attributes are correctly set")
     pprint("=" * 60)
 
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
-    # Use load_distributed_tdscha
-    qlanc = load_distributed_tdscha(ens, lo_to_split=None, use_symmetries=True)
+    # Use load_distributed_tdscha with data_dir and dyn
+    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
     
     pprint(f"Rank {n_procs - 1} has N_local = {qlanc._N_local}")
     pprint(f"Global N_global = {qlanc._N_global}")
     pprint(f"_distributed = {qlanc._distributed}")
     
     # Check distributed attributes
-    checks_passed = True
-    
-    if not hasattr(qlanc, '_distributed'):
-        pprint("FAIL: Missing _distributed attribute")
-        checks_passed = False
-    elif qlanc._distributed != True:
-        pprint(f"FAIL: _distributed should be True, got {qlanc._distributed}")
-        checks_passed = False
-        
-    if not hasattr(qlanc, '_N_global'):
-        pprint("FAIL: Missing _N_global attribute")
-        checks_passed = False
-        
-    if not hasattr(qlanc, '_N_local'):
-        pprint("FAIL: Missing _N_local attribute")
-        checks_passed = False
+    assert hasattr(qlanc, '_distributed'), "Missing _distributed attribute"
+    assert qlanc._distributed == True, f"_distributed should be True, got {qlanc._distributed}"
+    assert hasattr(qlanc, '_N_global'), "Missing _N_global attribute"
+    assert hasattr(qlanc, '_N_local'), "Missing _N_local attribute"
     
     # N_local should be less than or equal to ceil(N_global / n_procs)
     max_expected = int(np.ceil(qlanc._N_global / n_procs))
-    if qlanc._N_local > max_expected:
-        pprint(f"FAIL: _N_local ({qlanc._N_local}) > ceil(_N_global/n_procs) ({max_expected})")
-        checks_passed = False
-    
-    if checks_passed:
-        pprint("TEST PASSED!")
-    return checks_passed
+    assert qlanc._N_local <= max_expected, \
+        f"_N_local ({qlanc._N_local}) > ceil(_N_global/n_procs) ({max_expected})"
 
 
 def test_distributed_memory_footprint():
     """Test that distributed mode uses less memory by storing only N_local configs."""
-    try:
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
-
-    from cellconstructor.Settings import GetNProc
-    n_procs = GetNProc()
-    
+    n_procs = _get_n_procs()
     if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("This test requires mpirun -np 2")
 
     pprint("=" * 60)
     pprint("TEST: Distributed memory footprint")
     pprint("=" * 60)
 
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
     # Use load_distributed_tdscha (distributes the 1 config)
-    qlanc = load_distributed_tdscha(ens, lo_to_split=None, use_symmetries=True)
+    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
     
     pprint(f"X_q shape: {qlanc.X_q.shape}")
     pprint(f"N_local: {qlanc._N_local}")
@@ -203,41 +157,25 @@ def test_distributed_memory_footprint():
     # (not N_global, because configs are distributed)
     max_expected = int(np.ceil(qlanc._N_global / n_procs))
     
-    if qlanc.X_q.shape[1] <= max_expected:
-        pprint(f"TEST PASSED: X_q has {qlanc.X_q.shape[1]} configs (expected <= {max_expected})")
-        return True
-    else:
-        pprint(f"TEST FAILED: X_q has {qlanc.X_q.shape[1]} configs (expected <= {max_expected})")
-        return False
+    assert qlanc.X_q.shape[1] <= max_expected, \
+        f"X_q has {qlanc.X_q.shape[1]} configs (expected <= {max_expected})"
 
 
 def test_distributed_lanczos_run():
     """Test that Lanczos runs correctly with distributed configurations."""
-    try:
-        import tdscha.QSpaceLanczos as QL
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
-
-    from cellconstructor.Settings import GetNProc
-    n_procs = GetNProc()
-    
+    n_procs = _get_n_procs()
     if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("This test requires mpirun -np 2")
 
     pprint("=" * 60)
     pprint("TEST: Distributed Lanczos run")
     pprint("=" * 60)
 
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
     # Use load_distributed_tdscha
-    qlanc = load_distributed_tdscha(ens, lo_to_split=None, use_symmetries=True)
+    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
     qlanc.ignore_harmonic = False
     qlanc.ignore_v3 = False
     qlanc.ignore_v4 = False
@@ -251,41 +189,25 @@ def test_distributed_lanczos_run():
     qlanc.run_FT(N_STEPS, verbose=False)
     
     # Check that coefficients are finite
-    if all(np.isfinite(qlanc.a_coeffs)) and all(np.isfinite(qlanc.b_coeffs)):
-        pprint(f"TEST PASSED: a_coeffs = {qlanc.a_coeffs}")
-        return True
-    else:
-        pprint("TEST FAILED: Lanczos coefficients contain NaN/Inf")
-        return False
+    assert all(np.isfinite(qlanc.a_coeffs)), "Lanczos a_coeffs contain NaN/Inf"
+    assert all(np.isfinite(qlanc.b_coeffs)), "Lanczos b_coeffs contain NaN/Inf"
 
 
 def test_distributed_hessian():
     """Test that Hessian computation works with distributed configurations."""
-    try:
-        import tdscha.QSpaceHessian as QH
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
-
-    from cellconstructor.Settings import GetNProc
-    n_procs = GetNProc()
-    
+    n_procs = _get_n_procs()
     if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("This test requires mpirun -np 2")
 
     pprint("=" * 60)
     pprint("TEST: Distributed Hessian computation")
     pprint("=" * 60)
 
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
     # Use load_distributed_tdscha
-    qlanc = load_distributed_tdscha(ens, lo_to_split=None, use_symmetries=False)
+    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=False)
     qlanc.ignore_harmonic = False
     qlanc.ignore_v3 = False
     qlanc.ignore_v4 = False
@@ -297,9 +219,7 @@ def test_distributed_hessian():
     hess.compute_full_hessian()
     
     # Check that we have results for Gamma
-    if 0 not in hess.H_q_dict:
-        pprint("TEST FAILED: Missing Gamma point in Hessian results")
-        return False
+    assert 0 in hess.H_q_dict, "Missing Gamma point in Hessian results"
     
     # Check that eigenvalues are reasonable
     H_gamma = hess.H_q_dict[0]
@@ -308,41 +228,24 @@ def test_distributed_hessian():
     pprint(f"Hessian eigenvalues at Gamma: {evals}")
     
     # All eigenvalues should be non-negative (for stable system)
-    if np.all(evals >= -1e-10):
-        pprint("TEST PASSED!")
-        return True
-    else:
-        pprint("TEST FAILED: Negative eigenvalues in Hessian")
-        return False
+    assert np.all(evals >= -1e-10), "Negative eigenvalues in Hessian"
 
 
 def test_distributed_kpm():
     """Test that KPM works with distributed configurations."""
-    try:
-        import tdscha.QSpaceKPM as QK
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
-
-    from cellconstructor.Settings import GetNProc
-    n_procs = GetNProc()
-    
+    n_procs = _get_n_procs()
     if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("This test requires mpirun -np 2")
 
     pprint("=" * 60)
     pprint("TEST: Distributed KPM")
     pprint("=" * 60)
 
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
     # Use load_distributed_tdscha
-    qlanc = load_distributed_tdscha(ens, lo_to_split=None, use_symmetries=True)
+    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
     
     # Prepare perturbation
     iq = 0
@@ -361,12 +264,7 @@ def test_distributed_kpm():
     kpm.run_KPM(n_moments, verbose=False)
     
     # Check that moments are finite
-    if all(np.isfinite(kpm.kpm_moments)):
-        pprint(f"TEST PASSED: KPM moments computed ({len(kpm.kpm_moments)} moments)")
-        return True
-    else:
-        pprint("TEST FAILED: KPM moments contain NaN/Inf")
-        return False
+    assert all(np.isfinite(kpm.kpm_moments)), "KPM moments contain NaN/Inf"
 
 
 def test_goparallel_vs_distributed():
@@ -375,37 +273,27 @@ def test_goparallel_vs_distributed():
     This test must be run with mpirun -np 2 to test the distributed approach.
     Both approaches should give identical results.
     """
-    try:
-        import tdscha.QSpaceLanczos as QL
-        from tdscha.QSpaceLanczos import load_distributed_tdscha
-    except ImportError as e:
-        pprint("ERROR: Julia not available:", e)
-        return False
+    n_procs = _get_n_procs()
+    if n_procs < 2:
+        pytest.skip("This test requires mpirun -np 2")
 
     if not QL.__JULIA_EXT__:
-        pprint("ERROR: Julia extension not loaded")
-        return False
-
-    from cellconstructor.Settings import GetNProc, am_i_the_master
-    n_procs = GetNProc()
-    
-    if n_procs < 2:
-        pprint("ERROR: This test requires mpirun -np 2")
-        return False
+        pytest.skip("Julia extension not loaded")
 
     pprint("=" * 60)
     pprint("TEST: GoParallel vs Distributed approach")
     pprint("=" * 60)
     
-    # Create ensemble
-    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
-    ens = sscha.Ensemble.Ensemble(dyn, T)
-    ens.load_bin(DATA_DIR, 1)
+    # Create dynamical matrix
+    dyn = _create_dyn()
 
     # Test 1: Regular QSpaceLanczos with GoParallel
     # Each rank has full data but Julia work is distributed via GoParallel
     pprint()
     pprint("--- Test 1: GoParallel (regular) ---")
+    
+    ens = sscha.Ensemble.Ensemble(dyn, T)
+    ens.load_bin(DATA_DIR, 1)
     
     qlanc_goparallel = QL.QSpaceLanczos(ens, lo_to_split=None)
     qlanc_goparallel.ignore_harmonic = False
@@ -434,11 +322,8 @@ def test_goparallel_vs_distributed():
     pprint()
     pprint("--- Test 2: Distributed approach ---")
     
-    # Create fresh ensemble
-    ens2 = sscha.Ensemble.Ensemble(dyn, T)
-    ens2.load_bin(DATA_DIR, 1)
-    
-    qlanc_dist = load_distributed_tdscha(ens2, lo_to_split=None, use_symmetries=True)
+    # Use the new distributed function with data_dir
+    qlanc_dist = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
     qlanc_dist.ignore_harmonic = False
     qlanc_dist.ignore_v3 = False
     qlanc_dist.ignore_v4 = False
@@ -466,62 +351,7 @@ def test_goparallel_vs_distributed():
     pprint(f"Distributed b_coeffs: {b_coeffs_dist}")
     
     # Compare results
-    try:
-        np.testing.assert_allclose(a_coeffs_goparallel, a_coeffs_dist, rtol=1e-8,
-                                 err_msg="a_coeffs mismatch between GoParallel and distributed")
-        np.testing.assert_allclose(b_coeffs_goparallel, b_coeffs_dist, rtol=1e-8,
-                                 err_msg="b_coeffs mismatch between GoParallel and distributed")
-        pprint()
-        pprint("TEST PASSED: GoParallel and distributed results match!")
-        return True
-    except AssertionError as e:
-        pprint()
-        pprint("TEST FAILED: Results differ between GoParallel and distributed approaches")
-        pprint(str(e))
-        return False
-
-
-def run_all_tests():
-    """Run all tests and report results."""
-    tests = [
-        ("Distributed attributes set", test_distributed_attributes_set),
-        ("Distributed memory footprint", test_distributed_memory_footprint),
-        ("Distributed Lanczos run", test_distributed_lanczos_run),
-        ("Distributed Hessian", test_distributed_hessian),
-        ("Distributed KPM", test_distributed_kpm),
-        ("GoParallel vs Distributed", test_goparallel_vs_distributed),
-    ]
-    
-    results = []
-    for name, test_func in tests:
-        try:
-            passed = test_func()
-            results.append((name, passed))
-        except Exception as e:
-            pprint(f"ERROR in {name}: {e}")
-            import traceback
-            traceback.print_exc()
-            results.append((name, False))
-    
-    pprint()
-    pprint("=" * 60)
-    pprint("SUMMARY")
-    pprint("=" * 60)
-    all_passed = True
-    for name, passed in results:
-        status = "PASSED" if passed else "FAILED"
-        pprint(f"  {name}: {status}")
-        if not passed:
-            all_passed = False
-    
-    pprint()
-    if all_passed:
-        pprint("ALL TESTS PASSED!")
-        return 0
-    else:
-        pprint("SOME TESTS FAILED!")
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(run_all_tests())
+    np.testing.assert_allclose(a_coeffs_goparallel, a_coeffs_dist, rtol=1e-8,
+                               err_msg="a_coeffs mismatch between GoParallel and distributed")
+    np.testing.assert_allclose(b_coeffs_goparallel, b_coeffs_dist, rtol=1e-8,
+                               err_msg="b_coeffs mismatch between GoParallel and distributed")
