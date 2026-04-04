@@ -2,6 +2,10 @@
 
 from __future__ import print_function, division
 
+import os
+import sys
+import time
+
 import numpy as np
 
 from tdscha.QSpaceLanczos import QSpaceLanczos, __EPSILON__
@@ -27,6 +31,7 @@ class QSpaceKPM(QSpaceLanczos):
                 "kpm_moments", "kpm_vector_norm", "kpm_n_moments",
                 "kpm_lambda_min", "kpm_lambda_max", "kpm_rescale_a",
                 "kpm_rescale_b", "kpm_bound_factor",
+                "kpm_chebyshev_vm", "kpm_chebyshev_v",
                 # QSpaceLanczos attributes needed for from_qspace_lanczos
                 "n_q", "n_bands", "q_points", "w_q", "pols_q", "valid_modes_q",
                 "m", "X_q", "Y_q", "rho",
@@ -43,7 +48,8 @@ class QSpaceKPM(QSpaceLanczos):
         self.__total_attributes__.extend([
             "kpm_moments", "kpm_vector_norm", "kpm_n_moments",
             "kpm_lambda_min", "kpm_lambda_max", "kpm_rescale_a",
-            "kpm_rescale_b", "kpm_bound_factor"
+            "kpm_rescale_b", "kpm_bound_factor",
+            "kpm_chebyshev_vm", "kpm_chebyshev_v"
         ])
         self._init_kpm_attributes()
 
@@ -56,14 +62,8 @@ class QSpaceKPM(QSpaceLanczos):
         self.kpm_rescale_a = None
         self.kpm_rescale_b = None
         self.kpm_bound_factor = None
-        self.kpm_moments = None
-        self.kpm_vector_norm = None
-        self.kpm_n_moments = 0
-        self.kpm_lambda_min = None
-        self.kpm_lambda_max = None
-        self.kpm_rescale_a = None
-        self.kpm_rescale_b = None
-        self.kpm_bound_factor = None
+        self.kpm_chebyshev_vm = None
+        self.kpm_chebyshev_v = None
 
     def _invalidate_kpm_cache(self):
         self.kpm_moments = None
@@ -74,6 +74,75 @@ class QSpaceKPM(QSpaceLanczos):
         self.kpm_rescale_a = None
         self.kpm_rescale_b = None
         self.kpm_bound_factor = None
+        self.kpm_chebyshev_vm = None
+        self.kpm_chebyshev_v = None
+
+    def save_status(self, file):
+        """Save KPM iteration state to NPZ file for checkpoint/restart.
+
+        Saves all KPM parameters, moments, and Chebyshev recurrence vectors
+        so that run_KPM can be continued from where it left off.
+
+        Parameters
+        ----------
+        file : str
+            Path to the output file. '.npz' extension is added if missing.
+        """
+        if self.kpm_moments is None:
+            raise ValueError("Run run_KPM before saving status")
+        Parallel.barrier()
+        if Parallel.am_i_the_master():
+            if ".npz" not in file.lower():
+                file += ".npz"
+            save_dict = dict(
+                kpm_n_moments=self.kpm_n_moments,
+                kpm_vector_norm=self.kpm_vector_norm,
+                kpm_lambda_min=self.kpm_lambda_min,
+                kpm_lambda_max=self.kpm_lambda_max,
+                kpm_rescale_a=self.kpm_rescale_a,
+                kpm_rescale_b=self.kpm_rescale_b,
+                kpm_bound_factor=self.kpm_bound_factor,
+                kpm_moments=self.kpm_moments,
+            )
+            if self.kpm_chebyshev_vm is not None:
+                save_dict["kpm_chebyshev_vm"] = self.kpm_chebyshev_vm
+            if self.kpm_chebyshev_v is not None:
+                save_dict["kpm_chebyshev_v"] = self.kpm_chebyshev_v
+            np.savez_compressed(file, **save_dict)
+
+    def load_status(self, file):
+        """Load KPM iteration state from NPZ file.
+
+        Restores all KPM parameters, moments, and (if present) the Chebyshev
+        recurrence vectors needed for continuation with run_KPM.
+
+        Parameters
+        ----------
+        file : str
+            Path to the NPZ file. '.npz' extension is added if missing.
+        """
+        Parallel.barrier()
+        if ".npz" not in file.lower():
+            file += ".npz"
+        if Parallel.am_i_the_master():
+            if not os.path.exists(file):
+                raise IOError("KPM status file not found: {}".format(file))
+            data = dict(np.load(file, allow_pickle=True))
+        else:
+            data = None
+        data = Parallel.broadcast(data)
+
+        self.kpm_n_moments = int(data["kpm_n_moments"])
+        self.kpm_vector_norm = float(data["kpm_vector_norm"])
+        self.kpm_lambda_min = float(data["kpm_lambda_min"])
+        self.kpm_lambda_max = float(data["kpm_lambda_max"])
+        self.kpm_rescale_a = float(data["kpm_rescale_a"])
+        self.kpm_rescale_b = float(data["kpm_rescale_b"])
+        self.kpm_bound_factor = float(data["kpm_bound_factor"])
+        self.kpm_moments = data["kpm_moments"]
+        # Chebyshev vectors for continuation (may be absent in old files)
+        self.kpm_chebyshev_vm = data.get("kpm_chebyshev_vm", None)
+        self.kpm_chebyshev_v = data.get("kpm_chebyshev_v", None)
 
     def reset_q(self):
         super().reset_q()
@@ -199,20 +268,27 @@ class QSpaceKPM(QSpaceLanczos):
             mu_{2n}   = 2 <t_n, t_n>_M - mu_0
             mu_{2n+1} = 2 <t_{n+1}, t_n>_M - mu_1
 
+        If Chebyshev recurrence vectors are available from a previous run
+        (via save_status/load_status), the iteration continues from where
+        it left off rather than restarting from scratch.
+
         Parameters
         ----------
         n_moments : int
-            Number of Chebyshev moments to compute.
+            Total number of Chebyshev moments to compute.
         lambda_min, lambda_max : float, optional
             Explicit bounds for the KPM. If not provided, bounds are
             estimated automatically from the maximum phonon frequency.
+            Ignored during continuation (previous bounds are reused).
         bound_factor : float, default=1.2
             Factor controlling the width of the KPM bounds relative to
             the estimated spectral width. Smaller values (closer to 1.0)
             give better resolution but require the eigenvalue to be within
             the bounds. Values > 1.5 may cause significant baseline artifacts.
+            Ignored during continuation.
         edge_buffer : float, default=1e-8
             Small buffer added to the bounds to avoid edge effects.
+            Ignored during continuation.
         verbose : bool, default=True
             Print progress information.
         """
@@ -222,60 +298,156 @@ class QSpaceKPM(QSpaceLanczos):
             raise ValueError("Prepare a perturbation before running KPM")
 
         mask = self.mask_dot_wigner(False)
-        psi0 = self.psi.copy()
-        norm_sq = self._metric_dot(psi0, psi0, mask)
-        if norm_sq <= __EPSILON__ or np.isnan(norm_sq):
-            raise ValueError("Prepare a non-zero perturbation before running KPM")
-
-        self.kpm_lambda_min, self.kpm_lambda_max = self._get_kpm_bounds(
-            lambda_min=lambda_min, lambda_max=lambda_max,
-            bound_factor=bound_factor, edge_buffer=edge_buffer)
-        self.kpm_rescale_a = 0.5 * (self.kpm_lambda_max - self.kpm_lambda_min)
-        self.kpm_rescale_b = 0.5 * (self.kpm_lambda_max + self.kpm_lambda_min)
-        self.kpm_vector_norm = np.sqrt(norm_sq)
-        self.kpm_n_moments = int(n_moments)
-        self.kpm_bound_factor = bound_factor
-
-        v0 = psi0 / self.kpm_vector_norm
-        moments = np.zeros(self.kpm_n_moments, dtype=np.float64)
-        moments[0] = 1.0
         n_L_applications = 0
 
-        if verbose:
-            print("KPM: moment 0 = {:.8e}, norm = {:.8e}".format(
-                moments[0], self.kpm_vector_norm))
+        # Check for continuation from a previous run
+        existing = self.kpm_n_moments
+        can_continue = (existing > 0 and self.kpm_moments is not None
+                        and self.kpm_chebyshev_v is not None)
 
-        if self.kpm_n_moments > 1:
-            v1 = self._apply_rescaled_L(v0)
-            n_L_applications += 1
-            moments[1] = self._metric_dot(v0, v1, mask)
+        if can_continue and n_moments <= existing:
             if verbose:
-                print("KPM: moment 1 = {:.8e}".format(moments[1]))
+                print("KPM: already have {} moments, {} requested. Nothing to do.".format(
+                    existing, n_moments))
+            return
 
-            # Two-vector Chebyshev iteration: t_n stored in v, t_{n-1} in vm
-            vm, v = v0, v1
-            n = 1
+        if can_continue:
+            # --- Continuation path ---
+            if verbose:
+                print("KPM: continuing from {} to {} moments".format(existing, n_moments))
+
+            moments = np.zeros(n_moments, dtype=np.float64)
+            moments[:existing] = self.kpm_moments[:existing]
+            vm = self.kpm_chebyshev_vm.copy()
+            v = self.kpm_chebyshev_v.copy()
+
+            if existing == 1:
+                # Only moment[0]=1.0 exists, v=T_0. Need to compute T_1 and moment[1].
+                v1 = self._apply_rescaled_L(v)
+                n_L_applications += 1
+                moments[1] = self._metric_dot(vm, v1, mask)
+                # vm was T_{-1} placeholder; now set vm=T_0, v=T_1
+                vm, v = v, v1
+                n_start = 1
+                if verbose:
+                    print("KPM: moment 1 = {:.8e}".format(moments[1]))
+            elif existing % 2 == 0:
+                # Even count: last step completed cleanly.
+                # vm = T_{n-1}, v = T_n where n = existing // 2
+                n_start = existing // 2
+            else:
+                # Odd count: broke mid-step after even moment.
+                # vm = T_{n-1}, v = T_n where n = existing // 2
+                # Need to compute the missing odd moment and advance.
+                n_half = existing // 2
+                # Compute T_{n+1} to get the odd moment
+                vp = 2 * self._apply_rescaled_L(v) - vm
+                n_L_applications += 1
+                moments[2 * n_half + 1] = (
+                    2 * self._metric_dot(vp, v, mask) - moments[1])
+                if verbose:
+                    print("KPM: moment {} = {:.8e} (completing interrupted step)".format(
+                        2 * n_half + 1, moments[2 * n_half + 1]))
+                vm, v = v, vp
+                n_start = n_half + 1
+
+            self.kpm_n_moments = int(n_moments)
+
+            # Continue the main loop
+            n = n_start
             while 2 * n < self.kpm_n_moments:
-                # Even moment from <t_n, t_n>_M (no L needed)
+                if verbose:
+                    print("\n ===== KPM STEP {} =====\n".format(n))
+                    sys.stdout.flush()
+
                 moments[2 * n] = 2 * self._metric_dot(v, v, mask) - moments[0]
                 if verbose:
-                    print("KPM: moment {} = {:.8e}".format(
-                        2 * n, moments[2 * n]))
+                    print("KPM: moment {} = {:.8e}".format(2 * n, moments[2 * n]))
                 if 2 * n + 1 >= self.kpm_n_moments:
                     break
-                # Odd moment needs t_{n+1}
+
+                t1 = time.time()
                 vp = 2 * self._apply_rescaled_L(v) - vm
+                t2 = time.time()
                 n_L_applications += 1
                 moments[2 * n + 1] = (
                     2 * self._metric_dot(vp, v, mask) - moments[1])
                 if verbose:
+                    print("Time for L application: {:.3f} s".format(t2 - t1))
                     print("KPM: moment {} = {:.8e}".format(
                         2 * n + 1, moments[2 * n + 1]))
+                    print("KPM step {} completed.".format(n))
+
                 vm, v = v, vp
                 n += 1
 
+        else:
+            # --- Fresh start path ---
+            psi0 = self.psi.copy()
+            norm_sq = self._metric_dot(psi0, psi0, mask)
+            if norm_sq <= __EPSILON__ or np.isnan(norm_sq):
+                raise ValueError("Prepare a non-zero perturbation before running KPM")
+
+            self.kpm_lambda_min, self.kpm_lambda_max = self._get_kpm_bounds(
+                lambda_min=lambda_min, lambda_max=lambda_max,
+                bound_factor=bound_factor, edge_buffer=edge_buffer)
+            self.kpm_rescale_a = 0.5 * (self.kpm_lambda_max - self.kpm_lambda_min)
+            self.kpm_rescale_b = 0.5 * (self.kpm_lambda_max + self.kpm_lambda_min)
+            self.kpm_vector_norm = np.sqrt(norm_sq)
+            self.kpm_n_moments = int(n_moments)
+            self.kpm_bound_factor = bound_factor
+
+            v0 = psi0 / self.kpm_vector_norm
+            moments = np.zeros(self.kpm_n_moments, dtype=np.float64)
+            moments[0] = 1.0
+
+            if verbose:
+                print("KPM: moment 0 = {:.8e}, norm = {:.8e}".format(
+                    moments[0], self.kpm_vector_norm))
+
+            vm, v = v0, v0  # placeholder until v1 is computed
+            if self.kpm_n_moments > 1:
+                v1 = self._apply_rescaled_L(v0)
+                n_L_applications += 1
+                moments[1] = self._metric_dot(v0, v1, mask)
+                if verbose:
+                    print("KPM: moment 1 = {:.8e}".format(moments[1]))
+
+                vm, v = v0, v1
+                n = 1
+                while 2 * n < self.kpm_n_moments:
+                    if verbose:
+                        print("\n ===== KPM STEP {} =====\n".format(n))
+                        sys.stdout.flush()
+
+                    moments[2 * n] = 2 * self._metric_dot(v, v, mask) - moments[0]
+                    if verbose:
+                        print("KPM: moment {} = {:.8e}".format(
+                            2 * n, moments[2 * n]))
+                    if 2 * n + 1 >= self.kpm_n_moments:
+                        break
+
+                    t1 = time.time()
+                    vp = 2 * self._apply_rescaled_L(v) - vm
+                    t2 = time.time()
+                    n_L_applications += 1
+                    moments[2 * n + 1] = (
+                        2 * self._metric_dot(vp, v, mask) - moments[1])
+                    if verbose:
+                        print("Time for L application: {:.3f} s".format(t2 - t1))
+                        print("KPM: moment {} = {:.8e}".format(
+                            2 * n + 1, moments[2 * n + 1]))
+                        print("KPM step {} completed.".format(n))
+
+                    vm, v = v, vp
+                    n += 1
+
+            self.psi = psi0
+
+        # Save Chebyshev recurrence vectors for potential continuation
+        self.kpm_chebyshev_vm = vm.copy()
+        self.kpm_chebyshev_v = v.copy()
         self.kpm_moments = moments
-        self.psi = psi0
 
         if verbose:
             print("KPM completed: {} moments, {} L applications".format(
