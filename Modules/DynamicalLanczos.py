@@ -1401,7 +1401,7 @@ File {} not found. S norm not loaded.
                                     pol_in_3 = None, pol_out_3 = None,\
                                     add_two_ph = False, symmetrize = False, ensemble = None,\
                                     save_raman_tensor2 = False, file_raman_tensor2 = None):
-        """
+        r"""
         PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
         ===========================================================================
         
@@ -1592,7 +1592,7 @@ File {} not found. S norm not loaded.
     
     def prepare_anharmonic_raman_FT_2ph(self, d2alpha_dR = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
                                     mixed = False, pol_in_2 = None, pol_out_2 = None):
-        """
+        r"""
         PREPARE THE PSI VECTOR FOR RAMAN SPECTRUM CALCULATION (NEW VERSION) DIRECTLY FROM 2nd ORDER RAMAN TENSOR
         ========================================================================================================
         
@@ -3840,7 +3840,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
 
     def run_biconjugate_gradient(self, verbose = True, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "bicgstab"):
-        """
+        r"""
         STATIC RESPONSE
         ===============
 

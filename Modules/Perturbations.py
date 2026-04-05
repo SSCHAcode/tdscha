@@ -55,7 +55,7 @@ def symmetrize_d1alpha_dR(d1alpha_dR_in, dyn, verbose = False):
 
 
 def symmetrize_d1M_dR(d1M_dR_in, dyn, verbose = False):
-    """
+    r"""
     SYMMETRIZE THE EFFECTIVE CHARGES IN SUPERCELL
     =============================================
 
