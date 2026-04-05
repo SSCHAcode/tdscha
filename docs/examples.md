@@ -41,7 +41,7 @@ final_dyn = CC.Phonons.Phonons(FINAL_DYN, NQIRR)
 
 # 2. Load ensemble
 ens = sscha.Ensemble.Ensemble(dyn, TEMPERATURE)
-ens.load(ENSEMBLE_DIR, population_id=1, n_configs=N_CONFIGS)
+ens.load(ENSEMBLE_DIR, population_id=1)
 ens.update_weights(final_dyn, TEMPERATURE)
 
 # 3. Initialize Lanczos
@@ -168,7 +168,7 @@ import tdscha.StaticHessian as SH
 
 # Load ensemble (same as Example 1)
 ens = sscha.Ensemble.Ensemble(dyn, TEMPERATURE)
-ens.load(ENSEMBLE_DIR, 1, N_CONFIGS)
+ens.load(ENSEMBLE_DIR, 1)
 ens.update_weights(final_dyn, TEMPERATURE)
 
 # Initialize StaticHessian
