@@ -43,7 +43,7 @@ ir_results_file = "ir_polx_qz.npz"
 
 # ========== END OF INPUT PARAMETERS ==========
 
-def run_hessian_calculation():
+def run_ir_calculation():
     """
     Run the calculation of the free energy Hessian.
     """
@@ -81,5 +81,5 @@ def run_hessian_calculation():
 
 
 if __name__ == "__main__":
-    run_hessian_calculation()
+    run_ir_calculation()
 

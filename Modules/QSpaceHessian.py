@@ -768,26 +768,35 @@ class QSpaceHessian:
             if len(block) == 1:
                 # Non-degenerate: full column from R-sector
                 G_q[:, band_i] = x[:nb]
+                # Zero out entries for modes in degenerate blocks
+                # (different irreps → zero by Schur's lemma).
+                # This prevents GMRES noise from breaking degeneracy
+                # after Hermitian symmetrization.
+                for _, other_block in solve_schedule:
+                    if len(other_block) >= 2:
+                        for m in other_block:
+                            G_q[m, band_i] = 0.0
             else:
                 d = len(block)
-                # Representative column: store the full solved column
-                G_q[:, band_i] = x[:nb]
-                # Non-rep columns: derive from Schur identity structure.
-                # Within the block: G[block[i], block[j]] = c * delta(i,j)
-                # Between two d-dim blocks A,B of same irrep:
-                #   G[B[k], A[j]] = G[B[0], A[0]] * delta(k, j)
-                for j in range(1, d):
-                    non_rep = block[j]
+                # Extract Schur-consistent scalars only (not the full
+                # noisy GMRES column). This ensures all columns within
+                # the degenerate block are filled identically, preserving
+                # perfect block structure and preventing degeneracy
+                # breaking after symmetrization.
+                c_diag = x[band_i]  # within-block diagonal constant
+
+                # Fill ALL columns in this block (including rep) uniformly
+                for j in range(d):
+                    col = block[j]
                     # Within-block diagonal
-                    G_q[non_rep, non_rep] = x[band_i]
+                    G_q[col, col] = c_diag
                     # Cross-coupling with other same-dimension blocks
                     for _, other_block in solve_schedule:
                         if other_block[0] == band_i:
                             continue
                         if len(other_block) == d:
                             # Same irrep type: shifted diagonal
-                            G_q[other_block[j], non_rep] = \
-                                x[other_block[0]]
+                            G_q[other_block[j], col] = x[other_block[0]]
                     # Entries with different-dimension blocks and singlets
                     # are zero by Schur (different irreps), left as 0.
 
