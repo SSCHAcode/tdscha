@@ -370,6 +370,44 @@ qlanc.prepare_ir(pol_vec=polarization)
 qlanc.run_FT(n_iterations=500, save_dir="ir_output", prefix="ir_xpol")
 ```
 
+### Distributed Hessian for Free Energy
+
+```python
+# distributed_hessian.py
+import cellconstructor as CC
+import tdscha.QSpaceHessian as QH
+
+# Load dynamical matrix (initial approximation)
+dyn = CC.Phonons.Phonons("initial_dyn_", NQIRR)
+
+# Load final converged dynamical matrix from SSCHA (for weight updates)
+final_dyn = CC.Phonons.Phonons("final_dyn_", NQIRR)
+
+# Load Hessian with distributed ensemble across MPI ranks
+hess = QH.load_distributed_hessian(
+    data_dir="ensemble/",
+    population_id=1,
+    dyn=dyn,                    # Initial dynamical matrix
+    T=TEMPERATURE,
+    final_dyn=final_dyn,       # Final dyn for weight updates (recommended)
+    final_T=TEMPERATURE,
+    use_symmetries=True,
+    ignore_v3=False,            # Include cubic contributions
+    ignore_v4=False,            # Include quartic contributions
+    verbose=True
+)
+
+# Compute the full Hessian
+hessian_dyn = hess.compute_full_hessian()
+
+# Save results
+hessian_dyn.save_qe("hessian_dyn_")
+
+# Get anharmonic frequencies
+w_hess, pols = hessian_dyn.DiagonalizeSupercell()
+print("Anharmonic frequencies (cm-1):", w_hess * CC.Units.RY_TO_CM)
+```
+
 ### How It Works
 
 In distributed mode:

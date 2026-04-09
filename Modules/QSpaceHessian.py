@@ -982,3 +982,86 @@ class QSpaceHessian:
                                for iq in range(hess.n_q)}
 
         return hess
+
+
+def load_distributed_hessian(data_dir, population_id, dyn, T, lo_to_split=None,
+                            use_symmetries=True, n_configs=None,
+                            final_dyn=None, final_T=None,
+                            verbose=True, ignore_v3=False, ignore_v4=False,
+                            **kwargs):
+    """Load QSpaceHessian with distributed configurations across MPI ranks.
+
+    Loads the ensemble on master rank only, then distributes configuration data
+    across all ranks. Combines load_distributed_tdscha and QSpaceHessian.from_qspace_lanczos.
+
+    Parameters
+    ----------
+    data_dir : str
+        Directory containing the ensemble data files.
+    population_id : int
+        Population ID of the ensemble to load.
+    dyn : CC.Phonons.Phonons
+        Dynamical matrix object (used to create the ensemble).
+    T : float
+        Temperature in Kelvin.
+    lo_to_split : str, ndarray, or None
+        LO-TO splitting mode.
+    use_symmetries : bool
+        If True, use q-space symmetries.
+    n_configs : int or None
+        Number of configs to load.
+    final_dyn : CC.Phonons.Phonons, optional
+        Final dynamical matrix from the SSCHA calculation. If provided,
+        the ensemble weights are updated using update_weights(final_dyn, final_T).
+    final_T : float, optional
+        Temperature for weight updates. Defaults to T if not specified.
+    verbose : bool
+        If True, print progress information.
+    ignore_v3 : bool
+        If True, exclude cubic (D3) anharmonic contributions.
+    ignore_v4 : bool
+        If True, exclude quartic (D4) anharmonic contributions.
+    **kwargs
+        Additional arguments passed to QSpaceLanczos.
+
+    Returns
+    -------
+    QSpaceHessian
+        QSpaceHessian with distributed ensemble. Already initialized.
+
+    Usage
+    -----
+    mpirun -np 8 python your_script.py
+
+    Example with weight update (recommended for production):
+        final_dyn = CC.Phonons.Phonons("final_dyn_", nqirr=3)
+        hess = load_distributed_hessian(
+            "data/", 1, initial_dyn, 300,
+            final_dyn=final_dyn, final_T=300
+        )
+        hessian_dyn = hess.compute_full_hessian()
+
+    Example without weight update (for testing/debugging):
+        hess = load_distributed_hessian("data/", 1, dyn, 300)
+        hessian_dyn = hess.compute_full_hessian()
+    """
+    from tdscha.QSpaceLanczos import load_distributed_tdscha
+
+    qlanc = load_distributed_tdscha(
+        data_dir, population_id, dyn, T,
+        lo_to_split=lo_to_split,
+        use_symmetries=use_symmetries,
+        n_configs=n_configs,
+        final_dyn=final_dyn,
+        final_T=final_T,
+        **kwargs
+    )
+
+    hess = QSpaceHessian.from_qspace_lanczos(
+        qlanc, verbose=verbose, use_symmetries=use_symmetries
+    )
+    hess.ignore_v3 = ignore_v3
+    hess.ignore_v4 = ignore_v4
+    hess.init(use_symmetries=use_symmetries)
+
+    return hess

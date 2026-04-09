@@ -131,6 +131,54 @@ By default, `QSpaceHessian` uses crystal symmetries (via `spglib`) to reduce the
 hess.init(use_symmetries=False)  # Solve at every q-point independently
 ```
 
+### Parallel Execution
+
+For large ensembles, `QSpaceHessian` can be run with MPI parallelization using the `load_distributed_hessian` function. This distributes the ensemble configurations across MPI ranks, reducing memory usage per processor:
+
+```python
+import cellconstructor as CC
+import tdscha.QSpaceHessian as QH
+
+# Load the dynamical matrix
+dyn = CC.Phonons.Phonons("dyn_pop1_", nqirr=3)
+
+# If you have a final converged dynamical matrix from SSCHA, use it for weight updates
+final_dyn = CC.Phonons.Phonons("final_dyn_", nqirr=3)
+
+# Load Hessian with distributed ensemble
+# mpirun -np 8 python your_script.py
+hess = QH.load_distributed_hessian(
+    "data/",                    # Ensemble data directory
+    1,                          # Population ID
+    dyn,                        # Initial dynamical matrix
+    T=300,                      # Temperature
+    final_dyn=final_dyn,        # Optional: final dyn for weight updates
+    final_T=300,                # Optional: temperature for weight updates
+    use_symmetries=True
+)
+
+# Compute the full Hessian
+hessian_dyn = hess.compute_full_hessian()
+```
+
+**How it works:**
+- Rank 0 loads the ensemble and creates the `QSpaceLanczos` object
+- Configuration data (X_q, Y_q, rho) is distributed across all MPI ranks
+- Each rank stores only `N/n_procs` configurations instead of all N
+- The `compute_hessian_at_q` method uses MPI `Allreduce` to merge results during the iterative solver
+
+**Parameters:**
+| Parameter | Description |
+|-----------|-------------|
+| `data_dir` | Directory containing the ensemble data files |
+| `population_id` | Population ID of the ensemble to load |
+| `dyn` | Dynamical matrix object |
+| `T` | Temperature in Kelvin |
+| `final_dyn` | Final dynamical matrix for weight updates (optional, recommended) |
+| `final_T` | Temperature for weight updates (defaults to `T`) |
+| `ignore_v3` | Exclude cubic (D3) contributions |
+| `ignore_v4` | Exclude quartic (D4) contributions |
+
 ## Deep Dive: How It Works
 
 ### From Hessian to Linear System

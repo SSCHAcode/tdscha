@@ -1667,7 +1667,8 @@ Starting from step %d
 # =============================================================================
 
 def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
-                           use_symmetries=True, n_configs=None, **kwargs):
+                           use_symmetries=True, n_configs=None,
+                           final_dyn=None, final_T=None, **kwargs):
     """Load QSpaceLanczos with distributed configurations across MPI ranks.
 
     Loads the ensemble on master rank only, then distributes configuration data
@@ -1681,7 +1682,7 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     population_id : int
         Population ID of the ensemble to load.
     dyn : CC.Phonons.Phonons
-        Dynamical matrix object.
+        Dynamical matrix object (used to create the ensemble).
     T : float
         Temperature in Kelvin.
     lo_to_split : str, ndarray, or None
@@ -1690,6 +1691,14 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         If True, use q-space symmetries.
     n_configs : int or None
         Number of configs to load. If None, loads all available.
+    final_dyn : CC.Phonons.Phonons, optional
+        Final dynamical matrix from the SSCHA calculation. If provided,
+        the ensemble weights are updated using update_weights(final_dyn, final_T).
+        This is recommended for production calculations where the ensemble
+        was generated with a preliminary dynamical matrix.
+    final_T : float, optional
+        Temperature for weight updates. Defaults to T if not specified.
+        Use this if the final temperature differs from the ensemble temperature.
     **kwargs
         Additional arguments passed to QSpaceLanczos.
 
@@ -1704,7 +1713,8 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     mpirun -np 8 python your_script.py
 
     Flow:
-    - Rank 0: loads ensemble, creates QSpaceLanczos, broadcasts metadata, sends slices
+    - Rank 0: loads ensemble, optionally updates weights, creates QSpaceLanczos,
+              broadcasts metadata, sends slices
     - Ranks 1..n-1: receive metadata, build bare QSpaceLanczos, receive slices
     - All: have only their local slice, _distributed=True
     """
@@ -1719,6 +1729,11 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
             ensemble.load_bin(data_dir, population_id, n_configs=n_configs)
         else:
             ensemble.load_bin(data_dir, population_id)
+
+        # Update weights if final_dyn is provided
+        if final_dyn is not None:
+            T_for_update = final_T if final_T is not None else T
+            ensemble.update_weights(final_dyn, T_for_update)
 
         qlanc = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
         qlanc.init(use_symmetries=use_symmetries)
