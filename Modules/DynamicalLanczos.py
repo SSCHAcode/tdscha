@@ -3658,12 +3658,12 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         In this way the calculation cannot be restarted.
         """
 
-        total_len = len(self.c_coeffs)
+        total_len = len(self.a_coeffs)
 
         abc = np.zeros( (total_len, 3), dtype = np.double)
-        abc[:,0] = self.a_coeffs[:total_len]
-        abc[:,1] = self.b_coeffs
-        abc[:,2] = self.c_coeffs
+        abc[:,0] = self.a_coeffs
+        abc[:len(self.b_coeffs),1] = self.b_coeffs
+        abc[:len(self.c_coeffs),2] = self.c_coeffs
 
         np.savetxt(file, abc, header = "a; b; c")
 
