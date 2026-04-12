@@ -179,6 +179,30 @@ hessian_dyn = hess.compute_full_hessian()
 | `ignore_v3` | Exclude cubic (D3) contributions |
 | `ignore_v4` | Exclude quartic (D4) contributions |
 
+### Checkpointing and Restarting
+
+Long runs can be interrupted; `QSpaceHessian` supports automatic checkpointing via the `checkpoint` parameter in `compute_full_hessian`. When a file path is provided, the solver saves progress after each irreducible q-point and can restart from the checkpoint if the file already exists.
+
+```python
+hessian_dyn = hess.compute_full_hessian(checkpoint="hessian_checkpoint.npz")
+```
+
+If the calculation is stopped and restarted with the same `checkpoint` path, the solver will load the saved Hessian matrices and skip already completed q-points.
+
+You can also manually save and load the state using the `save_status` and `load_status` methods:
+
+```python
+# Manual checkpoint after each q-point
+for iq_irr in hess.irr_qpoints:
+    hess.compute_hessian_at_q(iq_irr)
+    hess.save_status("manual_checkpoint.npz")
+
+# Later, restart
+completed = hess.load_status("manual_checkpoint.npz")
+```
+
+The checkpoint file is an NPZ archive containing the Hessian matrices (`H_q_dict`) and metadata (temperature, system size, flags). If any metadata mismatches (e.g., different temperature, system size, or anharmonic flags), `load_status` raises a `ValueError` to prevent accidental reuse of incompatible checkpoints.
+
 ## Deep Dive: How It Works
 
 ### From Hessian to Linear System

@@ -272,9 +272,68 @@ def test_qspace_hessian_mode_symmetry():
 
     print("=== Mode symmetry optimization test PASSED ===")
 
+def test_qspace_hessian_checkpoint(tmp_path):
+    """Test checkpoint/restart functionality of QSpaceHessian."""
+    import os
+    try:
+        import tdscha.QSpaceHessian as QH
+        import tdscha.QSpaceLanczos as QL
+        if not QL.__JULIA_EXT__:
+            pytest.skip("Julia extension not loaded")
+    except ImportError:
+        pytest.skip("Julia or QSpaceHessian not available")
+
+    ens = _load_ensemble()
+    
+    # Compute Hessian at Gamma point without checkpoint (reference)
+    qh_ref = QH.QSpaceHessian(ens, verbose=False)
+    qh_ref.init(use_symmetries=True)
+    H_ref = qh_ref.compute_hessian_at_q(0, tol=1e-8, max_iters=1000)
+    
+    # Manual checkpoint: compute, save, load, compare
+    checkpoint_file = os.path.join(str(tmp_path), "hessian_checkpoint.npz")
+    qh1 = QH.QSpaceHessian(ens, verbose=False)
+    qh1.init(use_symmetries=True)
+    qh1.compute_hessian_at_q(0, tol=1e-8, max_iters=1000)
+    qh1.save_status(checkpoint_file)
+    
+    qh2 = QH.QSpaceHessian(ens, verbose=False)
+    qh2.init(use_symmetries=True)
+    completed = qh2.load_status(checkpoint_file)
+    assert 0 in completed
+    H_loaded = qh2.H_q_dict[0]
+    np.testing.assert_allclose(H_loaded, H_ref, atol=1e-10, rtol=1e-8,
+                               err_msg="Loaded Hessian does not match reference")
+    
+    # Test automatic checkpoint parameter with compute_full_hessian
+    checkpoint_file2 = os.path.join(str(tmp_path), "auto_checkpoint.npz")
+    if os.path.exists(checkpoint_file2):
+        os.remove(checkpoint_file2)
+    
+    qh3 = QH.QSpaceHessian(ens, verbose=False)
+    qh3.init(use_symmetries=True)
+    # Use same parameters as other tests
+    hessian3 = qh3.compute_full_hessian(tol=1e-8, max_iters=1000, checkpoint=checkpoint_file2)
+    assert os.path.exists(checkpoint_file2)
+    
+    # Load checkpoint and verify we get same Hessian (only irreducible q-points are saved)
+    qh4 = QH.QSpaceHessian(ens, verbose=False)
+    qh4.init(use_symmetries=True)
+    completed2 = qh4.load_status(checkpoint_file2)
+    # All irreducible q-points should be completed
+    assert set(completed2) == set(qh4.irr_qpoints)
+    # qh3.H_q_dict contains all q-points after unfolding, qh4.H_q_dict only irreducible ones
+    for iq in qh4.H_q_dict.keys():
+        H3 = qh3.H_q_dict[iq]
+        H4 = qh4.H_q_dict[iq]
+        np.testing.assert_allclose(H4, H3, atol=1e-10, rtol=1e-8)
+    
+    print("Checkpoint test PASSED")
+
 
 if __name__ == "__main__":
     test_qspace_hessian_gamma()
     test_qspace_hessian_symmetry()
     test_hessian_L_operator_timing()
     test_qspace_hessian_mode_symmetry()
+    test_qspace_hessian_checkpoint()

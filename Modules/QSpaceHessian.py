@@ -24,6 +24,7 @@ References:
 
 from __future__ import print_function, division
 
+import os
 import sys
 import time
 import warnings
@@ -127,6 +128,123 @@ class QSpaceHessian:
             self.irr_qpoints = list(range(self.n_q))
             self.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3), False)]
                                for iq in range(self.n_q)}
+
+    def save_status(self, fname):
+        """Save checkpoint state (H_q_dict + metadata) to an NPZ file.
+
+        Only the master MPI rank writes the file.
+
+        Parameters
+        ----------
+        fname : str
+            Path to the output file. '.npz' extension is added if missing.
+        """
+        Parallel.barrier()
+        if Parallel.am_i_the_master():
+            if not fname.lower().endswith(".npz"):
+                fname += ".npz"
+
+            uci = self.qlanc.uci_structure
+            save_dict = dict(
+                T=np.float64(self.qlanc.T),
+                n_q=np.int64(self.n_q),
+                n_bands=np.int64(self.n_bands),
+                ignore_v3=np.bool_(self.ignore_v3),
+                ignore_v4=np.bool_(self.ignore_v4),
+                unit_cell=uci.unit_cell,
+                coords=uci.coords,
+                atom_types=uci.get_atomic_types(),
+            )
+
+            completed = sorted(self.H_q_dict.keys())
+            save_dict["completed_irr_qpoints"] = np.array(completed,
+                                                           dtype=np.int64)
+            if len(completed) > 0:
+                save_dict["H_q_keys"] = np.array(completed, dtype=np.int64)
+                save_dict["H_q_values"] = np.stack(
+                    [self.H_q_dict[iq] for iq in completed])
+            else:
+                save_dict["H_q_keys"] = np.array([], dtype=np.int64)
+                save_dict["H_q_values"] = np.zeros((0, self.n_bands,
+                                                     self.n_bands),
+                                                    dtype=np.complex128)
+
+            np.savez_compressed(fname, **save_dict)
+
+    def load_status(self, fname):
+        """Load checkpoint state from an NPZ file and validate metadata.
+
+        Master rank reads the file and broadcasts to all MPI ranks.
+        Populates ``H_q_dict`` with the saved Hessian matrices.
+
+        Parameters
+        ----------
+        fname : str
+            Path to the NPZ file. '.npz' extension is added if missing.
+
+        Returns
+        -------
+        completed_iqs : set of int
+            Set of irreducible q-point indices that have been completed.
+
+        Raises
+        ------
+        ValueError
+            If any metadata field in the checkpoint does not match
+            the current object.
+        """
+        Parallel.barrier()
+        if not fname.lower().endswith(".npz"):
+            fname += ".npz"
+
+        if Parallel.am_i_the_master():
+            if not os.path.exists(fname):
+                raise IOError("Checkpoint file not found: {}".format(fname))
+            data = dict(np.load(fname, allow_pickle=True))
+        else:
+            data = None
+        data = Parallel.broadcast(data)
+
+        # Validate metadata
+        uci = self.qlanc.uci_structure
+        mismatches = []
+
+        if not np.isclose(float(data["T"]), self.qlanc.T, atol=1e-10):
+            mismatches.append("T: checkpoint={}, current={}".format(
+                float(data["T"]), self.qlanc.T))
+        if int(data["n_q"]) != self.n_q:
+            mismatches.append("n_q: checkpoint={}, current={}".format(
+                int(data["n_q"]), self.n_q))
+        if int(data["n_bands"]) != self.n_bands:
+            mismatches.append("n_bands: checkpoint={}, current={}".format(
+                int(data["n_bands"]), self.n_bands))
+        if bool(data["ignore_v3"]) != self.ignore_v3:
+            mismatches.append("ignore_v3: checkpoint={}, current={}".format(
+                bool(data["ignore_v3"]), self.ignore_v3))
+        if bool(data["ignore_v4"]) != self.ignore_v4:
+            mismatches.append("ignore_v4: checkpoint={}, current={}".format(
+                bool(data["ignore_v4"]), self.ignore_v4))
+        if not np.allclose(data["unit_cell"], uci.unit_cell, atol=1e-10):
+            mismatches.append("unit_cell differs")
+        if not np.allclose(data["coords"], uci.coords, atol=1e-10):
+            mismatches.append("atomic coordinates differ")
+        current_types = uci.get_atomic_types()
+        if not np.array_equal(data["atom_types"], current_types):
+            mismatches.append("atom_types differ")
+
+        if mismatches:
+            raise ValueError(
+                "Checkpoint metadata mismatch:\n  " +
+                "\n  ".join(mismatches))
+
+        # Restore H_q_dict
+        keys = data["H_q_keys"].astype(int)
+        values = data["H_q_values"]
+        for i, iq in enumerate(keys):
+            self.H_q_dict[int(iq)] = values[i]
+
+        completed = set(data["completed_irr_qpoints"].astype(int).tolist())
+        return completed
 
     def _find_irreducible_qpoints(self):
         """Find irreducible q-points under point-group + time-reversal symmetries.
@@ -840,7 +958,8 @@ class QSpaceHessian:
     def compute_full_hessian(self, tol=1e-6, max_iters=500,
                              use_preconditioner=True,
                              dense_fallback=False,
-                             use_mode_symmetry=True):
+                             use_mode_symmetry=True,
+                             checkpoint=None):
         """Compute the Hessian at all q-points and return as CC.Phonons.
 
         Parameters
@@ -857,6 +976,10 @@ class QSpaceHessian:
             can be very large for big supercells. Default is False.
         use_mode_symmetry : bool
             If True, exploit mode degeneracy to reduce GMRES solves.
+        checkpoint : str or None
+            If a string path, auto-save after each completed irreducible
+            q-point and resume from the checkpoint file on restart.
+            The '.npz' extension is added automatically if missing.
 
         Returns
         -------
@@ -872,7 +995,26 @@ class QSpaceHessian:
 
         t_start = time.time()
 
+        # Load checkpoint if it exists
+        completed_iqs = set()
+        if checkpoint is not None:
+            ckpt_file = checkpoint
+            if not ckpt_file.lower().endswith(".npz"):
+                ckpt_file += ".npz"
+            if os.path.exists(ckpt_file):
+                completed_iqs = self.load_status(checkpoint)
+                if self.verbose:
+                    print("Restarting: {} q-points already done".format(
+                        len(completed_iqs)))
+
         for iq_irr in self.irr_qpoints:
+            if iq_irr in completed_iqs:
+                if self.verbose:
+                    print("Irreducible q-point {} / {} (loaded from "
+                          "checkpoint)".format(
+                              self.irr_qpoints.index(iq_irr) + 1,
+                              len(self.irr_qpoints)))
+                continue
             if self.verbose:
                 print("Irreducible q-point {} / {}".format(
                     self.irr_qpoints.index(iq_irr) + 1,
@@ -882,6 +1024,8 @@ class QSpaceHessian:
                 use_preconditioner=use_preconditioner,
                 dense_fallback=dense_fallback,
                 use_mode_symmetry=use_mode_symmetry)
+            if checkpoint is not None:
+                self.save_status(checkpoint)
 
         # Unfold to full BZ
         for iq_irr in self.irr_qpoints:
