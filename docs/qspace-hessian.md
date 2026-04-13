@@ -189,14 +189,9 @@ hessian_dyn = hess.compute_full_hessian(checkpoint="hessian_checkpoint.npz")
 
 If the calculation is stopped and restarted with the same `checkpoint` path, the solver will load the saved Hessian matrices and skip already completed q-points.
 
-You can also manually save and load the state using the `save_status` and `load_status` methods:
+You can load the checkpoint manually at any time:
 
 ```python
-# Manual checkpoint after each q-point
-for iq_irr in hess.irr_qpoints:
-    hess.compute_hessian_at_q(iq_irr)
-    hess.save_status("manual_checkpoint.npz")
-
 # Later, restart
 completed = hess.load_status("manual_checkpoint.npz")
 ```
