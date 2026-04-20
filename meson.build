@@ -1,6 +1,6 @@
 project('tdscha',
   ['c'],
-  version: '1.6.1',
+  version: '1.6.2',
   license: 'GPL',
   meson_version: '>= 1.1.0', # <- set min version of meson.
   default_options : [
@@ -122,6 +122,7 @@ py.install_sources(
       'Modules/__init__.py',
       'Modules/DynamicalLanczos.py',
       'Modules/QSpaceLanczos.py',
+      'Modules/QSpaceKPM.py',
       'Modules/QSpaceHessian.py',
       'Modules/Dynamical.py',
       'Modules/Parallel.py',

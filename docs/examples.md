@@ -41,7 +41,7 @@ final_dyn = CC.Phonons.Phonons(FINAL_DYN, NQIRR)
 
 # 2. Load ensemble
 ens = sscha.Ensemble.Ensemble(dyn, TEMPERATURE)
-ens.load(ENSEMBLE_DIR, population_id=1, n_configs=N_CONFIGS)
+ens.load(ENSEMBLE_DIR, population_id=1)
 ens.update_weights(final_dyn, TEMPERATURE)
 
 # 3. Initialize Lanczos
@@ -168,7 +168,7 @@ import tdscha.StaticHessian as SH
 
 # Load ensemble (same as Example 1)
 ens = sscha.Ensemble.Ensemble(dyn, TEMPERATURE)
-ens.load(ENSEMBLE_DIR, 1, N_CONFIGS)
+ens.load(ENSEMBLE_DIR, 1)
 ens.update_weights(final_dyn, TEMPERATURE)
 
 # Initialize StaticHessian
@@ -292,7 +292,162 @@ spectrum = -np.imag(gf)
 np.savetxt("spectrum.dat", np.column_stack([w_array * CC.Units.RY_TO_CM, spectrum]))
 ```
 
-## Example 6: Convergence Analysis
+## Example 6: Distributed Memory with MPI
+
+For large ensembles (N > 10k configs) running on many MPI ranks, the memory per process can become the bottleneck. By default, each process holds a complete copy of all configurations. The distributed mode splits the configurations across processes so each stores only N/n_procs configs.
+
+### When to Use It
+
+Use distributed loading when:
+- You have a large ensemble (N > 5000 configs)
+- Running on 4+ MPI processes
+- Memory per process is limiting your calculation
+
+### Distributed QSpaceLanczos with KPM
+
+```python
+# distributed_kpm.py
+import cellconstructor as CC
+import sscha.Ensemble
+from tdscha.QSpaceLanczos import load_distributed_tdscha
+import tdscha.QSpaceKPM as QK
+
+# Load dynamical matrix
+dyn = CC.Phonons.Phonons("final_dyn_", NQIRR)
+
+# Load with distributed configurations across MPI ranks
+# The ensemble is loaded on master rank only, then distributed
+qlanc = load_distributed_tdscha(
+    data_dir="ensemble/",
+    population_id=1,
+    dyn=dyn,
+    T=TEMPERATURE,
+    use_symmetries=True,
+    n_configs=N_CONFIGS
+)
+
+# Prepare perturbation
+iq = 0  # Gamma point
+band = 5  # Mode index
+qlanc.prepare_mode_q(iq, band)
+
+# Create KPM from distributed Lanczos
+kpm = QK.QSpaceKPM.from_qspace_lanczos(qlanc)
+kpm.prepare_mode_q(iq, band)
+
+# Run KPM
+n_moments = kpm.estimate_kpm_steps(precision_cm=50)
+kpm.run_KPM(n_moments)
+
+# Save results
+kpm.save_kpm("kpm_results.dat")
+```
+
+### Distributed Lanczos for IR/Raman
+
+```python
+# distributed_ir.py
+from tdscha.QSpaceLanczos import load_distributed_tdscha
+import numpy as np
+
+# Load dynamical matrix
+dyn = CC.Phonons.Phonons("final_dyn_", NQIRR)
+
+# Load with distributed configurations
+qlanc = load_distributed_tdscha(
+    data_dir="ensemble/",
+    population_id=1,
+    dyn=dyn,
+    T=TEMPERATURE,
+    use_symmetries=True
+)
+
+# Setup IR response
+polarization = np.array([1, 0, 0])
+qlanc.prepare_ir(pol_vec=polarization)
+
+# Run Lanczos
+qlanc.run_FT(n_iterations=500, save_dir="ir_output", prefix="ir_xpol")
+```
+
+### Distributed Hessian for Free Energy
+
+```python
+# distributed_hessian.py
+import cellconstructor as CC
+import tdscha.QSpaceHessian as QH
+
+# Load dynamical matrix (initial approximation)
+dyn = CC.Phonons.Phonons("initial_dyn_", NQIRR)
+
+# Load final converged dynamical matrix from SSCHA (for weight updates)
+final_dyn = CC.Phonons.Phonons("final_dyn_", NQIRR)
+
+# Load Hessian with distributed ensemble across MPI ranks
+hess = QH.load_distributed_hessian(
+    data_dir="ensemble/",
+    population_id=1,
+    dyn=dyn,                    # Initial dynamical matrix
+    T=TEMPERATURE,
+    final_dyn=final_dyn,       # Final dyn for weight updates (recommended)
+    final_T=TEMPERATURE,
+    use_symmetries=True,
+    ignore_v3=False,            # Include cubic contributions
+    ignore_v4=False,            # Include quartic contributions
+    verbose=True
+)
+
+# Compute the full Hessian
+hessian_dyn = hess.compute_full_hessian()
+
+# Save results
+hessian_dyn.save_qe("hessian_dyn_")
+
+# Get anharmonic frequencies
+w_hess, pols = hessian_dyn.DiagonalizeSupercell()
+print("Anharmonic frequencies (cm-1):", w_hess * CC.Units.RY_TO_CM)
+```
+
+### How It Works
+
+In distributed mode:
+1. Master rank (rank 0) loads the full ensemble
+2. Configuration arrays (X_q, Y_q, rho) are scattered across ranks
+3. Each rank holds only N_local = N / n_procs configs
+4. The anharmonic operator is computed locally, then results are combined via MPI_Allreduce
+5. Psi vectors (small) remain replicated on all ranks
+
+The normalization is handled automatically:
+- Julia computes partial results on local configs
+- MPI_Allreduce sums contributions from all ranks
+- Final result is divided by total effective sample size
+
+### Running the Calculation
+
+```bash
+# Run with MPI (automatically distributes configurations)
+mpirun -np 8 python distributed_kpm.py
+
+# Or with python-jl for additional speedup
+mpirun -np 8 python-jl distributed_kpm.py
+```
+
+### Memory Comparison
+
+| Mode | Memory per Rank |
+|------|-----------------|
+| Standard (GoParallel) | N × n_q × n_bands × 16 bytes × n_procs copies |
+| Distributed | N/n_procs × n_q × n_bands × 16 bytes |
+
+For N=10000, n_q=10, n_bands=60, the memory per rank drops from ~460 MB to ~57 MB with 8 processes.
+
+### Limitations
+
+- Serial execution (1 process): falls back to standard mode
+- Currently implemented for QSpaceLanczos, QSpaceKPM, and QSpaceHessian
+- Standard DynamicalLanczos does not yet support distributed loading
+
+## Example 7: Convergence Analysis
 
 Analyze Lanczos convergence for optimal step count:
 

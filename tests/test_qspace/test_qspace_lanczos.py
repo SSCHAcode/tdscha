@@ -269,5 +269,117 @@ def test_qspace_vs_realspace_green_function(verbose=False):
         print("=== All benchmarks passed ===")
 
 
+def _setup_qspace_lanczos_reorth(iq, band_index):
+    """Set up and run a Q-space Lanczos calculation with reorthogonalization."""
+    try:
+        import tdscha.QSpaceLanczos as QL
+    except ImportError:
+        pytest.skip("Julia not available for QSpaceLanczos")
+
+    if not QL.__JULIA_EXT__:
+        pytest.skip("Julia extension not loaded")
+
+    dyn = CC.Phonons.Phonons(os.path.join(DATA_DIR, "dyn_gen_pop1_"), NQIRR)
+    ens = sscha.Ensemble.Ensemble(dyn, T)
+    ens.load_bin(DATA_DIR, 1)
+
+    qlanc = QL.QSpaceLanczos(ens, lo_to_split=None)
+    qlanc.ignore_harmonic = False
+    qlanc.ignore_v3 = False
+    qlanc.ignore_v4 = False
+    qlanc.init(use_symmetries=True)
+    qlanc.prepare_mode_q(iq, band_index)
+    qlanc.run_FT(N_STEPS, verbose=False, reorthogonalize=True)
+    return qlanc
+
+
+def test_reorthogonalization(verbose=False):
+    """
+    Test that reorthogonalize=True produces an orthonormal basis,
+    equal b and c coefficients, and correct Green functions.
+    """
+    try:
+        import tdscha.QSpaceLanczos as QL
+        if not QL.__JULIA_EXT__:
+            pytest.skip("Julia extension not loaded")
+    except ImportError:
+        pytest.skip("Julia not available for QSpaceLanczos")
+
+    mode_index, band_index, w_q, pols_q = _find_gamma_mode_mapping()
+
+    if verbose:
+        print()
+        print("=== Reorthogonalization test ===")
+        print("Testing Gamma band {} (freq {:.2f} cm-1)".format(
+            band_index, w_q[band_index, 0] * CC.Units.RY_TO_CM))
+
+    # Run q-space Lanczos with reorthogonalization
+    qlanc = _setup_qspace_lanczos_reorth(0, band_index)
+
+    # 1. Check basis orthonormality
+    mask_dot = qlanc.mask_dot_wigner(False)
+    n_basis = len(qlanc.basis_Q)
+    gram = np.zeros((n_basis, n_basis))
+    for i in range(n_basis):
+        for j in range(n_basis):
+            gram[i, j] = np.real(np.conj(qlanc.basis_Q[i]).dot(
+                qlanc.basis_Q[j] * mask_dot))
+
+    ortho_error = np.max(np.abs(gram - np.eye(n_basis)))
+    if verbose:
+        print("Gram matrix max deviation from identity: {:.6e}".format(ortho_error))
+    assert ortho_error < 1e-10, (
+        "Basis not orthonormal: max |G - I| = {:.4e}".format(ortho_error))
+
+    # 2. Check b == c (symmetric Lanczos property)
+    b = np.array(qlanc.b_coeffs)
+    c = np.array(qlanc.c_coeffs)
+    bc_diff = np.max(np.abs(b - c))
+    if verbose:
+        print("Max |b - c|: {:.6e}".format(bc_diff))
+    assert bc_diff < 1e-10, (
+        "b and c coefficients differ: max |b-c| = {:.4e}".format(bc_diff))
+
+    # 3. Check Green function matches real-space
+    lanc_real = _setup_realspace_lanczos(mode_index)
+    w_mode = lanc_real.w[mode_index]
+    smearing = w_mode * 0.1
+    w_points = np.array([0.0, w_mode])
+
+    gf_real = lanc_real.get_green_function_continued_fraction(
+        w_points, use_terminator=False, smearing=smearing)
+    gf_qspace = qlanc.get_green_function_continued_fraction(
+        w_points, use_terminator=False, smearing=smearing)
+
+    # Renormalized frequency comparison
+    w2_real = 1.0 / np.real(gf_real[0])
+    w2_qspace = 1.0 / np.real(gf_qspace[0])
+    freq_real = np.sign(w2_real) * np.sqrt(np.abs(w2_real)) * CC.Units.RY_TO_CM
+    freq_qspace = np.sign(w2_qspace) * np.sqrt(np.abs(w2_qspace)) * CC.Units.RY_TO_CM
+
+    if verbose:
+        print("Renormalized freq (real-space):  {:.6f} cm-1".format(freq_real))
+        print("Renormalized freq (Q-space):     {:.6f} cm-1".format(freq_qspace))
+
+    assert abs(freq_real - freq_qspace) < 0.1, (
+        "Renormalized frequencies differ: real-space={:.4f}, q-space={:.4f} cm-1".format(
+            freq_real, freq_qspace))
+
+    # Spectral function comparison
+    spectral_real = -np.imag(gf_real)
+    spectral_qspace = -np.imag(gf_qspace)
+    ref = max(abs(spectral_real[1]), abs(spectral_qspace[1]))
+    if ref > 1e-15:
+        rel_diff = abs(spectral_real[1] - spectral_qspace[1]) / ref
+        if verbose:
+            print("Relative diff in spectral function at w_mode: {:.6e}".format(rel_diff))
+        assert rel_diff < GF_RTOL, (
+            "Spectral functions differ by {:.4e} (tolerance: {})".format(rel_diff, GF_RTOL))
+
+    if verbose:
+        print("=== Reorthogonalization test passed ===")
+
+
 if __name__ == "__main__":
     test_qspace_vs_realspace_green_function(verbose=True)
+    test_reorthogonalization(verbose=True)

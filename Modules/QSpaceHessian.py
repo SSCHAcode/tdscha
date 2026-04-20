@@ -24,6 +24,7 @@ References:
 
 from __future__ import print_function, division
 
+import os
 import sys
 import time
 import warnings
@@ -125,11 +126,134 @@ class QSpaceHessian:
             self._find_irreducible_qpoints()
         else:
             self.irr_qpoints = list(range(self.n_q))
-            self.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3))]
+            self.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3), False)]
                                for iq in range(self.n_q)}
 
+    def save_status(self, fname):
+        """Save checkpoint state (H_q_dict + metadata) to an NPZ file.
+
+        Only the master MPI rank writes the file.
+
+        Parameters
+        ----------
+        fname : str
+            Path to the output file. '.npz' extension is added if missing.
+        """
+        Parallel.barrier()
+        if Parallel.am_i_the_master():
+            if not fname.lower().endswith(".npz"):
+                fname += ".npz"
+
+            uci = self.qlanc.uci_structure
+            save_dict = dict(
+                T=np.float64(self.qlanc.T),
+                n_q=np.int64(self.n_q),
+                n_bands=np.int64(self.n_bands),
+                ignore_v3=np.bool_(self.ignore_v3),
+                ignore_v4=np.bool_(self.ignore_v4),
+                unit_cell=uci.unit_cell,
+                coords=uci.coords,
+                atom_types=uci.get_atomic_types(),
+            )
+
+            completed = sorted(self.H_q_dict.keys())
+            save_dict["completed_irr_qpoints"] = np.array(completed,
+                                                           dtype=np.int64)
+            if len(completed) > 0:
+                save_dict["H_q_keys"] = np.array(completed, dtype=np.int64)
+                save_dict["H_q_values"] = np.stack(
+                    [self.H_q_dict[iq] for iq in completed])
+            else:
+                save_dict["H_q_keys"] = np.array([], dtype=np.int64)
+                save_dict["H_q_values"] = np.zeros((0, self.n_bands,
+                                                     self.n_bands),
+                                                    dtype=np.complex128)
+
+            np.savez_compressed(fname, **save_dict)
+
+    def load_status(self, fname):
+        """Load checkpoint state from an NPZ file and validate metadata.
+
+        Master rank reads the file and broadcasts to all MPI ranks.
+        Populates ``H_q_dict`` with the saved Hessian matrices.
+
+        Parameters
+        ----------
+        fname : str
+            Path to the NPZ file. '.npz' extension is added if missing.
+
+        Returns
+        -------
+        completed_iqs : set of int
+            Set of irreducible q-point indices that have been completed.
+
+        Raises
+        ------
+        ValueError
+            If any metadata field in the checkpoint does not match
+            the current object.
+        """
+        Parallel.barrier()
+        if not fname.lower().endswith(".npz"):
+            fname += ".npz"
+
+        if Parallel.am_i_the_master():
+            if not os.path.exists(fname):
+                raise IOError("Checkpoint file not found: {}".format(fname))
+            data = dict(np.load(fname, allow_pickle=True))
+        else:
+            data = None
+        data = Parallel.broadcast(data)
+
+        # Validate metadata
+        uci = self.qlanc.uci_structure
+        mismatches = []
+
+        if not np.isclose(float(data["T"]), self.qlanc.T, atol=1e-10):
+            mismatches.append("T: checkpoint={}, current={}".format(
+                float(data["T"]), self.qlanc.T))
+        if int(data["n_q"]) != self.n_q:
+            mismatches.append("n_q: checkpoint={}, current={}".format(
+                int(data["n_q"]), self.n_q))
+        if int(data["n_bands"]) != self.n_bands:
+            mismatches.append("n_bands: checkpoint={}, current={}".format(
+                int(data["n_bands"]), self.n_bands))
+        if bool(data["ignore_v3"]) != self.ignore_v3:
+            mismatches.append("ignore_v3: checkpoint={}, current={}".format(
+                bool(data["ignore_v3"]), self.ignore_v3))
+        if bool(data["ignore_v4"]) != self.ignore_v4:
+            mismatches.append("ignore_v4: checkpoint={}, current={}".format(
+                bool(data["ignore_v4"]), self.ignore_v4))
+        if not np.allclose(data["unit_cell"], uci.unit_cell, atol=1e-10):
+            mismatches.append("unit_cell differs")
+        if not np.allclose(data["coords"], uci.coords, atol=1e-10):
+            mismatches.append("atomic coordinates differ")
+        current_types = uci.get_atomic_types()
+        if not np.array_equal(data["atom_types"], current_types):
+            mismatches.append("atom_types differ")
+
+        if mismatches:
+            raise ValueError(
+                "Checkpoint metadata mismatch:\n  " +
+                "\n  ".join(mismatches))
+
+        # Restore H_q_dict
+        keys = data["H_q_keys"].astype(int)
+        values = data["H_q_values"]
+        for i, iq in enumerate(keys):
+            self.H_q_dict[int(iq)] = values[i]
+
+        completed = set(data["completed_irr_qpoints"].astype(int).tolist())
+        return completed
+
     def _find_irreducible_qpoints(self):
-        """Find irreducible q-points under point-group symmetries."""
+        """Find irreducible q-points under point-group + time-reversal symmetries.
+
+        Time-reversal symmetry guarantees Phi(-q) = Phi(q)* for any crystal,
+        so q and -q always belong to the same star.  For crystals without
+        inversion symmetry the point group alone does not map q -> -q;
+        we therefore also check -R@q for every point-group rotation R.
+        """
         from tdscha.QSpaceLanczos import find_q_index
 
         uci = self.qlanc.uci_structure
@@ -175,14 +299,30 @@ class QSpaceHessian:
                 t_cart = M @ t_frac
 
                 Rq = R_cart @ self.q_points[iq]
+
+                # --- point-group operation: q_rot = R @ q ---
                 try:
                     iq_rot = find_q_index(Rq, self.q_points, bg)
                 except ValueError:
-                    continue
+                    iq_rot = None
 
-                if iq_rot not in visited:
-                    visited.add(iq_rot)
-                star.append((iq_rot, R_cart.copy(), t_cart.copy()))
+                if iq_rot is not None:
+                    if iq_rot not in visited:
+                        visited.add(iq_rot)
+                    # is_time_reversal = False
+                    star.append((iq_rot, R_cart.copy(), t_cart.copy(), False))
+
+                # --- time-reversal + point-group: q_rot = -R @ q ---
+                try:
+                    iq_tr = find_q_index(-Rq, self.q_points, bg)
+                except ValueError:
+                    iq_tr = None
+
+                if iq_tr is not None:
+                    if iq_tr not in visited:
+                        visited.add(iq_tr)
+                    # is_time_reversal = True
+                    star.append((iq_tr, R_cart.copy(), t_cart.copy(), True))
 
             seen_iqs = set()
             unique_star = []
@@ -236,8 +376,17 @@ class QSpaceHessian:
 
         return blocks
 
-    def _build_D_matrix(self, R_cart, t_cart, iq_from, iq_to):
-        """Compute the mode representation matrix D for symmetry {R|t}."""
+    def _build_D_matrix(self, R_cart, t_cart, iq_from, iq_to,
+                        time_reversal=False):
+        """Compute the mode representation matrix D for symmetry {R|t}.
+
+        Parameters
+        ----------
+        time_reversal : bool
+            If True, the operation is time-reversal composed with {R|t},
+            mapping q_from -> -R q_from = q_to.  The D matrix then satisfies
+            H(q_to) = D @ H(q_from)* @ D^dag  (note the conjugation of H).
+        """
         from tdscha.QSpaceLanczos import QSpaceLanczos
 
         uci = self.qlanc.uci_structure
@@ -257,7 +406,13 @@ class QSpaceHessian:
             phase = np.exp(-2j * np.pi * q_to @ L)
             P_uc[3 * kp:3 * kp + 3, 3 * kappa:3 * kappa + 3] = phase * R_cart
 
-        D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ self.pols_q[:, :, iq_from]
+        e_from = self.pols_q[:, :, iq_from]
+        if time_reversal:
+            # D_TR = e_to^dag @ P_uc @ e_from*  (conjugated polarizations)
+            # so that H(q_to) = D_TR @ conj(H(q_from)) @ D_TR^dag
+            D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ np.conj(e_from)
+        else:
+            D = np.conj(self.pols_q[:, :, iq_to]).T @ P_uc @ e_from
         return D
 
     # ==================================================================
@@ -731,26 +886,35 @@ class QSpaceHessian:
             if len(block) == 1:
                 # Non-degenerate: full column from R-sector
                 G_q[:, band_i] = x[:nb]
+                # Zero out entries for modes in degenerate blocks
+                # (different irreps → zero by Schur's lemma).
+                # This prevents GMRES noise from breaking degeneracy
+                # after Hermitian symmetrization.
+                for _, other_block in solve_schedule:
+                    if len(other_block) >= 2:
+                        for m in other_block:
+                            G_q[m, band_i] = 0.0
             else:
                 d = len(block)
-                # Representative column: store the full solved column
-                G_q[:, band_i] = x[:nb]
-                # Non-rep columns: derive from Schur identity structure.
-                # Within the block: G[block[i], block[j]] = c * delta(i,j)
-                # Between two d-dim blocks A,B of same irrep:
-                #   G[B[k], A[j]] = G[B[0], A[0]] * delta(k, j)
-                for j in range(1, d):
-                    non_rep = block[j]
+                # Extract Schur-consistent scalars only (not the full
+                # noisy GMRES column). This ensures all columns within
+                # the degenerate block are filled identically, preserving
+                # perfect block structure and preventing degeneracy
+                # breaking after symmetrization.
+                c_diag = x[band_i]  # within-block diagonal constant
+
+                # Fill ALL columns in this block (including rep) uniformly
+                for j in range(d):
+                    col = block[j]
                     # Within-block diagonal
-                    G_q[non_rep, non_rep] = x[band_i]
+                    G_q[col, col] = c_diag
                     # Cross-coupling with other same-dimension blocks
                     for _, other_block in solve_schedule:
                         if other_block[0] == band_i:
                             continue
                         if len(other_block) == d:
                             # Same irrep type: shifted diagonal
-                            G_q[other_block[j], non_rep] = \
-                                x[other_block[0]]
+                            G_q[other_block[j], col] = x[other_block[0]]
                     # Entries with different-dimension blocks and singlets
                     # are zero by Schur (different irreps), left as 0.
 
@@ -794,7 +958,8 @@ class QSpaceHessian:
     def compute_full_hessian(self, tol=1e-6, max_iters=500,
                              use_preconditioner=True,
                              dense_fallback=False,
-                             use_mode_symmetry=True):
+                             use_mode_symmetry=True,
+                             checkpoint=None):
         """Compute the Hessian at all q-points and return as CC.Phonons.
 
         Parameters
@@ -811,6 +976,10 @@ class QSpaceHessian:
             can be very large for big supercells. Default is False.
         use_mode_symmetry : bool
             If True, exploit mode degeneracy to reduce GMRES solves.
+        checkpoint : str or None
+            If a string path, auto-save after each completed irreducible
+            q-point and resume from the checkpoint file on restart.
+            The '.npz' extension is added automatically if missing.
 
         Returns
         -------
@@ -826,7 +995,26 @@ class QSpaceHessian:
 
         t_start = time.time()
 
+        # Load checkpoint if it exists
+        completed_iqs = set()
+        if checkpoint is not None:
+            ckpt_file = checkpoint
+            if not ckpt_file.lower().endswith(".npz"):
+                ckpt_file += ".npz"
+            if os.path.exists(ckpt_file):
+                completed_iqs = self.load_status(checkpoint)
+                if self.verbose:
+                    print("Restarting: {} q-points already done".format(
+                        len(completed_iqs)))
+
         for iq_irr in self.irr_qpoints:
+            if iq_irr in completed_iqs:
+                if self.verbose:
+                    print("Irreducible q-point {} / {} (loaded from "
+                          "checkpoint)".format(
+                              self.irr_qpoints.index(iq_irr) + 1,
+                              len(self.irr_qpoints)))
+                continue
             if self.verbose:
                 print("Irreducible q-point {} / {}".format(
                     self.irr_qpoints.index(iq_irr) + 1,
@@ -836,15 +1024,22 @@ class QSpaceHessian:
                 use_preconditioner=use_preconditioner,
                 dense_fallback=dense_fallback,
                 use_mode_symmetry=use_mode_symmetry)
+            if checkpoint is not None:
+                self.save_status(checkpoint)
 
         # Unfold to full BZ
         for iq_irr in self.irr_qpoints:
             H_irr = self.H_q_dict[iq_irr]
-            for iq_rot, R_cart, t_cart in self.q_star_map[iq_irr]:
+            for iq_rot, R_cart, t_cart, is_tr in self.q_star_map[iq_irr]:
                 if iq_rot == iq_irr:
                     continue
-                D = self._build_D_matrix(R_cart, t_cart, iq_irr, iq_rot)
-                self.H_q_dict[iq_rot] = D @ H_irr @ D.conj().T
+                D = self._build_D_matrix(R_cart, t_cart, iq_irr, iq_rot,
+                                         time_reversal=is_tr)
+                if is_tr:
+                    # Time-reversal: H(-Rq) = D_TR @ conj(H(q)) @ D_TR^dag
+                    self.H_q_dict[iq_rot] = D @ np.conj(H_irr) @ D.conj().T
+                else:
+                    self.H_q_dict[iq_rot] = D @ H_irr @ D.conj().T
 
         t_end = time.time()
         if self.verbose:
@@ -871,3 +1066,146 @@ class QSpaceHessian:
 
         hessian.AdjustQStar()
         return hessian
+
+    @classmethod
+    def from_qspace_lanczos(cls, qlanc, verbose=True, use_symmetries=True):
+        """Create a QSpaceHessian from an existing QSpaceLanczos object.
+
+        Parameters
+        ----------
+        qlanc : QSpaceLanczos
+            An initialized QSpaceLanczos object (e.g., from load_distributed_tdscha).
+        verbose : bool
+            If True, print progress information.
+        use_symmetries : bool
+            If True, use symmetries to find irreducible q-points.
+
+        Returns
+        -------
+        QSpaceHessian
+            A QSpaceHessian object with the given qlanc as its Lanczos engine.
+        """
+        # Create instance using __new__ (bypass __init__)
+        hess = cls.__new__(cls)
+
+        # Set the qlanc reference (shares data, no copy)
+        hess.qlanc = qlanc
+
+        # Copy shortcuts from qlanc
+        hess.ensemble = qlanc.ensemble
+        hess.n_q = qlanc.n_q
+        hess.n_bands = qlanc.n_bands
+        hess.q_points = qlanc.q_points
+        hess.w_q = qlanc.w_q
+        hess.pols_q = qlanc.pols_q
+
+        # Initialize caches to None
+        hess.H_q_dict = {}
+        hess.irr_qpoints = None
+        hess.q_star_map = None
+        hess._cached_w_qp_sq = None
+        hess._cached_inv_w_qp_sq = None
+        hess._cached_inv_lambda = None
+        hess._cached_lambda = None
+        hess._cached_yw_outer = None
+        hess._has_symmetry_data = False
+
+        # Set verbose flag
+        hess.verbose = verbose
+
+        # Copy ignore flags from qlanc
+        hess.ignore_v3 = qlanc.ignore_v3
+        hess.ignore_v4 = qlanc.ignore_v4
+
+        # Initialize symmetries if requested
+        if use_symmetries and __SPGLIB__:
+            hess._find_irreducible_qpoints()
+        else:
+            hess.irr_qpoints = list(range(hess.n_q))
+            hess.q_star_map = {iq: [(iq, np.eye(3), np.zeros(3), False)]
+                               for iq in range(hess.n_q)}
+
+        return hess
+
+
+def load_distributed_hessian(data_dir, population_id, dyn, T, lo_to_split=None,
+                            use_symmetries=True, n_configs=None,
+                            final_dyn=None, final_T=None,
+                            verbose=True, ignore_v3=False, ignore_v4=False,
+                            **kwargs):
+    """Load QSpaceHessian with distributed configurations across MPI ranks.
+
+    Loads the ensemble on master rank only, then distributes configuration data
+    across all ranks. Combines load_distributed_tdscha and QSpaceHessian.from_qspace_lanczos.
+
+    Parameters
+    ----------
+    data_dir : str
+        Directory containing the ensemble data files.
+    population_id : int
+        Population ID of the ensemble to load.
+    dyn : CC.Phonons.Phonons
+        Dynamical matrix object (used to create the ensemble).
+    T : float
+        Temperature in Kelvin.
+    lo_to_split : str, ndarray, or None
+        LO-TO splitting mode.
+    use_symmetries : bool
+        If True, use q-space symmetries.
+    n_configs : int or None
+        Number of configs to load.
+    final_dyn : CC.Phonons.Phonons, optional
+        Final dynamical matrix from the SSCHA calculation. If provided,
+        the ensemble weights are updated using update_weights(final_dyn, final_T).
+    final_T : float, optional
+        Temperature for weight updates. Defaults to T if not specified.
+    verbose : bool
+        If True, print progress information.
+    ignore_v3 : bool
+        If True, exclude cubic (D3) anharmonic contributions.
+    ignore_v4 : bool
+        If True, exclude quartic (D4) anharmonic contributions.
+    **kwargs
+        Additional arguments passed to QSpaceLanczos.
+
+    Returns
+    -------
+    QSpaceHessian
+        QSpaceHessian with distributed ensemble. Already initialized.
+
+    Usage
+    -----
+    mpirun -np 8 python your_script.py
+
+    Example with weight update (recommended for production):
+        final_dyn = CC.Phonons.Phonons("final_dyn_", nqirr=3)
+        hess = load_distributed_hessian(
+            "data/", 1, initial_dyn, 300,
+            final_dyn=final_dyn, final_T=300
+        )
+        hessian_dyn = hess.compute_full_hessian()
+
+    Example without weight update (for testing/debugging):
+        hess = load_distributed_hessian("data/", 1, dyn, 300)
+        hessian_dyn = hess.compute_full_hessian()
+    """
+    from tdscha.QSpaceLanczos import load_distributed_tdscha
+
+    qlanc = load_distributed_tdscha(
+        data_dir, population_id, dyn, T,
+        lo_to_split=lo_to_split,
+        use_symmetries=use_symmetries,
+        n_configs=n_configs,
+        final_dyn=final_dyn,
+        final_T=final_T,
+        **kwargs
+    )
+
+    hess = QSpaceHessian.from_qspace_lanczos(
+        qlanc, verbose=verbose, use_symmetries=use_symmetries
+    )
+    hess.ignore_v3 = ignore_v3
+    hess.ignore_v4 = ignore_v4
+    hess.init(use_symmetries=use_symmetries)
+
+    return hess

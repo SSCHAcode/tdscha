@@ -525,8 +525,6 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         else:
             super(Lanczos, self).__setattr__(name, value)
 
-            if "ignore_v" in name:
-                warnings.warn("Setting {} is deprecated. It will always be True.".format(name), DeprecationWarning)
         
 
 
@@ -1403,7 +1401,7 @@ File {} not found. S norm not loaded.
                                     pol_in_3 = None, pol_out_3 = None,\
                                     add_two_ph = False, symmetrize = False, ensemble = None,\
                                     save_raman_tensor2 = False, file_raman_tensor2 = None):
-        """
+        r"""
         PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
         ===========================================================================
         
@@ -1594,7 +1592,7 @@ File {} not found. S norm not loaded.
     
     def prepare_anharmonic_raman_FT_2ph(self, d2alpha_dR = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
                                     mixed = False, pol_in_2 = None, pol_out_2 = None):
-        """
+        r"""
         PREPARE THE PSI VECTOR FOR RAMAN SPECTRUM CALCULATION (NEW VERSION) DIRECTLY FROM 2nd ORDER RAMAN TENSOR
         ========================================================================================================
         
@@ -3842,7 +3840,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
 
 
     def run_biconjugate_gradient(self, verbose = True, tol = 5e-4, maxiter = 1000, save_g = None, save_each = 1, use_preconditioning = True, algorithm = "bicgstab"):
-        """
+        r"""
         STATIC RESPONSE
         ===============
 
@@ -5031,7 +5029,7 @@ Max number of iterations: {}
         return -np.imag(spectral)
 
 
-    def get_green_function_continued_fraction(self, w_array : np.ndarray[np.float64], use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0):
+    def get_green_function_continued_fraction(self, w_array : np.ndarray[np.float64], use_terminator : bool = True, last_average: int = 1, smearing : np.float64 = 0, smooth_ramp : int = 0):
         r"""
         CONTINUED FRACTION GREEN FUNCTION
         =================================
@@ -5059,8 +5057,14 @@ Max number of iterations: {}
                 If true (default) a standard terminator is used.
             last_average : int
                 How many a and b coefficients are averaged to evaluate the terminator?
+                Should be at least 2 for smooth_ramp to have a meaningful effect.
             smearing : float
                 The smearing parameter in RY. If none
+            smooth_ramp : int
+                How many of the last coefficients are linearly blended towards the
+                terminator mean to avoid jumps. 0 means no smoothing (default).
+                The blending ramps from the actual coefficient values to the mean
+                over the last ``smooth_ramp`` levels of the continued fraction.
         """
         n_iters = len(self.a_coeffs)
 
@@ -5075,13 +5079,16 @@ GREEN FUNCTION FROM CONTINUED FRACTION
 Am I using Wigner? {}
 Should I use the terminator? {}
 Perturbation modulus = {}
-Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, sign)
+Sign = {}
+Smooth ramp = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, sign, smooth_ramp)
         
         if self.verbose:
             print()
             print(INFO)
 
-        # Get the terminator
+        # Pre-compute mean values for the terminator (and smooth ramp)
+        # These are needed both for the terminator and for the smooth ramp blending
+        a_mean = b_mean = c_mean = None
         if use_terminator:
             # Get the last coeffs averaging
             a_av = np.mean(self.a_coeffs[-last_average:])
@@ -5094,12 +5101,25 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             a = a_av * sign - sign* self.shift_value
             b = b_av * sign
             c = c_av * sign
+
+            # Store the signed mean values for smooth ramp blending in the loop
+            a_mean = a
+            b_mean = b
+            c_mean = c
             
+            # Compute both +/- solutions of the terminator and choose
+            # the one with the smallest absolute value for each w.
+            # This ensures the correct branch regardless of Wigner mode.
             if not self.use_wigner:
-                gf[:] = (a - w_array**2 - np.sqrt( (a - w_array**2)**2 - 4*b*c + 0j))/(2*b*c)
+                d = a - w_array**2
             else:
-                # Wigner
-                gf[:] = (a + w_array**2 + np.sqrt( (a + w_array**2)**2 - 4*b*c + 0j))/(2*b*c)        
+                d = a + w_array**2
+            
+            disc = d**2 - 4*b*c
+            sqrt_disc = np.sqrt(disc + 0j)
+            gf_plus = (d + sqrt_disc) / (2*b*c)
+            gf_minus = (d - sqrt_disc) / (2*b*c)
+            gf[:] = np.where(np.abs(gf_plus) < np.abs(gf_minus), gf_plus, gf_minus)
         else:
             # If we do not use the Terminator we get the last fraction
             a = self.a_coeffs[-1] * sign - sign* self.shift_value
@@ -5117,6 +5137,17 @@ Sign = {}""".format(self.use_wigner, use_terminator, self.perturbation_modulus, 
             c = b
             if len(self.c_coeffs) == len(self.b_coeffs): 
                 c = self.c_coeffs[i] * sign
+            
+            # Apply smooth ramp: linearly blend towards the mean for the
+            # last smooth_ramp levels to avoid jumps at the terminator.
+            # alpha goes from 1/smooth_ramp (first blended level) to
+            # (smooth_ramp-1)/smooth_ramp (last blended level before terminator).
+            # The terminator itself is at alpha = 1 (full mean).
+            if use_terminator and smooth_ramp > 0 and i >= n_iters - smooth_ramp:
+                alpha = (i - n_iters + smooth_ramp + 1) / smooth_ramp
+                a = (1 - alpha) * a + alpha * a_mean
+                b = (1 - alpha) * b + alpha * b_mean
+                c = (1 - alpha) * c + alpha * c_mean
                
             if not self.use_wigner:
                 gf = 1. / (a - w_array**2  + 2j*w_array*smearing - b * c * gf)

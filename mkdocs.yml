@@ -46,6 +46,7 @@ nav:
   - In-Depth Usage: usage.md
   - StaticHessian: static-hessian.md
   - QSpaceHessian: qspace-hessian.md
+  - Kernel Polynomial Method: kpm.md
   - CLI Tools: cli.md
   - API Reference:
     - DynamicalLanczos: api/dynamical_lanczos.md
