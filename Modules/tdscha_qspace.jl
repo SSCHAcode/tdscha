@@ -35,14 +35,24 @@ D3 contribution to d2v from R^(1) perturbation.
 Mirrors get_d2v_dR2_from_R_pert_sym_fast in tdscha_core.jl.
 
 For each (config, sym):
-  weight_R  = sum_nu f_Y[nu,iq_pert] * x_rot[iq_pert,nu] * conj(R1[nu]) * rho/3
-  weight_Rf = sum_nu conj(R1[nu]) * y_rot[iq_pert,nu] * rho/3
+  weight_R  = sum_nu f_Y[nu,iq_pert] * conj(x_rot[iq_pert,nu]) * R1[nu] * rho/3
+  weight_Rf = sum_nu R1[nu] * conj(y_rot[iq_pert,nu]) * rho/3
 
   For each pair p = (q1,q2):
-    d2v[p] += -weight_R  * (r1_q1 * conj(r2_q2)^T + r2_q1 * conj(r1_q2)^T)
-    d2v[p] += -weight_Rf * r1_q1 * conj(r1_q2)^T
+    d2v[p] += -weight_R  * (r1_q1 * r2_q2^T + r2_q1 * r1_q2^T)
+    d2v[p] += -weight_Rf * r1_q1 * r1_q2^T
 
 where r1 = f_Y * x, r2 = y.
+
+Convention: pairs satisfy q1 + q2 = q_pert, so all blocks are BILINEAR
+(transpose-type) Fourier components, B(q1,q2) = e(q1)^dag M conj(e(q2)).
+Contractions of a kernel with the (real-field) ensemble data therefore use
+conj(x(q)) where the real-space code uses x, and the dyadic outputs use the
+plain (unconjugated) band components; this is what conserves momentum
+(<conj r(q_pert) r(q1) r(q2)> has total momentum -q_pert+q1+q2 = 0).
+Conjugating the other factors (sesquilinear convention) gives terms of net
+momentum 2*q1, whose ensemble average vanishes unless q1 is time-reversal
+invariant — which silently destroys the anharmonicity at non-TRI q.
 """
 function get_d2v_from_R_pert_qspace(
     X_q::Array{ComplexF64,3},
@@ -94,14 +104,14 @@ function get_d2v_from_R_pert_qspace(
         # weight_R = sum_nu f_Y[nu,iq_pert] * x_pert[nu] * conj(R1[nu]) * rho/3
         weight_R = zero(ComplexF64)
         for nu in 1:n_bands
-            weight_R += f_Y[nu, iq_pert] * x_pert[nu] * conj(R1[nu])
+            weight_R += f_Y[nu, iq_pert] * conj(x_pert[nu]) * R1[nu]
         end
         weight_R *= rho[i_config] / 3.0
 
         # weight_Rf = sum_nu conj(R1[nu]) * y_pert[nu] * rho/3
         weight_Rf = zero(ComplexF64)
         for nu in 1:n_bands
-            weight_Rf += conj(R1[nu]) * y_pert[nu]
+            weight_Rf += R1[nu] * conj(y_pert[nu])
         end
         weight_Rf *= rho[i_config] / 3.0
 
@@ -122,10 +132,10 @@ function get_d2v_from_R_pert_qspace(
                     r1_2 = f_Y[nu2, iq2] * x_q2[nu2]  # r1 at q2
                     r2_2 = y_q2[nu2]                     # r2 at q2
 
-                    # -weight_R * (r1_q1 * conj(r2_q2)^T + r2_q1 * conj(r1_q2)^T)
-                    contrib = -weight_R * (r1_1 * conj(r2_2) + r2_1 * conj(r1_2))
-                    # -weight_Rf * r1_q1 * conj(r1_q2)^T
-                    contrib -= weight_Rf * r1_1 * conj(r1_2)
+                    # -weight_R * (r1_q1 * r2_q2^T + r2_q1 * r1_q2^T)
+                    contrib = -weight_R * (r1_1 * r2_2 + r2_1 * r1_2)
+                    # -weight_Rf * r1_q1 * r1_q2^T
+                    contrib -= weight_Rf * r1_1 * r1_2
 
                     d2v_blocks[p][nu1, nu2] += contrib
                 end
@@ -216,21 +226,21 @@ function get_d2v_from_Y_pert_qspace(
             x_q1 = view(x_rot, (iq1-1)*n_bands+1:iq1*n_bands)
             x_q2 = view(x_rot, (iq2-1)*n_bands+1:iq2*n_bands)
 
-            # buffer_u at iq1: sum_nu2 alpha1[p][nu1, nu2] * x_q2[nu2]
+            # buffer_u at iq1: sum_nu2 alpha1[p][nu1, nu2] * conj(x_q2[nu2])
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
 
             # If iq1 != iq2, also accumulate buffer_u at iq2
-            # For the reverse pair (iq2, iq1), the Hermitian Upsilon satisfies:
-            #   alpha1(q2,q1)[nu2,nu1] = conj(alpha1(q1,q2)[nu1,nu2])
-            # So buffer_u at iq2 uses the Hermitian conjugate of alpha1.
+            # The bilinear blocks of the (symmetric) Upsilon perturbation satisfy
+            #   alpha1(q2,q1)[nu2,nu1] = alpha1(q1,q2)[nu1,nu2]   (transpose)
+            # so buffer_u at iq2 uses the transpose of alpha1.
             if iq1 != iq2
                 for nu2 in 1:n_bands
                     for nu1 in 1:n_bands
-                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
+                        buffer_u[iq2, nu2] += alpha1_blocks[p][nu1, nu2] * conj(x_q1[nu1])
                     end
                 end
             end
@@ -239,14 +249,15 @@ function get_d2v_from_Y_pert_qspace(
             local_w = zero(ComplexF64)
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
-            # For off-diagonal pairs, the reverse pair (iq2,iq1) contributes conj(local_w),
-            # so total = local_w + conj(local_w). In real-space (real x), this equals 2*local_w,
-            # but in q-space (complex x), we must use the correct Hermitian form.
+            # For off-diagonal pairs, the reverse pair (iq2,iq1) contributes the
+            # same value (the bilinear blocks are transpose-symmetric), so total
+            # = 2*local_w. The weight is complex: the perturbation is a complex
+            # Bloch field at +q_pert.
             if iq1 < iq2
-                total_wD4 += local_w + conj(local_w)
+                total_wD4 += 2 * local_w
             else
                 total_wD4 += local_w
             end
@@ -258,7 +269,7 @@ function get_d2v_from_Y_pert_qspace(
         for iq in 1:n_q
             for nu in 1:n_bands
                 y_val = y_rot[(iq-1)*n_bands + nu]
-                total_wb -= conj(buffer_u[iq, nu]) * f_psi[nu, iq] * y_val
+                total_wb -= buffer_u[iq, nu] * f_psi[nu, iq] * conj(y_val)
             end
         end
         total_wb *= rho[i_config] / 4.0
@@ -280,10 +291,10 @@ function get_d2v_from_Y_pert_qspace(
                     r1_2 = f_Y[nu2, iq2] * x_q2[nu2]
                     r2_2 = y_q2[nu2]
 
-                    # -total_wD4 * (r1*conj(r2)^T + r2*conj(r1)^T)
-                    contrib = -total_wD4 * (r1_1 * conj(r2_2) + r2_1 * conj(r1_2))
-                    # -total_wb * r1*conj(r1)^T
-                    contrib -= total_wb * r1_1 * conj(r1_2)
+                    # -total_wD4 * (r1*r2^T + r2*r1^T)
+                    contrib = -total_wD4 * (r1_1 * r2_2 + r2_1 * r1_2)
+                    # -total_wb * r1*r1^T
+                    contrib -= total_wb * r1_1 * r1_2
 
                     d2v_blocks[p][nu1, nu2] += contrib
                 end
@@ -374,16 +385,16 @@ function get_f_from_Y_pert_qspace(
             # buffer_u at iq1
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
 
             # buffer_u at iq2 (if not diagonal pair)
-            # Reverse pair uses Hermitian conjugate: alpha1(q2,q1) = alpha1(q1,q2)^H
+            # Reverse pair uses the transpose: alpha1(q2,q1) = alpha1(q1,q2)^T
             if iq1 != iq2
                 for nu2 in 1:n_bands
                     for nu1 in 1:n_bands
-                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
+                        buffer_u[iq2, nu2] += alpha1_blocks[p][nu1, nu2] * conj(x_q1[nu1])
                     end
                 end
             end
@@ -392,12 +403,12 @@ function get_f_from_Y_pert_qspace(
             local_w = zero(ComplexF64)
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
-            # Reverse pair contributes conj(local_w), not local_w
+            # Reverse pair contributes the same value (transpose-symmetric blocks)
             if iq1 < iq2
-                total_sum += local_w + conj(local_w)
+                total_sum += 2 * local_w
             else
                 total_sum += local_w
             end
@@ -408,7 +419,7 @@ function get_f_from_Y_pert_qspace(
         for iq in 1:n_q
             for nu in 1:n_bands
                 y_val = y_rot[(iq-1)*n_bands + nu]
-                buf_f_weight += conj(buffer_u[iq, nu]) * f_psi[nu, iq] * y_val
+                buf_f_weight += buffer_u[iq, nu] * f_psi[nu, iq] * conj(y_val)
             end
         end
 
@@ -505,13 +516,13 @@ function get_perturb_averages_qspace_fused(
 
         weight_R = zero(ComplexF64)
         for nu in 1:n_bands
-            weight_R += f_Y[nu, iq_pert] * x_pert[nu] * conj(R1[nu])
+            weight_R += f_Y[nu, iq_pert] * conj(x_pert[nu]) * R1[nu]
         end
         weight_R *= rho[i_config] / 3.0
 
         weight_Rf = zero(ComplexF64)
         for nu in 1:n_bands
-            weight_Rf += conj(R1[nu]) * y_pert[nu]
+            weight_Rf += R1[nu] * conj(y_pert[nu])
         end
         weight_Rf *= rho[i_config] / 3.0
 
@@ -526,31 +537,31 @@ function get_perturb_averages_qspace_fused(
             x_q1 = view(x_rot, (iq1-1)*n_bands+1:iq1*n_bands)
             x_q2 = view(x_rot, (iq2-1)*n_bands+1:iq2*n_bands)
 
-            # buffer_u at iq1: sum_nu2 alpha1[p][nu1, nu2] * x_q2[nu2]
+            # buffer_u at iq1: sum_nu2 alpha1[p][nu1, nu2] * conj(x_q2[nu2])
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    buffer_u[iq1, nu1] += alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
 
-            # buffer_u at iq2 (reverse pair uses Hermitian conjugate)
+            # buffer_u at iq2 (reverse pair uses the transpose of alpha1)
             if iq1 != iq2
                 for nu2 in 1:n_bands
                     for nu1 in 1:n_bands
-                        buffer_u[iq2, nu2] += conj(alpha1_blocks[p][nu1, nu2]) * x_q1[nu1]
+                        buffer_u[iq2, nu2] += alpha1_blocks[p][nu1, nu2] * conj(x_q1[nu1])
                     end
                 end
             end
 
-            # total_sum = sum of conj(x_q1)^T * alpha1 * x_q2
+            # total_sum = sum of conj(x_q1)^T * alpha1 * conj(x_q2)  (= x^T Y1 x)
             local_w = zero(ComplexF64)
             for nu1 in 1:n_bands
                 for nu2 in 1:n_bands
-                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * x_q2[nu2]
+                    local_w += conj(x_q1[nu1]) * alpha1_blocks[p][nu1, nu2] * conj(x_q2[nu2])
                 end
             end
             if iq1 < iq2
-                total_sum += local_w + conj(local_w)
+                total_sum += 2 * local_w
             else
                 total_sum += local_w
             end
@@ -561,7 +572,7 @@ function get_perturb_averages_qspace_fused(
         for iq in 1:n_q
             for nu in 1:n_bands
                 y_val = y_rot[(iq-1)*n_bands + nu]
-                buf_f_weight += conj(buffer_u[iq, nu]) * f_psi[nu, iq] * y_val
+                buf_f_weight += buffer_u[iq, nu] * f_psi[nu, iq] * conj(y_val)
             end
         end
 
@@ -608,8 +619,8 @@ function get_perturb_averages_qspace_fused(
                     r1_2 = f_Y[nu2, iq2] * x_q2[nu2]
                     r2_2 = y_q2[nu2]
 
-                    contrib = -w_cross * (r1_1 * conj(r2_2) + r2_1 * conj(r1_2))
-                    contrib -= w_diag * r1_1 * conj(r1_2)
+                    contrib = -w_cross * (r1_1 * r2_2 + r2_1 * r1_2)
+                    contrib -= w_diag * r1_1 * r1_2
 
                     d2v_blocks[p][nu1, nu2] += contrib
                 end

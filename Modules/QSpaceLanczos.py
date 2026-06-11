@@ -403,7 +403,9 @@ class QSpaceLanczos(DL.Lanczos):
         """Unpack upper triangle storage into a full (n, n) matrix.
 
         Storage order: for i in range(n): M[i, i:] stored contiguously.
-        Off-diagonal: M[j, i] = conj(M[i, j]) for Hermitian matrix.
+        Off-diagonal: M[j, i] = M[i, j] — the diagonal-pair (q, q) blocks are
+        complex SYMMETRIC in the bilinear convention (q1 + q2 = q_pert), not
+        Hermitian: the implied reverse block is the transpose.
         """
         mat = np.zeros((n, n), dtype=np.complex128)
         idx = 0
@@ -411,9 +413,9 @@ class QSpaceLanczos(DL.Lanczos):
             length = n - i
             mat[i, i:] = flat_data[idx:idx + length]
             idx += length
-        # Fill lower triangle (Hermitian)
+        # Fill lower triangle (symmetric, no conjugation)
         for i in range(n):
-            mat[i + 1:, i] = np.conj(mat[i, i + 1:])
+            mat[i + 1:, i] = mat[i, i + 1:]
         return mat
 
     def _pack_upper_triangle(self, mat, n):
