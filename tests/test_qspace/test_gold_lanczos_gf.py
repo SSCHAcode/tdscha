@@ -113,6 +113,12 @@ def test_gold_lanczos_gf_most_anharmonic():
     convention conserves it.
     """
     dyn, ens = _load()
+    # Symmetrize the dynamical matrix to enforce full space-group symmetry.
+    # Without this, the raw SSCHA dyn from the gold ensemble has broken q-star
+    # rotation relations (~2.4% error), which causes the real-space Lanczos
+    # mode-space symmetry matrices to become non-orthogonal (lossy projections).
+    dyn.Symmetrize(use_spglib=True)
+    ens.current_dyn = dyn
     iq, band, wm, hess_shift = _most_anharmonic_mode(dyn, ens)
     w_sscha = wm * CM
     mode = _match(dyn, iq, band)
