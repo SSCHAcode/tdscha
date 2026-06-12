@@ -27,37 +27,30 @@ If Anaconda is too large, use [micromamba](https://mamba.readthedocs.io/en/lates
 
 ```bash
 # Create environment
-micromamba create -n sscha -c conda-forge python gfortran libblas lapack openmpi julia openmpi-mpicc pip numpy scipy spglib pkgconfig
+micromamba create -n sscha -c conda-forge python gfortran libblas lapack openmpi openmpi-mpicc pip numpy scipy spglib pkgconfig
 micromamba activate sscha
 
 # Install dependencies
 pip install meson meson-python ninja
-pip install ase julia mpi4py
+pip install ase juliacall mpi4py
 pip install --no-build-isolation  cellconstructor python-sscha tdscha
 ```
 
 ### Setting Up Julia for Maximum Performance
 
-**Critical Step**: TD-SCHA achieves 2-10× speedup with Julia enabled. Configure it properly:
+**Critical Step**: TD-SCHA achieves 2-10× speedup with Julia enabled. Enabling it
+only requires the `juliacall` package:
 
 ```bash
-# Install Julia Python bindings
-python -c 'import julia; julia.install()'
+pip install juliacall
 ```
 
-**Note**: In some micromamba installations, you may need to specify the conda executable location:
-
-```bash
-export CONDA_JL_CONDA_EXE=$HOME/.local/bin/micromamba
-echo "export CONDA_JL_CONDA_EXE=$HOME/.local/bin/micromamba" >> $HOME/.bashrc
-```
-
-To configure Julia PyCall to work with conda, open a Julia shell and install required packages:
-
-```julia
-# In Julia REPL, type ']' to enter package manager
-pkg> add SparseArrays LinearAlgebra InteractiveUtils PyCall
-```
+No further configuration is needed: if Julia is not present on the machine,
+juliacall downloads and installs it automatically the first time the Julia
+mode is used (the first run therefore takes a few extra minutes, once per
+machine). Any Python interpreter works; `python-jl` and the PyCall
+configuration steps required by the old `julia` (PyJulia) package are no
+longer needed.
 
 ## 2. Installing Without Package Managers
 
@@ -209,23 +202,24 @@ pytest tests/test_julia/test_julia.py -v
 
 ### Julia Not Found or Not Working
 
-**Error**: `Julia not found` or slow performance despite Julia installation
+**Error**: `ImportError` mentioning the Julia extension, or the Julia mode is
+not selected
 
 **Solution**:
-1. Verify Julia is in PATH:
+1. Install the Python bindings (Julia itself is installed automatically at
+   first use):
    ```bash
-   which julia
-   julia --version
+   pip install juliacall
    ```
-2. Set `JULIA_BINDIR` if needed:
+2. Check the extension status without booting Julia:
    ```bash
-   export JULIA_BINDIR=/path/to/julia/bin
+   python -c "import tdscha.DynamicalLanczos as DL; print(DL.is_julia_enabled())"
    ```
-3. Reinstall Julia Python bindings:
-   ```bash
-   pip install --force-reinstall julia
-   python -c "import julia; julia.install()"
-   ```
+3. If a run aborts during the very first Julia use, it may have been
+   interrupted while juliacall was setting up its environment; remove the
+   `julia_env` directory inside your Python environment and retry.
+4. The backend can be forced with `SSCHA_JULIA_BACKEND=juliacall`,
+   `=pyjulia` (legacy) or `=none` (disable Julia entirely).
 
 ### MPI Configuration Issues
 

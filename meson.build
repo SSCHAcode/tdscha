@@ -1,6 +1,6 @@
 project('tdscha',
   ['c'],
-  version: '1.6.1',
+  version: '1.6.2',
   license: 'GPL',
   meson_version: '>= 1.1.0', # <- set min version of meson.
   default_options : [
@@ -124,11 +124,13 @@ py.install_sources(
       'Modules/QSpaceLanczos.py',
       'Modules/QSpaceHessian.py',
       'Modules/Dynamical.py',
+      'Modules/JuliaExt.py',
       'Modules/Parallel.py',
       'Modules/Perturbations.py',
       'Modules/StaticHessian.py',
       'Modules/tdscha_core.jl',
       'Modules/tdscha_qspace.jl',
+      'Modules/juliapkg.json',
       'Modules/Tools.py',
       'Modules/cli.py'
     ],

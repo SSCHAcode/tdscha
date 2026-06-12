@@ -29,8 +29,8 @@ dir_to_run="{}"
 output="{}"
 
 # Run the command
-# COMMAND="nohup mpirun -np 8 python-jl ./run.py $dir_to_run > $output &"
-COMMAND="nohup python-jl ./run.py $dir_to_run > $output &"
+# COMMAND="nohup mpirun -np 8 python ./run.py $dir_to_run > $output &"
+COMMAND="nohup python ./run.py $dir_to_run > $output &"
 echo "Running command: $COMMAND"
 $COMMAND
 

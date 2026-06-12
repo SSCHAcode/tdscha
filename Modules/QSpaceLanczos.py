@@ -34,39 +34,14 @@ import tdscha.DynamicalLanczos as DL
 import cellconstructor.Settings as Parallel
 from cellconstructor.Settings import ParallelPrint as print
 
-# Try to import the julia module
-__JULIA_EXT__ = False
-try:
-    import julia, julia.Main
-    julia.Main.include(os.path.join(os.path.dirname(__file__), 
-        "tdscha_qspace.jl"))
-    __JULIA_EXT__ = True
-except:
-    try:
-        import julia
-        from julia.api import Julia
-        jl = Julia(compiled_modules=False)
-        import julia.Main
-        try:
-            julia.Main.include(os.path.join(os.path.dirname(__file__),
-                "tdscha_qspace.jl"))
-            __JULIA_EXT__ = True
-        except:
-            # Install the required modules
-            julia.Main.eval("""
-using Pkg
-Pkg.add("SparseArrays")
-Pkg.add("InteractiveUtils")
-""")
-            try:
-                julia.Main.include(os.path.join(os.path.dirname(__file__),
-                    "tdscha_qspace.jl"))
-                __JULIA_EXT__ = True
-            except Exception as e:
-                warnings.warn("Julia extension not available.\nError: {}".format(e))
-    except Exception as e:
-        warnings.warn("Julia extension not available.\nError: {}".format(e))
-    pass
+# The Julia runtime is booted lazily by JuliaExt at the first actual use
+# (tdscha_qspace.jl is included by JuliaExt.get_main()), so that importing
+# tdscha.QSpaceLanczos stays fast.
+import tdscha.JuliaExt as JuliaExt
+
+# Deprecated alias kept for backward compatibility: it only tells whether a
+# Julia backend is installed, the runtime is not initialized at import time.
+__JULIA_EXT__ = JuliaExt.available()
 
 try:
     import spglib
@@ -133,9 +108,9 @@ class QSpaceLanczos(DL.Lanczos):
         self.ensemble = ensemble
         super().__init__(ensemble, unwrap_symmetries=False, **kwargs)
 
-        if not __JULIA_EXT__:
+        if not JuliaExt.available():
             raise ImportError(
-                "QSpaceLanczos requires Julia. Install with: pip install julia"
+                "QSpaceLanczos requires Julia. Install with: pip install juliacall"
             )
         self.use_wigner = True
 
@@ -698,8 +673,6 @@ class QSpaceLanczos(DL.Lanczos):
         if self.ignore_v3 and self.ignore_v4:
             return np.zeros(self.get_psi_size(), dtype=np.complex128)
 
-        import julia.Main
-
         R1 = self.get_R1_q()
         # If D3 is ignored, zero out R1 so that D3 weight is zero
         if self.ignore_v3:
@@ -739,7 +712,7 @@ class QSpaceLanczos(DL.Lanczos):
         f_pert : ndarray(n_bands,), complex128
         d2v_blocks : list of ndarray(n_bands, n_bands), complex128
         """
-        import julia.Main
+        jl = JuliaExt.get_main()
 
         n_total = self.n_syms_qspace * self.N
         n_processors = Parallel.GetNProc()
@@ -759,7 +732,7 @@ class QSpaceLanczos(DL.Lanczos):
         unique_pairs_arr = np.array(self.unique_pairs, dtype=np.int32) + 1  # 1-indexed
 
         def get_combined(start_end):
-            return julia.Main.get_perturb_averages_qspace(
+            return jl.get_perturb_averages_qspace(
                 self.X_q, self.Y_q, self.w_q, self.rho,
                 R1, alpha1_flat,
                 np.float64(self.T), bool(not self.ignore_v4),
@@ -1303,8 +1276,8 @@ Starting from step %d
             self.n_syms_qspace = 1
             n_total = self.n_q * self.n_bands
             # Build identity sparse matrix
-            import julia.Main
-            julia.Main.eval("""
+            jl = JuliaExt.get_main()
+            jl.eval("""
             function init_identity_qspace(n_total::Int64)
                 I_sparse = SparseArrays.sparse(
                     Int32.(1:n_total), Int32.(1:n_total),
@@ -1313,7 +1286,7 @@ Starting from step %d
                 return nothing
             end
             """)
-            julia.Main.init_identity_qspace(np.int64(n_total))
+            jl.init_identity_qspace(int(n_total))
             return
 
         if not __SPGLIB__:
@@ -1378,7 +1351,7 @@ Starting from step %d
             P_uc[3*kp:3*kp+3, 3*k:3*k+3] = exp(-2*pi*i * q' . L_k) * R_cart
             where L_k = R_cart @ tau_k + t_cart - tau_kp is a lattice vector.
         """
-        import julia.Main
+        jl = JuliaExt.get_main()
 
         nat_uc = self.uci_structure.N_atoms
         bg = self.uci_structure.get_reciprocal_vectors() / (2 * np.pi)
@@ -1447,7 +1420,7 @@ Starting from step %d
             all_rows[i] += 1
             all_cols[i] += 1
 
-        julia.Main.eval("""
+        jl.eval("""
         function init_sparse_symmetries_qspace(
             all_rows::Vector{Vector{Int32}},
             all_cols::Vector{Vector{Int32}},
@@ -1465,8 +1438,8 @@ Starting from step %d
         end
         """)
 
-        julia.Main.init_sparse_symmetries_qspace(
-            all_rows, all_cols, all_vals, np.int64(n_total))
+        jl.init_sparse_symmetries_qspace(
+            all_rows, all_cols, all_vals, int(n_total))
 
         if verbose:
             print("Q-space symmetry matrices ({} x {}), {} symmetries cached in Julia".format(
