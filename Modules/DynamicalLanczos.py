@@ -35,85 +35,13 @@ from tdscha.Parallel import *
 import tdscha.Perturbations as perturbations
 
 
-# Try to import the julia module
-__JULIA_EXT__ = False
-try:
-    import julia, julia.Main
+# The Julia runtime is booted lazily by JuliaExt at the first actual use
+# (MODE_FAST_JULIA), so that importing tdscha stays fast.
+import tdscha.JuliaExt as JuliaExt
 
-    # Compile the tdscha code
-    julia.Main.include(os.path.join(os.path.dirname(__file__), "tdscha_core.jl"))
-    __JULIA_EXT__ = True
-except:
-    pass
-
-# Try to import the julia module
-__JULIA_EXT__ = False
-try:
-    import julia, julia.Main
-    julia.Main.include(os.path.join(os.path.dirname(__file__), 
-        "tdscha_core.jl"))
-    __JULIA_EXT__ = True
-except:
-    try:
-        import julia
-        from julia.api import Julia
-        jl = Julia(compiled_modules=False)
-        import julia.Main
-        try:
-            julia.Main.include(os.path.join(os.path.dirname(__file__),
-                "tdscha_core.jl"))
-            __JULIA_EXT__ = True
-        except:
-            # Install the required modules
-            julia.Main.eval("""
-using Pkg
-Pkg.add("SparseArrays")
-Pkg.add("InteractiveUtils")
-""")
-            try:
-                julia.Main.include(os.path.join(os.path.dirname(__file__),
-                    "tdscha_core.jl"))
-                __JULIA_EXT__ = True
-            except Exception as e:
-                warnings.warn("Julia extension not available.\nError: {}".format(e))
-    except Exception as e:
-        warnings.warn("Julia extension not available.\nError: {}".format(e))
-    pass
-
-
-# Try to import the julia module
-__JULIA_EXT__ = False
-try:
-    import julia, julia.Main
-    julia.Main.include(os.path.join(os.path.dirname(__file__), 
-        "tdscha_core.jl"))
-    __JULIA_EXT__ = True
-except:
-    try:
-        import julia
-        from julia.api import Julia
-        jl = Julia(compiled_modules=False)
-        import julia.Main
-        try:
-            julia.Main.include(os.path.join(os.path.dirname(__file__),
-                "tdscha_core.jl"))
-            __JULIA_EXT__ = True
-        except:
-            # Install the required modules
-            julia.Main.eval("""
-using Pkg
-Pkg.add("SparseArrays")
-Pkg.add("InteractiveUtils")
-""")
-            try:
-                julia.Main.include(os.path.join(os.path.dirname(__file__),
-                    "tdscha_core.jl"))
-                __JULIA_EXT__ = True
-            except Exception as e:
-                warnings.warn("Julia extension not available.\nError: {}".format(e))
-    except Exception as e:
-        warnings.warn("Julia extension not available.\nError: {}".format(e))
-    pass
+# Deprecated alias kept for backward compatibility: it only tells whether a
+# Julia backend is installed, the runtime is not initialized at import time.
+__JULIA_EXT__ = JuliaExt.available()
 
 
 # Define a generic type for the double precision.
@@ -169,14 +97,12 @@ MODE_FAST_SERIAL = 1
 MODE_SLOW_SERIAL = 0
 
 def is_julia_enabled():
-    return __JULIA_EXT__
+    """Return True if a Julia backend (juliacall or pyjulia) is installed.
 
-def is_julia_enabled():
-    return __JULIA_EXT__
-
-
-def is_julia_enabled():
-    return __JULIA_EXT__
+    This does not boot the Julia runtime: that happens lazily at the first
+    use of MODE_FAST_JULIA.
+    """
+    return JuliaExt.available()
 
 
 class Lanczos(object):
@@ -822,7 +748,8 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
                 self.deg_julia[i, :c] = self.degenerate_space[i]
 
             # Pre-build and cache sparse symmetry matrices in Julia
-            julia.Main.init_sparse_symmetries(
+            # (this boots the Julia runtime if it is not up yet)
+            JuliaExt.get_main().init_sparse_symmetries(
                 self.sym_julia, self.N_degeneracy, self.deg_julia, self.sym_block_id)
 
         # Create the mapping between the modes and the block id.
@@ -3116,14 +3043,15 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                                               f_pert_av, d2v_pert_av)
         
         elif self.mode == MODE_FAST_JULIA:
-            if not __JULIA_EXT__:
-                raise ImportError("Error while importing julia. Try with python-jl after pip install julia.")
-                
+            if not JuliaExt.available():
+                raise ImportError("The Julia extension is not installed. Install it with: pip install juliacall")
+
             if self.sym_julia is None:
                 MSG = "Error, the initialization must be called AFTER you change mode to JULIA."
                 raise ValueError(MSG)
-                
-                
+
+            jl = JuliaExt.get_main()
+
             # Prepare the combined parallelization function
             # Pack both results (f vector + d2v matrix) into a single flat array
             # to use GoParallel with "+" reduction (avoids GoParallelTuple bug)
@@ -3131,7 +3059,7 @@ Error, for the static calculation the vector must be of dimension {}, got {}
             def get_combined_proc(start_end):
                 start = int(start_end[0])
                 end   = int(start_end[1])
-                result = julia.Main.get_perturb_averages_sym(
+                result = jl.get_perturb_averages_sym(
                     self.X.T, self.Y.T, self.w, self.rho, R1, Y1,
                     np.float64(self.T), bool(apply_d4),
                     self.sym_julia, self.N_degeneracy, self.deg_julia,

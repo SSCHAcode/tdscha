@@ -426,10 +426,9 @@ The normalization is handled automatically:
 
 ```bash
 # Run with MPI (automatically distributes configurations)
+# The Julia extension (pip install juliacall) is picked up automatically,
+# no python-jl wrapper is needed.
 mpirun -np 8 python distributed_kpm.py
-
-# Or with python-jl for additional speedup
-mpirun -np 8 python-jl distributed_kpm.py
 ```
 
 ### Memory Comparison
