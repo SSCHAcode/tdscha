@@ -271,3 +271,87 @@ python-sscha (companion patch, branch `fast_load_julia`, main-branch files only)
   (`tests/test_julia`, `tests/test_lanczos_fast`), which run the Julia mode.
   These tests caught the threading regression during development (§4.2),
   confirming they exercise the bridge end-to-end.
+
+## 8. Full test-suite results and analysis of the failing tests
+
+Full run after the migration, with both patched packages installed
+(`OMP_NUM_THREADS=1 pytest -m "not release"`, 2026-06-12):
+
+```
+10 failed, 118 passed, 25 skipped in 753.80s (0:12:33)
+```
+
+All 118 previously passing tests still pass, including every Julia-mode test
+(`tests/test_julia/`, `tests/test_lanczos_fast/`, most of `tests/test_qspace/`).
+The 10 failures are all confined to `tests/test_qspace/` and **none of them is
+caused by this migration**. They split into two groups.
+
+### 8.1 Missing reference data (3 failures, environmental)
+
+| Test | Error |
+|------|-------|
+| `test_gold_lanczos_gf.py::test_gold_lanczos_gf_most_anharmonic` | `ValueError: Error, file .../Examples/ensemble_gold/dyn_gen_pop1_1 does not exist.` |
+| `test_gold_nontri.py::test_gold_force_parseval` | same missing file |
+| `test_gold_nontri.py::test_gold_hessian_nontri` | same missing file |
+
+All three abort in `CC.Phonons.Phonons(...)` while loading
+`Examples/ensemble_gold/dyn_gen_pop1_*`: the gold ensemble directory is not
+present in this working copy (`Examples/ensemble_gold/` is not on disk). The
+tests never reach any Julia code, so they cannot be affected by the bridge.
+They would fail identically on the unpatched branch.
+
+### 8.2 Pre-existing q-space kernel bugs (7 failures, under active debugging)
+
+| Test | Symptom |
+|------|---------|
+| `test_qspace_anharmonic_invariants.py::TestFpertReality::test_with_off_diagonal` | `f_pert has Im=1.35e+00 with off-diagonal pairs` (expected `< 1e-12`) |
+| `test_qspace_anharmonic_invariants.py::TestFpertReality::test_off_diagonal_d4_only` | same invariant violated |
+| `test_qspace_anharmonic_invariants.py::TestDiagonalD2vHermitian::test_mixed_pairs` | hermiticity of diagonal d2v blocks violated |
+| `test_qspace_anharmonic_invariants.py::TestDiagonalD2vHermitian::test_d4_only_mixed` | same |
+| `test_qspace_anharmonic_invariants.py::TestFlagGating::test_R1_zero_gives_d4_only_off_diagonal` | D3/D4 flag gating inconsistent for off-diagonal pairs |
+| `test_qspace_hessian_1d.py::test_compare_real_vs_qspace_hessian` | real-space vs q-space Hessian mismatch |
+| `test_qspace_kpm.py::test_qspace_kpm_physics_regression` | KPM physics regression value off |
+
+These are physics-invariant checks on `get_perturb_averages_qspace`
+(`tdscha_qspace.jl`) with synthetic inputs: with purely real inputs the
+perturbation average `f_pert` must be real and the diagonal `d2v` blocks
+Hermitian, and they are not whenever **off-diagonal (q1 ≠ q2) pairs** are
+involved.
+
+Evidence that these failures pre-date the migration and are independent of it:
+
+1. **Backend cross-check (decisive).** The failures were reproduced with the
+   legacy backend by forcing `SSCHA_JULIA_BACKEND=pyjulia`:
+   `TestFpertReality::test_with_off_diagonal` fails with the **bit-identical**
+   value `Im = 1.3502495550836942` under both pyjulia and juliacall, and
+   `test_qspace_hessian_1d.py` / `test_qspace_kpm.py` fail identically under
+   pyjulia as well (re-run: `2 failed, 2 passed`, same tests). If the bridge's
+   argument/return conversion were corrupting data, the two backends — which
+   use completely different conversion machinery (PyCall copy vs
+   `juliacall.convert` + `np.asarray`) — would not agree to the last bit.
+2. **The bug is already documented on this branch.** `bug_hunting.md`
+   (in-flight debugging notes in the repo root) describes exactly this defect:
+   *"Suspect #3: `f_pert` D3 Contribution from Off-Diagonal Pairs"* — the D3
+   accumulation `f_pert += w1 * y_pert; f_pert += w2 * f_Y[:, iq_pert] * x_pert`
+   picks up a spurious imaginary part through the off-diagonal pair pathway
+   (and a second pathway via Suspect #1 contaminates the Hessian/KPM results,
+   which is consistent with the `test_qspace_hessian_1d` and `test_qspace_kpm`
+   failures).
+3. **The failing test files are themselves part of that debugging effort**:
+   `tests/test_qspace/test_qspace_anharmonic_invariants.py` and the gold/KPM
+   regression tests are untracked, in-flight files written to pin the bug
+   down; they are not part of any previously green CI state.
+
+Conclusion: the bit-identical cross-backend agreement turns these failures
+into additional evidence that the bridge is numerically faithful. The actual
+kernel bug in the off-diagonal pair handling of `tdscha_qspace.jl` is tracked
+separately in `bug_hunting.md` and must be fixed independently of this work.
+
+One incidental change was made to
+`tests/test_qspace/test_qspace_anharmonic_invariants.py` (untracked file): its
+module header used the old eager-PyJulia boilerplate, which inside a single
+pytest process would have tried to start a second Julia runtime next to
+juliacall (and on this machine costs ~100 s per boot through the
+`compiled_modules=False` fallback). It now obtains the runtime from
+`tdscha.JuliaExt` like the production code; the tests it contains fail before
+and after this change for the reasons above.
