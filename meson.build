@@ -134,6 +134,7 @@ py.install_sources(
       'Modules/QSpaceLanczos.py',
       'Modules/QSpaceKPM.py',
       'Modules/QSpaceHessian.py',
+      'Modules/QSpaceInterpolation.py',
       'Modules/Dynamical.py',
       'Modules/JuliaExt.py',
       'Modules/Parallel.py',

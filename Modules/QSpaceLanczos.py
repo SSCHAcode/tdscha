@@ -135,10 +135,22 @@ class QSpaceLanczos(DL.Lanczos):
             'iq_pert', 'q_pair_map', 'unique_pairs',
             '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
             '_qspace_sym_data', '_qspace_sym_q_map', 'n_syms_qspace',
+            # Vertex renormalization for q-mesh interpolation (1.0 = no interp)
+            'qspace_scale3', 'qspace_scale4', 'qspace_prefiltered',
             # Distributed mode attributes
             '_distributed', '_N_global', '_N_eff_global', '_N_local',
         ]
         self.__total_attributes__.extend(qspace_attrs)
+
+        # D3/D4 vertex rescaling factors passed to the Julia kernel.
+        # They stay 1.0 for a standard (commensurate) calculation; the
+        # interpolated subclass sets sqrt(N_c/N_f) and N_c/N_f respectively
+        # (see Interpolation_plan.md, section 6).
+        self.qspace_scale3 = 1.0
+        self.qspace_scale4 = 1.0
+        # True when X_q already carries the f_Y filter and the f_psi factors
+        # are folded into alpha1 (set by the interpolated subclass).
+        self.qspace_prefiltered = False
 
         # If ensemble is None, perform a bare initialization like the parent
         if ensemble is None:
@@ -794,7 +806,9 @@ class QSpaceLanczos(DL.Lanczos):
                 q_pair_map_jl,  # 1-indexed
                 unique_pairs_arr,
                 int(start_end[0]), int(start_end[1]),
-                valid_modes  # Pass mask to Julia
+                valid_modes,  # Pass mask to Julia
+                float(self.qspace_scale3), float(self.qspace_scale4),
+                bool(self.qspace_prefiltered)
             )
 
         combined = Parallel.GoParallel(get_combined, indices, "+")
@@ -879,7 +893,9 @@ class QSpaceLanczos(DL.Lanczos):
                 q_pair_map_jl,  # 1-indexed
                 unique_pairs_arr,
                 int(start_end[0]), int(start_end[1]),
-                valid_modes  # Pass mask to Julia
+                valid_modes,  # Pass mask to Julia
+                float(self.qspace_scale3), float(self.qspace_scale4),
+                bool(self.qspace_prefiltered)
             )
 
         # Call Julia (serial call, local configs only)
