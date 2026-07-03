@@ -143,6 +143,7 @@ py.install_sources(
       'Modules/tdscha_core.jl',
       'Modules/tdscha_qspace.jl',
       'Modules/juliapkg.json',
+      'Modules/SpectralFunctions.py',
       'Modules/Tools.py',
       'Modules/cli.py'
     ],
