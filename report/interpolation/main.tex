@@ -1,0 +1,666 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{siunitx}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black]{hyperref}
+\usepackage{xcolor}
+
+\newcommand{\qv}{\mathbf{q}}
+\newcommand{\kv}{\mathbf{k}}
+\newcommand{\Rv}{\mathbf{R}}
+\newcommand{\avg}[1]{\left\langle #1 \right\rangle}
+\newcommand{\Nc}{N_{\mathrm{c}}}
+\newcommand{\Nf}{N_{\mathrm{f}}}
+\newcommand{\fY}{f_{\Upsilon}}
+\newcommand{\fpsi}{f_{\psi}}
+\newcommand{\Ltdscha}{\mathcal{L}}
+
+\title{Fourier interpolation of the $q$-space TDSCHA Lanczos\\
+without high-order force-constant tensors}
+\author{TDSCHA development notes --- \texttt{qspace\_interpolation} branch}
+\date{July 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We present a method to run the full time-dependent self-consistent harmonic
+approximation (TDSCHA) Lanczos response calculation on a fine uniform
+$q$-mesh that is \emph{not} commensurate with the supercell of the
+stochastic ensemble, while the ensemble itself remains on the coarse
+commensurate mesh. The two-phonon sector of the response lives on the fine
+mesh, so a phonon at $\qv$ decays into pairs of phonons at interpolated
+wavevectors, densely sampling the two-phonon continuum. Unlike the standard
+route (computing, centering and Fourier-interpolating the third-order force
+constants $\Phi^{(3)}$, as in \texttt{cellconstructor.Spectral}), the method
+never computes or stores a high-order tensor: interpolation is performed at
+the level of the \emph{per-configuration Bloch fields} entering the
+stochastic estimator of the anharmonic vertices. The scheme costs
+$O(\Nf)$ per Lanczos iteration, is exact at commensurate wavevectors by
+construction, and reduces to designable ``stochastic centering'' kernels
+that reproduce the minimal-image (zero-padded) centering of tensor
+interpolation. We derive the method, prove its equivalence with
+centered-tensor interpolation, validate it against direct fine-supercell
+calculations on an anharmonic chain model, and demonstrate agreement with
+the standard $d_3$ dynamic-bubble spectral functions of
+\texttt{cellconstructor.Spectral} at interpolated wavevectors.
+\end{abstract}
+
+\tableofcontents
+
+%======================================================================
+\section{Background: the $q$-space TDSCHA Lanczos}
+\label{sec:background}
+
+The $q$-space TDSCHA Lanczos \cite{tdscha,qspace} computes response
+functions by iterating the linearized TDSCHA superoperator $\Ltdscha$ on a
+state vector
+\begin{equation}
+\psi \;=\; \bigl[\, R_\nu(\qv_p) \,\big|\, a'_{\nu_1\nu_2}(\qv_1,\qv_2)
+\,\big|\, b'_{\nu_1\nu_2}(\qv_1,\qv_2) \,\bigr],
+\qquad \qv_1+\qv_2 = \qv_p + \mathbf{G},
+\end{equation}
+with one $(n_b\times n_b)$ two-phonon block per pair of wavevectors summing
+to the perturbation wavevector $\qv_p$ ($n_b = 3 n_{\mathrm{at}}$ bands per
+$q$-point). The harmonic part of $\Ltdscha$ is diagonal and requires only
+the SSCHA frequencies and polarization vectors $\omega_\nu(\qv)$,
+$e_\nu(\qv)$. The anharmonic part is evaluated \emph{stochastically}: for
+each configuration $I$ of an importance-sampled SSCHA ensemble (weights
+$\rho_I$) one forms the mass-scaled Bloch fields
+\begin{align}
+x_\nu(\qv; I) &= \sum_a e^{a\,*}_\nu(\qv)\, \sqrt{m_a}\;
+  \tilde u_a(\qv; I),
+&
+\tilde u_a(\qv;I) &= \frac{1}{\sqrt{\Nc}} \sum_{\Rv} e^{-i \qv\cdot\Rv}\,
+  u_a(\Rv; I),
+\label{eq:blochfields}
+\\
+y_\nu(\qv; I) &= \sum_a e^{a\,*}_\nu(\qv)\, \frac{1}{\sqrt{m_a}}\;
+  \delta\!\tilde f_a(\qv; I),
+&
+\delta f &= f - f_{\mathrm{SSCHA}} - \avg{f},
+\nonumber
+\end{align}
+where $\Rv$ runs over the $\Nc$ cells of the supercell and the phase
+convention follows \texttt{vector\_r2q} (cell-origin phases). The estimator
+(the ``fused kernel'' of \texttt{tdscha\_qspace.jl}) contracts these fields
+into weights and rank-one updates; every term is a product of three or four
+fields. Writing $r_1 = \fY\, x$ with $\fY(\qv,\nu) = 2\omega/(1+2n)$ and
+$r_2 = y$, the three-field (D3) terms have the structure
+\begin{equation}
+\avg{\, \overline{(\fY x)}(\qv_p)\; x(\qv_1)\, y(\qv_2) \,},\qquad
+\avg{\, \bar y(\qv_p)\; x(\qv_1)\, x(\qv_2) \,},\qquad \dots
+\label{eq:d3terms}
+\end{equation}
+and the four-field (D4) terms carry one more $x$. These combinations are
+\emph{exact Gaussian integration-by-parts extractors} of the anharmonic
+vertices: for the Gaussian SSCHA density $\rho_\Upsilon$,
+\begin{equation}
+\avg{u_a\, u_b\, \delta f_c} \;=\;
+\Upsilon^{-1}_{aa'}\,\Upsilon^{-1}_{bb'}\,
+\avg{\partial^3 V / \partial R_{a'} \partial R_{b'} \partial R_c},
+\label{eq:ibp}
+\end{equation}
+with no perturbative truncation; the disconnected Wick contractions vanish
+because $\avg{u}=\avg{\delta f}=0$ and
+$\avg{u\otimes\delta f}\propto\Upsilon^{-1}(\avg{\partial^2V}-\Phi)=0$ at
+SSCHA stationarity. \textbf{No third- or fourth-order force-constant tensor
+ever appears}: this is the property the interpolation exploits.
+
+%======================================================================
+\section{Off-grid Bloch fields and the effective interpolation kernel}
+\label{sec:offgrid}
+
+\subsection{Why the naive off-grid transform is not an interpolation}
+
+The configuration $u(\Rv)$ is periodic with the supercell: it carries
+information only at the $\Nc$ commensurate wavevectors. Transforming its
+\emph{infinite periodic repetition} at an incommensurate $\tilde\qv$ gives
+exactly zero (a Dirac comb on the commensurate points), while the
+\emph{finite} sum of Eq.~\eqref{eq:blochfields} evaluated at $\tilde\qv$ is
+implicitly a \textbf{rectangular window} over one period --- a zero-padded
+estimate whose quality depends entirely on which periodic image of each
+correlation component receives which phase. In tensor language this is the
+familiar statement that Fourier interpolation of $\Phi^{(n)}$ is only
+meaningful after \emph{centering}: reassigning each element to the
+minimal-distance periodic images and zero-padding beyond half the
+supercell, as done by \texttt{ForceTensor.Center()} before any
+interpolation. The construction below performs the analogue of centering
+\emph{on the estimator}, without tensors.
+
+\subsection{The effective kernel of a windowed estimator}
+\label{sec:kernel}
+
+Let each field slot of a D3 term carry a real window $W(\mathbf{n})$
+over the integer cell label $\mathbf{n}$ (zero outside one period; the
+plain estimator is $W\equiv 1$),
+\begin{equation}
+\tilde x_W(\tilde\qv; I) \propto \sum_{\mathbf{n}} W(\mathbf{n})\,
+e^{-i\tilde\qv\cdot\Rv_{\mathbf n}}\, u(\Rv_{\mathbf n}; I).
+\end{equation}
+Take a D3 product with slots $(z, w, v)$ and exact momentum conservation
+$\tilde\qv_1+\tilde\qv_2=\tilde\qv_p$ (guaranteed on a uniform fine mesh
+containing $\qv_p$; note $e^{i\mathbf G\cdot\Rv}=1$ makes the conservation
+exact, not approximate). Using translation invariance of the ensemble,
+its expectation is
+\begin{equation}
+\avg{\bar z(\tilde\qv_p)\, \tilde x_w(\tilde\qv_1)\, \tilde y_v(\tilde\qv_2)}
+= \frac{1}{\Nc^{3/2}} \sum_{\delta_1 \delta_2}
+S_{z,w,v}(\delta_1,\delta_2)\;
+c_3(\delta_1,\delta_2)\;
+e^{-i\tilde\qv_1\cdot\delta_1 - i \tilde\qv_2\cdot\delta_2},
+\label{eq:kernel}
+\end{equation}
+where $c_3$ is the physical three-point correlation at \emph{actual}
+(unwrapped) lattice differences, the sum runs over all periodic images, and
+the \textbf{effective interpolation kernel} is the (per-dimension
+separable) window triple correlation
+\begin{equation}
+S_{z,w,v}(\delta_1,\delta_2) \;=\; \sum_{s}\, z(s)\, w(s+\delta_1)\,
+v(s+\delta_2).
+\label{eq:S}
+\end{equation}
+Two structural facts follow (verified numerically to machine precision):
+\begin{enumerate}
+\item \emph{Partition of unity.} For the plain window,
+$\sum_{\text{images}} S(\delta + L\mathbf{n}) = L$ for every difference
+class per dimension of length $L$: at commensurate $\tilde\qv$ all images
+share the same phase and the estimator \textbf{reduces exactly to the
+coarse one}.
+\item \emph{Tent bias off-grid.} The plain kernel assigns weight
+$L-\mathrm{spread}$ to each image: for $L=4$, a nearest-neighbour
+correlation component leaks $25\%$ of its weight onto an image three cells
+away, which enters with the wrong phase at incommensurate $\tilde\qv$. The
+interpolation passes through the exact on-grid values but sags in between.
+\end{enumerate}
+
+\subsection{Equivalence with centered-tensor interpolation}
+\label{sec:equivalence}
+
+Equation~\eqref{eq:kernel} states that the ensemble expectation of the
+off-grid estimator \emph{is} the trigonometric (Fourier) interpolation of
+the real-space correlation function $c_3$, with image weights $S$. If $S$
+equals the minimal-image indicator (ties split), the interpolated object is
+identical to what one would obtain by (i) forming the correlation tensor on
+the coarse lattice, (ii) centering it \`a la
+\texttt{ForceTensor.Center()}, and (iii) evaluating its Fourier sum at
+$\tilde\qv$ --- except that no tensor is ever formed, the contraction with
+the Lanczos vector being performed configuration-by-configuration at
+$O(N_I\, \Nf\, n_b^2)$ cost. With the pre-filtering of
+Sec.~\ref{sec:prefilter} the interpolated correlation becomes (a
+contraction of) $\Phi^{(3)}$ itself, i.e.\ \emph{the same object
+interpolated by} \texttt{Spectral.py}; the two routes then share the same
+locality assumption and the same accuracy class, which is the basis of the
+benchmark of Sec.~\ref{sec:bubble}.
+
+%======================================================================
+\section{Stochastic centering: designed multitaper windows}
+\label{sec:windows}
+
+\subsection{Exactly solvable case: pair kernels}
+
+For two-field (pair) kernels the minimal-image weights are reachable
+exactly with two rectangular windows: with
+$r_m(\delta) = \max(0, m-|\delta|)$ the autocorrelation of
+$\mathrm{rect}(m)$, for even $L$
+\begin{equation}
+\tfrac12\left[r_{L/2+1}(\delta) - r_{L/2-1}(\delta)\right] =
+\begin{cases}
+1 & |\delta| \le L/2-1\\
+1/2 & |\delta| = L/2 \quad\text{(Wigner--Seitz tie)}\\
+0 & \text{beyond},
+\end{cases}
+\end{equation}
+including the correct tie splitting, and satisfying the partition of unity.
+This proves that sharp centering is representable by separable
+per-configuration windowing.
+
+\subsection{Triple kernels: low-rank ALS design}
+\label{sec:design}
+
+The D3 kernel requires the two-argument target
+$M(\delta_1,\delta_2)$: the indicator of the minimal-spread image
+($\mathrm{spread} = \max(0,\delta_1,\delta_2)-\min(0,\delta_1,\delta_2)$),
+ties split --- the separable analogue of the $d_3$ centering of
+\texttt{ForceTensor}. Same-window triples provably cannot improve on the
+tent kernel, but \emph{slot-resolved} general windows have small canonical
+rank: per dimension we fit $K$ passes $(z_r, w_r, v_r)$ by alternating
+least squares so that
+\begin{equation}
+\sum_{r=1}^{K} \tfrac12\left[ S_{z_r,w_r,v_r} + S_{z_r,v_r,w_r}^{T}\right]
+\;\approx\; L\, M,
+\qquad
+\text{subject to } \sum_{\text{images}}\sum_r S_r = L
+\;\;\text{(hard partition constraint)} .
+\label{eq:design}
+\end{equation}
+The $w\!\leftrightarrow\!v$ symmetrization is realized at runtime by
+averaging the two pass orientations, which preserves the transpose symmetry
+of the two-phonon blocks and the Hermiticity of $\Ltdscha$. The fitted
+kernels are numerically \emph{exact} for the sizes relevant here
+($L=3$, $K=3$: residual $2\times10^{-16}$; $L=4$, $K=2$: $8\times10^{-12}$),
+and the partition constraint keeps the commensurate limit exact for any
+design (Fig.~\ref{fig:kernel}). In three dimensions windows and passes are
+per-dimension products ($K^3$ passes; each pass costs one kernel
+application). Origin averaging --- realized by \emph{rolling the
+configuration data} while window and phases stay fixed; a cyclic shift of
+the window itself would wrap its support with inconsistent phases --- is an
+optional pure variance reduction. The D3 terms of $\Ltdscha$ (the mutually
+adjoint pair \{$R^{(1)}\!\to d^2V$ map, $\alpha^{(1)}\!\to f$ map\}) run on
+the windowed passes; the D4 terms use a single plain-window pass (shorter
+range, smaller $\Nc/\Nf$ weight).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/kernel.pdf}
+\caption{Effective interpolation kernels on the difference lattice
+$(\delta_1,\delta_2)$ for a coarse dimension $L=4$ (single hue: darker =
+larger weight; grey crosses mark the exact-image positions of the
+minimal-image target with their tie weights). Left: plain (tent) kernel of
+the naive off-grid transform. Middle: minimal-image target = zero-padded
+centering. Right: fitted $K=2$ multitaper kernel --- indistinguishable from
+the target ($8\times10^{-12}$ RMS).}
+\label{fig:kernel}
+\end{figure}
+
+%======================================================================
+\section{Vertex renormalization $\Nc \to \Nf$}
+\label{sec:rescaling}
+
+Mode-space vertices scale with the number of cells $N$ as
+\begin{equation}
+d_3(\qv_1\nu_1, \qv_2\nu_2, \qv_3\nu_3) = \frac{1}{\sqrt N}\,
+\delta_{\qv_1+\qv_2+\qv_3, \mathbf G}\; \bar\Phi_3(\dots),
+\qquad
+d_4 = \frac{1}{N}\, \delta_{\Sigma \qv,\mathbf G}\; \bar\Phi_4,
+\end{equation}
+with intensive $\bar\Phi_n$. The coarse-ensemble estimator delivers the
+$N=\Nc$ normalization; the fine-mesh Lanczos is the operator of a
+hypothetical $\Nf$-cell supercell and requires $N=\Nf$. Hence all D3-type
+averages are rescaled by $s_3 = \sqrt{\Nc/\Nf}$ and all D4-type averages by
+$s_4 = \Nc/\Nf$ (arguments \texttt{scale3}, \texttt{scale4} of the Julia
+kernel). Consistency check on the one-loop bubble:
+$\Sigma \sim \sum_{\text{pairs}} |d_3|^2\, \chi$ has $\Nf$ pair terms of
+size $s_3^2\,\Nc^{-1}|\bar\Phi_3|^2 = \Nf^{-1}|\bar\Phi_3|^2$ ---
+intensive and identical to the direct fine calculation. The uniform
+per-order rescaling is exact up to disconnected Wick pieces
+$\propto \avg{u\otimes\delta f}$, which vanish at SSCHA stationarity;
+the ensemble should therefore be reweighted to the converged SSCHA
+dynamical matrix before interpolating. Empirically, \emph{disabling} the
+rescaling makes the anharmonic renormalization overshoot by a factor
+$\simeq \Nf/\Nc$ (pinned by a regression test), confirming both its
+presence and magnitude.
+
+%======================================================================
+\section{Field pre-filtering: interpolating $\Phi$-ranged objects}
+\label{sec:prefilter}
+
+This step proved \emph{essential}, not optional. By
+Eq.~\eqref{eq:ibp} the raw correlation carries a phonon-propagator dressing
+$\fpsi = (1+2n)/2\omega$ on \emph{every displacement leg}:
+\begin{equation}
+\avg{x(\qv_1)\, x(\qv_2)\, y(\qv_3)} =
+\fpsi(\qv_1)\,\fpsi(\qv_2)\; \bigl[\Phi^{(3)}\text{ contraction}\bigr].
+\end{equation}
+In real space the object being interpolated therefore decays with the
+\emph{propagator} range (algebraic low-$T$ tails from the acoustic
+$1/\omega \sim 1/|\qv|$ non-analyticity), not with the short range of
+$\Phi^{(3)}$. On the chain benchmark this produced a systematic factor
+$\approx 0.5$ deficit of the interpolated renormalization, shrinking only
+slowly with the coarse size. The cure exploits the structure of the kernel,
+which multiplies every displacement leg by $\fY = 1/\fpsi$ anyway:
+\begin{enumerate}
+\item apply $\fY$ \emph{on the coarse grid} per configuration (exact
+there: it strips the dressing mode by mode), rebuild the filtered
+real-space configuration, and transform \emph{that} at the fine
+wavevectors;
+\item set the kernel tables $\fY, \fpsi \to 1$ (\texttt{prefiltered} flag);
+\item fold the exact fine-side $\fpsi(\tilde\qv_1)\otimes\fpsi(\tilde\qv_2)$
+into the $\alpha^{(1)}$ blocks (the $\alpha$-contracted legs also use the
+filtered fields).
+\end{enumerate}
+On-grid this is an exact identity (the machine-precision back-compatibility
+test is unaffected); off-grid the interpolated correlations now decay with
+the range of the anharmonic force constants themselves --- the same
+locality class as tensor interpolation. All polarization vectors and
+$\chi/\fY/\fpsi$ factors are evaluated \emph{analytically at the fine}
+$\tilde\qv$ (from the centered, ASR-projected interpolation of the SSCHA
+dynamical matrix with the time-reversal gauge
+$e(-\tilde\qv) = e^*(\tilde\qv)$), so no band-structure information is
+interpolated stochastically.
+
+%======================================================================
+\section{Acoustic sum rules}
+\label{sec:asr}
+
+Centering breaks translational sum rules --- this is why
+\texttt{ForceTensor} always follows \texttt{Center()} with
+\texttt{Apply\_ASR()}. An uncorrected violation is amplified by the
+$1/\omega$ thermodynamic factors precisely at the near-$\Gamma$ fine
+wavevectors the interpolation adds. In the stochastic scheme the ASR has a
+sharper form: it holds \emph{per configuration}
+($\sum_a \delta f_a = 0$ by Newton's third law and the D2 ASR;
+zero mass-weighted centre of mass), with zero statistical noise. Windowing
+breaks exactly this (forces balance only over the whole supercell). Two
+measures are implemented:
+\begin{itemize}
+\item for (near-)uniform windows, the translation zero-modes are projected
+out of the fields with the correct mass metric: displacements lose the
+mass-weighted COM, force residuals lose the net force redistributed
+$\propto m_a$ (a plain mean subtraction would leak into optical modes for
+unequal masses). For the plain window this is exact and free.
+\item for the sign-oscillating designed windows the field-level projection
+is a rank-one modification of the effective window and would silently
+change the kernel away from the designed one (measured: a systematic
+$O(30\%)$ bias). It is therefore \emph{not} applied there: the designed
+kernels reproduce minimal-image centering, whose residual ASR status is
+that of a centered (pre-\texttt{Apply\_ASR}) tensor. Folding the ASR
+constraint into the kernel design itself (it is linear in the kernel) is
+left as future work; the interpolated dynamical matrix keeps its own exact
+D2 ASR, and small-frequency guards protect the $\chi$ factors.
+\end{itemize}
+
+%======================================================================
+\section{Implementation and cost}
+\label{sec:implementation}
+
+The implementation (branch \texttt{qspace\_interpolation}) consists of
+\texttt{Modules/QSpaceInterpolation.py}
+(\texttt{QSpaceLanczosInterp(QSpaceLanczos)}: fine mesh with $O(1)$ hash
+lookups and $O(\Nf)$ pair map, interpolated dynamical matrix, window
+design toolbox, field construction) and two Julia kernels in
+\texttt{tdscha\_qspace.jl}: a slot-resolved scalar kernel and a batched
+BLAS-3 version (chunks of configurations at fixed symmetry; the symmetry
+rotation becomes one sparse$\times$dense product per field, the
+$\alpha^{(1)}$ intermediates and the two-phonon accumulations become
+$(n_b\times n_b)(n_b\times B)$ and $(n_b\times B)(B\times n_b)$ GEMMs).
+The two kernels agree to $10^{-20}$; on the small toy ($n_b=6$) they are
+equally fast (the sparse rotation dominates), the BLAS-3 structure being
+aimed at production band counts. Cost per Lanczos iteration:
+$O(K^3\, N_I\, n_{\mathrm{sym}}\, \Nf\, n_b^2)$ --- linear in the fine
+mesh, with $K^3$ the window-pass count ($=1$ for the plain estimator).
+Measured wall times for one full application of $\Ltdscha$
+(Fig.~\ref{fig:scaling}) confirm near-linear scaling over
+$\Nf = 8 \dots 128$.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.62\linewidth]{figs/scaling.pdf}
+\caption{Wall time of one application of $\Ltdscha$ versus the fine-mesh
+size $\Nf$ (chain toy, $N_I=1000$ configurations, coarse $L_c=4$): plain
+estimator and minimal-image windows ($K{=}2$, i.e.\ five kernel passes).
+Both follow the ideal linear trend (dotted).}
+\label{fig:scaling}
+\end{figure}
+
+%======================================================================
+\section{Benchmarks}
+\label{sec:benchmarks}
+
+All benchmarks use an anharmonic diatomic chain defined by its topology
+(identical physics at every supercell length): harmonic springs
+$K_1, K_2$ per Cartesian component plus a per-bond cubic anharmonicity
+$g_3 s^3/3$ in the bond stretch, in the weak-coupling regime
+($g_3 = 0.1$, renormalizations of $5\dots40\,\mathrm{cm}^{-1}$ on
+$\sim3000\,\mathrm{cm}^{-1}$ modes). The harmonic bond force coincides with
+the SSCHA force, so the force residual is the exact anharmonic force. The
+triclinic cell has symmetry $P1$: no point-group operation can mask a
+convention error, and the mesh contains genuinely non-time-reversal-%
+invariant wavevectors ($\qv \neq -\qv$).
+
+\paragraph{Exactness checks.}
+(i) With fine mesh $=$ coarse mesh, the interpolated Lanczos reproduces the
+production \texttt{QSpaceLanczos} coefficients to $10^{-15}$ (with and
+without pre-filtering; through the batched kernel). (ii) The interpolated
+dynamical matrix reproduces the direct larger-supercell dispersion exactly
+for this strictly range-1 model. (iii) Rigid displacement shifts and
+constant force offsets leave the fields invariant (field-level ASR).
+(iv) The batched and scalar kernels agree to machine precision; the
+windowed path with trivial windows equals the plain path identically.
+
+\paragraph{Physics: interpolation vs.\ direct fine supercell.}
+Coarse $(1,1,3)$ ensembles ($N_I = 4000$) interpolated to the $(1,1,6)$
+mesh are compared against \emph{direct} $(1,1,6)$-supercell ensembles of
+the same model, mode by mode, on the anharmonic renormalization
+$\omega_{\mathrm{eff}} - \omega_{\mathrm{SSCHA}}$ (the static
+Lanczos response; absolute frequencies would hide the anharmonic signal).
+Table~\ref{tab:renorm} and Fig.~\ref{fig:renorm} summarize the aggregate
+error $\sum|\Delta_{\mathrm{int}} - \Delta_{\mathrm{dir}}| /
+\sum|\Delta_{\mathrm{dir}}|$:
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+ & aggregate error & comment\\
+\midrule
+noise floor (two direct seeds) & $0.103$ & statistical reference\\
+plain window & $0.299$ & tent-kernel bias\\
+minimal-image windows, 1 origin & $0.158$ & \\
+minimal-image windows, 3 origins & $0.122$ & at the noise floor\\
+\midrule
+plain, \emph{no} pre-filter & $\approx 2\times$ deficit & systematic
+(Sec.~\ref{sec:prefilter})\\
+plain, \emph{no} $s_3, s_4$ rescaling & $\approx 2\times$ overshoot &
+systematic (Sec.~\ref{sec:rescaling})\\
+\bottomrule
+\end{tabular}
+\caption{Aggregate renormalization error of the interpolated Lanczos
+against direct fine-supercell calculations (chain toy, $L_c=3 \to L_f=6$,
+$N_I=4000$, all 33 valid modes). The designed windows remove essentially
+all resolvable interpolation error; the last two rows document the failure
+modes that the pre-filter and the vertex rescaling correct.}
+\label{tab:renorm}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/renorm.pdf}
+\caption{Mode-resolved anharmonic renormalization on the fine $(1,1,6)$
+mesh: direct fine-supercell reference (two independent seeds indicate the
+stochastic spread) versus the interpolated Lanczos from the coarse
+$(1,1,3)$ ensemble with the plain window and with the designed
+minimal-image windows (3 origins). Vertical guides mark the interpolated
+(non-commensurate) wavevectors, including the non-TRI pair
+$q = \pm 1/6$.}
+\label{fig:renorm}
+\end{figure}
+
+%======================================================================
+\section{Example application: spectral functions at interpolated $q$ and
+the standard $d_3$ bubble}
+\label{sec:bubble}
+
+As an end-to-end application we compute one-phonon spectral functions at
+wavevectors that do not exist on the coarse mesh and compare with the
+\emph{standard} $d_3$ dynamic bubble of
+\texttt{cellconstructor.Spectral.get\_diag\_dynamic\_bubble}: the
+third-order tensor route (here fed with the \emph{exact analytic}
+$\Phi^{(3)}$ of the bond model, centered and ASR-projected, interpolated by
+\texttt{ForceTensor.Tensor3}), with the same $k$-integration mesh as the
+Lanczos fine mesh and the same smearing. The toy is purely cubic and weakly
+coupled, so the perturbative bubble and the (resummed) TDSCHA Lanczos
+should agree closely; the Lanczos runs with the D4 terms disabled to match
+the diagram content. Figure~\ref{fig:bubble} shows the interpolated-Lanczos
+spectral functions on top of the bubble ones at interpolated wavevectors of
+the $(1,1,16)$ mesh from a coarse $(1,1,4)$ ensemble ($N_I = 8000$): peak
+positions and line shapes agree at the level of the energy-grid resolution
+($\approx\SI{2.3}{cm^{-1}}$), on anharmonic shifts of
+$15\dots40\,\mathrm{cm}^{-1}$:
+
+\begin{center}
+\begin{tabular}{ccccc}
+\toprule
+$q$ & band & $\omega_{\mathrm{SSCHA}}$ & peak (Lanczos interp) &
+peak ($d_3$ bubble)\\
+ & & (\si{cm^{-1}}) & (\si{cm^{-1}}) & (\si{cm^{-1}})\\
+\midrule
+$2/16$ & 4 & 2205.3 & 2185.6 & 2183.2\\
+$2/16$ & 5 & 2250.6 & 2214.2 & 2216.6\\
+$6/16$ & 4 & 2013.4 & 1994.9 & 1992.5\\
+$6/16$ & 5 & 2058.5 & 2040.2 & 2040.2\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/bubble.pdf}
+\caption{One-phonon spectral functions at interpolated wavevectors
+($q = 2/16$ and $6/16$ along the chain, two optical bands): fine-mesh
+TDSCHA Lanczos interpolated from the coarse $(1,1,4)$ ensemble
+(minimal-image windows) versus the standard $d_3$ dynamic bubble of
+\texttt{cellconstructor.Spectral} with the exact centered $\Phi^{(3)}$
+tensor on the same $k$-mesh and smearing. The SSCHA frequency is marked.}
+\label{fig:bubble}
+\end{figure}
+
+%======================================================================
+\section{Limitations and outlook}
+\label{sec:outlook}
+
+(i) Long-range (polar) parts of $\Phi^{(3)}$ are not separated
+analytically (the same limitation as the $d_3$ route of
+\texttt{Spectral.py}); LO--TO for the interpolated dynamical matrix is
+phase-2 work. (ii) The fine mesh adds no new microscopic information: noise
+at nearby fine wavevectors is correlated over the coarse-mesh spacing, and
+the genuine $q$-resolution of the \emph{anharmonic} content is set by the
+coarse supercell --- the physical gain is the dense two-phonon continuum
+and the interpolated harmonic dispersion. (iii) The ASR for the designed
+windows is inherited from minimal-image centering rather than enforced;
+folding it into the kernel design is future work. (iv) The distributed
+(MPI config-sliced) loader and the IR/Raman $\sqrt{\Nf}$ prefactor for the
+interpolated class remain to be wired. (v) Off-mesh perturbation
+wavevectors (spectral maps along arbitrary paths with little-group
+symmetrization) are a natural extension: all required machinery
+(NUDFT at arbitrary $\tilde\qv$) is already in place.
+
+\appendix
+\section{Derivation of the effective interpolation kernel}
+\label{app:kernel}
+
+We derive Eq.~\eqref{eq:kernel} in one dimension (the three-dimensional
+case is the per-dimension product). Let $u(s)$, $s \in \mathbb{Z}$, be the
+supercell-periodic configuration, $u(s+L) = u(s)$, and let the windowed
+field at wavevector $\tilde q$ (in units where the phase is
+$e^{-2\pi i \tilde q s}$) be
+\begin{equation}
+\tilde x_W(\tilde q) = \frac{1}{\sqrt L} \sum_{s} W(s)\,
+e^{-2\pi i \tilde q s}\, u(s),
+\end{equation}
+with $W$ supported on one period ($W=1$ on $[0,L)$ for the plain
+estimator). Consider the three-field product with windows $(z, w, v)$ on
+the slots and exact conservation $\tilde q_1 + \tilde q_2 = \tilde q_p$:
+\begin{equation}
+P = \overline{\tilde z(\tilde q_p)}\; \tilde x_w(\tilde q_1)\,
+\tilde y_v(\tilde q_2)
+= \frac{1}{L^{3/2}} \sum_{s_1 s_2 s_3} z(s_3) w(s_1) v(s_2)\,
+e^{2\pi i (\tilde q_p s_3 - \tilde q_1 s_1 - \tilde q_2 s_2)}\,
+\bar u(s_3) u(s_1) \delta\!f(s_2).
+\end{equation}
+Taking the ensemble average and using translation invariance,
+$\avg{\bar u(s_3) u(s_1) \delta\!f(s_2)} = c_3(s_1 - s_3,\, s_2 - s_3)$
+with $c_3$ evaluated at the \emph{actual} integer differences (the
+physical correlation of the periodic system, which itself is the image
+sum $c_3(\delta_1,\delta_2) = \sum_{n_1 n_2}
+c_3^{\infty}(\delta_1 + n_1 L, \delta_2 + n_2 L)$ of the bulk
+correlation). Substituting $\delta_i = s_i - s_3$ and using
+$\tilde q_p - \tilde q_1 - \tilde q_2 = 0$ \emph{exactly}, the $s_3$
+dependence of the phase cancels:
+\begin{equation}
+\avg{P} = \frac{1}{L^{3/2}} \sum_{\delta_1 \delta_2}
+\underbrace{\Bigl[\sum_{s_3} z(s_3)\, w(s_3+\delta_1)\, v(s_3+\delta_2)
+\Bigr]}_{S_{z,w,v}(\delta_1,\delta_2)}
+\; c_3(\delta_1, \delta_2)\;
+e^{-2\pi i(\tilde q_1 \delta_1 + \tilde q_2 \delta_2)}.
+\label{eq:appkernel}
+\end{equation}
+Because the windows are zero-padded (support $\le L$), the differences
+$\delta_i$ range over $(-L, L)$ and each \emph{physical} image of
+$c_3^{\infty}$ is weighted by $S$ at its actual (unwrapped) difference and
+carries its actual phase --- this is where the centering choice lives. Two
+consequences:
+\begin{itemize}
+\item \textbf{Commensurate limit.} If $\tilde q_i$ are commensurate, all
+images of a difference class $(\delta_1, \delta_2) \bmod L$ share the same
+phase, so only the class sums $\sum_{\mathbf n} S(\delta + L\mathbf n)$
+matter. If they equal $L$ (partition of unity), Eq.~\eqref{eq:appkernel}
+collapses to the exact coarse average --- for \emph{any} window design
+satisfying the constraint. The plain window satisfies it identically
+($S = L - \mathrm{spread}$, class sums $= L$).
+\item \textbf{Off-grid.} The kernel $S/L$ is the image-assignment rule of
+the interpolation. The minimal-image target of
+Sec.~\ref{sec:design} makes it the indicator of the most compact image
+(ties split), reproducing zero-padded tensor centering.
+\end{itemize}
+The same algebra applies verbatim to every D3 term (the $y$ field can sit
+in any slot) and, with one more field, to the D4 terms, whose kernel is the
+window quadruple correlation. Note also that no origin appears in
+Eq.~\eqref{eq:appkernel}: translating the window (equivalently, rolling
+the data) leaves the expectation invariant, so origin averaging only
+reduces variance.
+
+\section{Gaussian integration by parts and the pre-filter identity}
+\label{app:ibp}
+
+For the Gaussian density $\rho_\Upsilon$ with covariance
+$\avg{u_a u_b} = \Upsilon^{-1}_{ab}$, Wick/Isserlis integration by parts
+gives, for any observable $F(u)$,
+$\avg{u_a F} = \Upsilon^{-1}_{ab} \avg{\partial F/\partial u_b}$.
+Applying it twice to the D3 average (with
+$\delta f = f - f_{\mathrm{SSCHA}} - \avg{f}$, whose second derivative
+equals that of the full force $f = -\partial V/\partial R$):
+\begin{equation}
+\avg{u_a\, u_b\, \delta f_c}
+= \Upsilon^{-1}_{ab} \underbrace{\avg{\delta f_c}}_{=0}
++ \Upsilon^{-1}_{aa'} \Upsilon^{-1}_{bb'}
+\avg{\frac{\partial^2 \delta f_c}{\partial u_{a'} \partial u_{b'}}}
+= -\,\Upsilon^{-1}_{aa'} \Upsilon^{-1}_{bb'}
+\avg{\partial^3_{a'b'c} V}.
+\end{equation}
+In the SSCHA mode basis $\Upsilon^{-1}$ is diagonal with eigenvalues
+$\fpsi(\qv,\nu) = (1+2n_{\qv\nu})/2\omega_{\qv\nu}$: every
+\emph{displacement} leg of the correlation carries a propagator factor
+$\fpsi$, while force legs carry none. Since the Lanczos kernel multiplies
+every displacement leg by $\fY = 1/\fpsi$ (the $r_1 = \fY x$ fields), the
+combination it averages is the \emph{bare} vertex contraction. The
+pre-filter of Sec.~\ref{sec:prefilter} simply moves the $\fY$
+multiplication \emph{before} the off-grid transform: on the coarse grid
+$\fY x$ is computed exactly (mode-diagonal), and its real-space transform
+is a configuration whose correlations with $y$ are contractions of the
+short-ranged $\Phi^{(3)}$ (in the Cartesian basis, before any polarization
+projection --- the projections are applied at the fine wavevectors
+analytically). Off-grid, interpolating the filtered fields therefore
+interpolates a $\Phi$-ranged object; the exact fine-side factors
+$\fpsi(\tilde\qv)$ that the kernel formulas still require are supplied
+analytically (folded into the $\alpha^{(1)}$ blocks and set to unity in
+the kernel tables).
+
+For the four-field averages the same expansion produces, besides the
+connected $\avg{\partial^4 V}$ term, disconnected pieces proportional to
+$\avg{u \otimes \delta f} = \Upsilon^{-1}(\avg{\partial^2 V} - \Phi)$,
+which vanish when $\Phi$ is the converged SSCHA matrix. This is the
+stationarity condition under which the uniform vertex rescaling of
+Sec.~\ref{sec:rescaling} is exact.
+
+\section{Reproducibility}
+All numbers and figures in this report are produced by the scripts in
+\texttt{tests/test\_interpolation/} (toy model and physics tests) and the
+benchmark/figure scripts referenced in the repository; the decisive
+physics comparisons are enforced as regression tests
+(\texttt{test\_physics\_interp.py}, \texttt{test\_windows.py}).
+
+\begin{thebibliography}{9}
+\bibitem{tdscha} L.~Monacelli and F.~Mauri,
+\emph{Time-dependent self-consistent harmonic approximation},
+Phys.\ Rev.\ B \textbf{103}, 104305 (2021).
+\bibitem{qspace} TDSCHA $q$-space Lanczos implementation,
+\texttt{tdscha.QSpaceLanczos} (this repository).
+\bibitem{bianco} R.~Bianco et al., Phys.\ Rev.\ B \textbf{97}, 214101
+(2018) (dynamic bubble conventions used by
+\texttt{cellconstructor.Spectral}).
+\end{thebibliography}
+
+\end{document}

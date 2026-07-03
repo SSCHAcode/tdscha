@@ -10,14 +10,26 @@
   Tests in `tests/test_interpolation/` (V0 machine-precision identity, unit tests,
   physics validation vs a direct fine-supercell ensemble incl. non-TRI q,
   scale-factor necessity test, ASR field-invariance test).
-- Measured on the bond-anharmonic chain toy (coarse L=3 -> fine L=6, N=4000):
-  noise floor ~10 percent, plain-window interpolation error ~30 percent aggregate on
-  the renormalization; no systematic factor. The residual is the tent-kernel bias
-  on the (now Phi3-ranged) correlations — exactly what the M3 designed windows
-  (section 5.2) are for.
-- TODO: M3 designed windows, LO-TO, BLAS-3 batched kernel, off-mesh q_pert,
-  IR/Raman prefactor for the fine mesh, distributed-mode support for the
-  interpolated class.
+- DONE (M3): designed multitaper windows (`window_design="minimal_image"`):
+  slot-resolved ALS designs (numerically exact minimal-image kernels for L=3, K=3
+  and L=4, K=2 with hard partition-of-unity constraints), slot-resolved Julia
+  kernel with w<->v orientation averaging, origin averaging by data permutation.
+  Measured (chain toy, Lc=3 -> Lf=6, N=4000): noise floor 0.103, plain 0.299,
+  windows 0.158, windows + 3 origins 0.122 — the designed windows reach the
+  statistical noise floor. IMPORTANT deviations from the original plan found
+  during implementation: (a) the window-weighted per-config ASR projection is a
+  rank-one modification of the effective window and BIASES the designed kernels
+  (~30% on the toy) — it is applied only to (near-)uniform windows; design-level
+  ASR remains future work; (b) origin shifts must permute the DATA, not
+  cyclically shift the window (support wrap destroys the kernel).
+- DONE (M4): batched BLAS-3 slot kernel (sparse x dense rotations + GEMM
+  accumulations, chunked over configs at fixed symmetry), equivalent to the
+  scalar kernel at 1e-20; near-linear wall-time scaling measured N_f = 8..128.
+- DONE: report/interpolation/main.tex (full math, derivation appendices,
+  benchmarks, example application vs the standard Spectral.py d3 bubble: peak
+  agreement within the energy-grid step at interpolated q).
+- TODO: LO-TO, off-mesh q_pert, IR/Raman sqrt(N_f) prefactor, distributed-mode
+  support, design-level ASR for windows, KPM variant (M5, skipped by decision).
 
 **Goal.** Run the full q-space TDSCHA Lanczos (`Modules/QSpaceLanczos.py` +
 `Modules/tdscha_qspace.jl`) on a **fine** q-mesh not commensurate with the supercell of
