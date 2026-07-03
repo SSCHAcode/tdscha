@@ -3,7 +3,7 @@ Also: batched vs scalar kernel speedup at fixed size.
 Writes JSON for the report figures."""
 import os, sys, time, json
 os.environ.setdefault("JULIA_NUM_THREADS", "1")
-sys.path.insert(0, "os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "test_interpolation")")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "test_interpolation"))
 import numpy as np
 import _toy_chain as TC
 import tdscha.QSpaceInterpolation as QI

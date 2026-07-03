@@ -41,7 +41,14 @@ stochastic estimator of the anharmonic vertices. The scheme costs
 $O(\Nf)$ per Lanczos iteration, is exact at commensurate wavevectors by
 construction, and reduces to designable ``stochastic centering'' kernels
 that reproduce the minimal-image (zero-padded) centering of tensor
-interpolation. We derive the method, prove its equivalence with
+interpolation. We further show that the acoustic sum rule of the
+interpolated vertex maps onto linear image-sum constraints on the kernel,
+and construct doubled-support windows with exactly uniform class sums for
+which centering, the acoustic sum rule, the commensurate limit and the
+permutation symmetrization all hold simultaneously in a \emph{single}
+constrained fit --- where tensor space requires the iterative
+\texttt{Apply\_ASR}/symmetrization alternation of
+\texttt{ForceTensor}. We derive the method, prove its equivalence with
 centered-tensor interpolation, validate it against direct fine-supercell
 calculations on an anharmonic chain model, and demonstrate agreement with
 the standard $d_3$ dynamic-bubble spectral functions of
@@ -332,7 +339,8 @@ $e(-\tilde\qv) = e^*(\tilde\qv)$), so no band-structure information is
 interpolated stochastically.
 
 %======================================================================
-\section{Acoustic sum rules}
+\section{Acoustic sum rules: a one-shot centering + ASR + symmetrization
+construction}
 \label{sec:asr}
 
 Centering breaks translational sum rules --- this is why
@@ -342,25 +350,274 @@ $1/\omega$ thermodynamic factors precisely at the near-$\Gamma$ fine
 wavevectors the interpolation adds. In the stochastic scheme the ASR has a
 sharper form: it holds \emph{per configuration}
 ($\sum_a \delta f_a = 0$ by Newton's third law and the D2 ASR;
-zero mass-weighted centre of mass), with zero statistical noise. Windowing
-breaks exactly this (forces balance only over the whole supercell). Two
-measures are implemented:
+zero mass-weighted centre of mass), with zero statistical noise, and
+windowing breaks exactly this (forces balance only over the whole
+supercell). This section derives what the ASR means for the interpolation
+kernel $S$, proves that one-period windows cannot satisfy it, and
+constructs a window family for which centering, the acoustic sum rule,
+the exact commensurate limit and the permutation symmetrization all hold
+\emph{simultaneously, by construction, in a single constrained fit} ---
+in deliberate contrast with the tensor-space route, where
+\texttt{Tensor3.Apply\_ASR} spoils the permutation symmetry and the two
+projections must be alternated iteratively to a fixed point.
+
+\subsection{What the ASR means at the kernel level}
+\label{sec:asr-kernel}
+
+The coarse-periodic correlation inherits the exact sum rules of
+$\Phi^{(3)}$ under mesh folding as \emph{period-sum rules}: per dimension
+of length $L$,
+\begin{equation}
+\sum_{d=0}^{L-1} \phi_{\rm per}(d, \cdot) = 0, \qquad
+\sum_{d=0}^{L-1} \phi_{\rm per}(\cdot, d) = 0, \qquad
+\sum_{d=0}^{L-1} \phi_{\rm per}(d, d+\Delta) = 0 \;\;\forall\Delta,
+\label{eq:periodasr}
+\end{equation}
+(the third is the sum over the \emph{first} tensor index, which runs
+along diagonals in difference coordinates). By Eq.~\eqref{eq:kernel} the
+interpolated object is $S\,\phi_{\rm per}$ on the extended difference
+grid, so it satisfies the ASR \emph{for every} $\phi_{\rm per}$ allowed
+by Eq.~\eqref{eq:periodasr} if and only if the kernel's image sums are
+constant on each class:
+\begin{align}
+\text{(ASR-$v$)}\quad & \textstyle\sum_b S(\delta_1,\, d_2 + bL)
+  \;\;\text{independent of } d_2 \text{ for every fixed } \delta_1,
+  \nonumber\\
+\text{(ASR-$w$)}\quad & \textstyle\sum_a S(d_1 + aL,\, \delta_2)
+  \;\;\text{independent of } d_1 \text{ for every fixed } \delta_2,
+  \label{eq:asrkernel}\\
+\text{(ASR-$z$)}\quad & \textstyle\sum_b S(d + bL,\, d + \Delta + bL)
+  \;\;\text{independent of } d \text{ for every fixed } \Delta.
+  \nonumber
+\end{align}
+These are \emph{linear} constraints on $S$, of exactly the same kind as
+the partition of unity --- in fact they strengthen it: (ASR-$v$) +
+(ASR-$w$) make the total class sum a single constant, so the commensurate
+limit reduces to one normalization. Two immediate consequences:
 \begin{itemize}
-\item for (near-)uniform windows, the translation zero-modes are projected
-out of the fields with the correct mass metric: displacements lose the
-mass-weighted COM, force residuals lose the net force redistributed
-$\propto m_a$ (a plain mean subtraction would leak into optical modes for
-unequal masses). For the plain window this is exact and free.
-\item for the sign-oscillating designed windows the field-level projection
-is a rank-one modification of the effective window and would silently
-change the kernel away from the designed one (measured: a systematic
-$O(30\%)$ bias). It is therefore \emph{not} applied there: the designed
-kernels reproduce minimal-image centering, whose residual ASR status is
-that of a centered (pre-\texttt{Apply\_ASR}) tensor. Folding the ASR
-constraint into the kernel design itself (it is linear in the kernel) is
-left as future work; the interpolated dynamical matrix keeps its own exact
-D2 ASR, and small-frequency guards protect the $\chi$ factors.
+\item The plain (tent) kernel satisfies Eq.~\eqref{eq:asrkernel}
+exactly (its per-configuration sum rules are inherited untouched): the
+baseline estimator is ASR-clean everywhere.
+\item The \emph{minimal-image kernel violates
+Eq.~\eqref{eq:asrkernel}} --- the kernel-space restatement of ``centering
+destroys the sum rule'', i.e.\ the very reason \texttt{Apply\_ASR}
+exists. No admissible kernel that is exactly minimal-image can be
+ASR-exact at compact support.
 \end{itemize}
+
+\subsection{A no-go theorem for one-period windows}
+\label{sec:nogo}
+
+A window $w$ supported on one period has class sums
+$\bar W(d) = w(d)$: \emph{uniform class sums are equivalent to the plain
+window}. Since uniform class sums of the $v$ ($w$) window imply
+(ASR-$v$) ((ASR-$w$)) identically for arbitrary companion windows
+[$\sum_b S(\delta_1, d_2{+}bL) = \bar V \sum_s z(s) w(s{+}\delta_1)$],
+and conversely the sign-oscillating designed windows of
+Sec.~\ref{sec:design} necessarily have non-uniform class sums, the
+$M3$ designs cannot inherit the ASR at the kernel level. Nor can a
+per-configuration field projection rescue them: subtracting the
+window-weighted zero mode is a rank-one modification of the effective
+window, i.e.\ it silently changes the kernel away from the designed one
+(measured on the toy: a systematic $O(30\%)$ bias in the
+renormalizations). This is the structural obstruction behind the
+``projection only for uniform windows'' gate of the $M3$ implementation.
+
+\subsection{The one-shot construction: doubled support, uniform class
+sums}
+\label{sec:asrdesign}
+
+The obstruction disappears once the windows live on \emph{two} periods
+(support $2L$, applied to the periodically continued configuration with
+the true, non-periodic Bloch phases --- genuine zero-padding, the same
+move that makes tensor centering possible). Parameterize every window
+exactly on the constraint manifold,
+\begin{equation}
+w(d) = h(d), \qquad w(d+L) = c_w - h(d), \qquad d = 0 \ldots L-1,
+\label{eq:manifold}
+\end{equation}
+with $h \in \mathbb{R}^L$ and $c_w$ free: the class sums
+$\bar W(d) = c_w$ are uniform \emph{by parameterization, not by penalty},
+and the family contains both oscillating windows and the plain one
+($h \equiv 1$, $c_w = 1$). On this manifold:
+\begin{enumerate}
+\item (ASR-$v$) and (ASR-$w$) hold identically; (ASR-$z$) is found to
+hold automatically for every fitted design ($10^{-15}$, no extra
+constraint needed).
+\item Every per-pass kernel has \emph{identical} class sums
+$L\, c_z c_w c_v$, so the full partition of unity ($L^2$ constraints)
+collapses to the single scalar equation $\sum_r c^r_z c^r_w c^r_v = 1$,
+enforced as a hard KKT row in each ALS slot fit: the commensurate limit
+is exact to machine precision. Indeed at commensurate $\tilde q$ the
+second-period Bloch phase is $1$, each pass collapses to (class-sum
+product)\,$\times$\,plain \emph{configuration by configuration}, and the
+pass sum reproduces the plain estimator exactly (verified at
+$10^{-22}$).
+\item At $\tilde q = 0$ the effective weight is the constant class sum,
+so the acoustic contraction vanishes \emph{per configuration with zero
+statistical noise} --- the coarse-estimator mechanism restored. No field
+projection is needed or applied.
+\item The $w\!\leftrightarrow\!v$ symmetrization is part of the kernel
+definition (orientation averaging), so it commutes with everything above.
+\end{enumerate}
+This is why a single projection suffices here while tensor space needs an
+iteration: all the constraints are simultaneous \emph{linear} conditions
+on a tiny object (the kernel, $O(L^2)$ numbers parameterized by $3K$
+windows), and the symmetrization is structural rather than a competing
+projector.
+
+What should such windows be fitted to? Not the minimal-image kernel ---
+it violates Eq.~\eqref{eq:asrkernel}. The correct target is its
+\emph{projection onto the ASR-constraint subspace}, computed once in
+closed form; the projection distance is the irreducible price of an
+exact ASR at compact support, the precise analogue of the modification
+\texttt{Apply\_ASR} imposes on a centered tensor:
+\begin{center}
+\begin{tabular}{lccc}
+\hline
+RMS distance $L M \to$ projection & $L=3$ & $L=4$ & $L=6$ \\
+\hline
+support $2L$ & 0.144 & 0.248 & 0.374 \\
+support $3L$ & 0.072 & 0.127 & 0.193 \\
+plain (tent) kernel, for scale & 0.315 & 0.462 & --- \\
+\hline
+\end{tabular}
+\end{center}
+The fitted windows realize the projected target almost exactly
+(residual $0.028$ at $L=3$, $K=3$; $0.071$ at $L=4$): the multilinear
+window parameterization costs essentially nothing, and enlarging the
+support buys further centering fidelity at unchanged (exact) ASR.
+Figure~\ref{fig:asrkernel} shows the three kernels. Like
+\texttt{Apply\_ASR(power=...)}, which chooses how to spread the ASR
+correction over the tensor, an optional metric weight
+$\rho^{\,\mathrm{spread}}$ in the projection concentrates kernel fidelity
+at short range, pushing the irreducible residual to differences where the
+physical $\Phi^{(3)}$ has decayed (\texttt{window\_decay} parameter; the
+larger far-range kernel entries cost variance, and on the short-ranged
+toy the unweighted metric is measurably better,
+Table~\ref{tab:renorm} --- treat $\rho<1$ as a knob for genuinely
+longer-ranged tensors). At
+runtime a doubled-support window on the $L$-periodic data is a per-$q$
+complex effective weight,
+$\hat w_{\tilde q}(s) = w(s) + w(s{+}L)\, e^{-2\pi i \tilde q \cdot L
+\mathbf{a}}$ per dimension: no change to the Julia kernels at all.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/asr_kernel.pdf}
+\caption{One-shot ASR-exact centering at $L=3$ (diverging scale, red
+positive / blue negative; grey crosses = exact-image positions). Left:
+minimal-image target, which violates the kernel sum rules
+Eq.~\eqref{eq:asrkernel}. Middle: its closed-form projection onto the
+ASR + partition subspace. Right: kernel realized by $K=3$
+doubled-support window passes with exactly uniform class sums ---
+partition, all three sum rules and the $w\!\leftrightarrow\!v$ symmetry
+hold at $10^{-15}$ simultaneously.}
+\label{fig:asrkernel}
+\end{figure}
+
+\subsection{Where the leak actually bites, and validation}
+\label{sec:asrleak}
+
+Contracting each kernel with an exact ASR-satisfying test tensor gives
+the leak \emph{deterministically} (Fig.~\ref{fig:asrleak}, left): the
+translation contraction of the interpolated vertex on the acoustic leg
+$\tilde q_2 \to 0$ at fixed partner $\tilde q_1$. Two structural facts
+emerged that reshape where one should look for ASR artifacts:
+\begin{itemize}
+\item \emph{The leak vanishes when both pair legs go to $\Gamma$
+together} ($q_p = 0$): the minimal-image violation carries phases that
+cancel at $\tilde q_1 \to 0$, and it re-vanishes at every commensurate
+$\tilde q_1$. The dangerous channel is an acoustic leg at fixed
+\emph{finite} $\tilde q_1$ --- physically, a finite-$q$ phonon emitting a
+near-$\Gamma$ acoustic phonon, exactly the process that builds the
+two-phonon continuum edge. There the minimal-image leak is $O(1)$ on the
+natural scale of the tensor (Fig.~\ref{fig:asrleak}, left).
+\item \emph{Pairwise potentials are structurally immune.} At $L=3$ the
+violating image weights multiply only tensor entries whose three legs
+span three distinct cells; a two-body (bond) potential populates only
+two-site entries, so the contraction is identically zero. This is why
+the $M3$ benchmarks (nearest-neighbour bond toy) never showed ASR
+artifacts --- and why real crystals, whose $\Phi^{(3)}$ generically has
+three-site entries, will. The validation toy therefore adds a three-body
+term $g_{3b}\, s_1^2 s_2$ spanning three cells.
+\end{itemize}
+The stochastic estimator confirms the picture quantitatively
+(Fig.~\ref{fig:asrleak}, right; three-body-dominated chain, $L_c = 3$,
+fine mesh $48$, perturbation at $q_p = 1/2$): as the acoustic partner
+$\tilde q_2 \to 0$ the plain and ASR-design vertices vanish linearly
+while the minimal-image one saturates at a plateau $\approx 7.6\times$
+the plain value at the smallest probed $\tilde q_2 = 1/48$. The
+interpolated dynamical matrix keeps its own exact D2 ASR throughout
+(\texttt{Tensor2} centering + ASR), so the $\chi$ factors and the vertex
+vanish at the same points.
+
+\subsection{Response-level validation: leak versus resolution}
+\label{sec:asrresponse}
+
+At the level of the full static response (Lanczos observable
+$\omega_{\rm eff} = \sqrt{-1/[M^{-1}]_{00}}$, three-body toy,
+$g_{3b}{=}0.08$) two \emph{independent} error channels separate cleanly:
+
+\emph{(i) Under-resolved centering.} At $L_c = 3$ a spread-2 tensor sits
+exactly \emph{on} the Wigner--Seitz tie boundary: the image assignment is
+Nyquist-ambiguous, and no compact-support kernel --- centered,
+ASR-projected or otherwise --- can resolve it. All oscillating designs
+then redistribute $O(1)$ tensor weight with wrong phases and fail
+catastrophically at strong coupling: aggregate renorm error 369.6
+cm$^{-1}$ for minimal-image (with 6 modes returning spurious
+non-negative-definite responses) and $\approx 300$ cm$^{-1}$ for the ASR
+designs (8 such modes), against a two-seed noise floor of 48.1 and
+\emph{plain} at 50.6 with no failures. This is a centering-resolution
+failure, not an ASR one: the designed windows inherit exactly the
+locality assumption of \texttt{ForceTensor} centering (third-order range
+strictly inside the WS cell), and when it is violated the benign tent is
+the only safe kernel.
+
+\emph{(ii) The ASR leak, at resolvable range.} At $L_c = 5$ (tensor
+interior to the WS cell) the roles invert --- near-$\Gamma$ interpolated
+modes, renormalization in cm$^{-1}$ against a direct $L_f = 10$
+ensemble:
+\begin{center}
+\begin{tabular}{lcccc}
+\hline
+mode & direct & plain & minimal-image & ASR design \\
+\hline
+$\tilde q = 1/10$, acoustic & $-56$ & spurious $g>0$ & $-77$ & $-92$ \\
+$\tilde q = 1/10$, optical  & $-28$ & $-35$  & $-31$ & $-34$ \\
+$\tilde q = 3/10$, acoustic & $-413$ & $-234$ & $-396$ & $-407$ \\
+$\tilde q = 3/10$, optical  & $-793$ & $-341$ & $-733$ & $-752$ \\
+\hline
+\end{tabular}
+\end{center}
+Here the \emph{plain} kernel is the broken one: the tent bias halves the
+large renormalizations and flips a near-soft acoustic mode to a spurious
+non-negative-definite response, while minimal-image and ASR designs both
+track the reference, the ASR design closest on the strongly renormalized
+modes --- with the qualitative difference that its vertex is exactly
+ASR-clean, whereas the minimal-image plateau of Fig.~\ref{fig:asrleak}
+is structural and gains weight as the fine mesh densifies the
+$\Gamma$ neighbourhood. The practical rule is then simple: \emph{if the
+coarse cell resolves the third-order range, use the ASR design
+(minimal-image centering quality without the acoustic time bomb); if it
+does not, no designed window is admissible and the plain estimator is
+the correct fallback.} On the original pairwise toy the ASR design keeps
+the designed-window precision (Sec.~\ref{sec:benchmarks}).
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/asr_leak.pdf}
+\caption{Left: deterministic kernel-level acoustic leak $|T(\tilde
+q_1)|$ (translation contraction of the interpolated three-body test
+tensor on the $\tilde q_2 \to 0$ leg, normalized to the largest tensor
+entry). The minimal-image kernel leaks $O(1)$ at generic $\tilde q_1$,
+vanishing only at $\Gamma$ and at the commensurate point $1/3$; the
+plain and ASR-design kernels are exactly zero everywhere. Right: the
+same channel probed with the stochastic estimator ($N_I = 4000$,
+$q_p = 1/2$): the minimal-image acoustic vertex saturates (ASR leak)
+while plain and ASR designs vanish with $\tilde q_2$.}
+\label{fig:asrleak}
+\end{figure}
 
 %======================================================================
 \section{Implementation and cost}
@@ -440,6 +697,9 @@ noise floor (two direct seeds) & $0.103$ & statistical reference\\
 plain window & $0.299$ & tent-kernel bias\\
 minimal-image windows, 1 origin & $0.158$ & \\
 minimal-image windows, 3 origins & $0.122$ & at the noise floor\\
+ASR design, 3 origins (Sec.~\ref{sec:asr}) & $0.150$ & exact ASR, no
+precision lost\\
+ASR design + decay weight $\rho{=}0.4$ & $0.196$ & \\
 \midrule
 plain, \emph{no} pre-filter & $\approx 2\times$ deficit & systematic
 (Sec.~\ref{sec:prefilter})\\
@@ -528,9 +788,12 @@ phase-2 work. (ii) The fine mesh adds no new microscopic information: noise
 at nearby fine wavevectors is correlated over the coarse-mesh spacing, and
 the genuine $q$-resolution of the \emph{anharmonic} content is set by the
 coarse supercell --- the physical gain is the dense two-phonon continuum
-and the interpolated harmonic dispersion. (iii) The ASR for the designed
-windows is inherited from minimal-image centering rather than enforced;
-folding it into the kernel design is future work. (iv) The distributed
+and the interpolated harmonic dispersion. (iii) The ASR-exact design
+(Sec.~\ref{sec:asr}) enforces only the translational sum rules, like
+\texttt{Apply\_ASR}; rotational/Born--Huang invariances are not imposed,
+and the doubled-support fit realizes the projected target with a small
+residual (Sec.~\ref{sec:asrdesign}) that larger supports reduce
+systematically. (iv) The distributed
 (MPI config-sliced) loader and the IR/Raman $\sqrt{\Nf}$ prefactor for the
 interpolated class remain to be wired. (v) Off-mesh perturbation
 wavevectors (spectral maps along arbitrary paths with little-group
@@ -648,9 +911,12 @@ Sec.~\ref{sec:rescaling} is exact.
 \section{Reproducibility}
 All numbers and figures in this report are produced by the scripts in
 \texttt{tests/test\_interpolation/} (toy model and physics tests) and the
-benchmark/figure scripts referenced in the repository; the decisive
-physics comparisons are enforced as regression tests
-(\texttt{test\_physics\_interp.py}, \texttt{test\_windows.py}).
+benchmark/figure scripts referenced in the repository
+(\texttt{report/interpolation/scripts/}, including \texttt{asr\_data.py}
+and \texttt{asr\_figs.py} for Sec.~\ref{sec:asr}); the decisive physics
+comparisons are enforced as regression tests
+(\texttt{test\_physics\_interp.py}, \texttt{test\_windows.py},
+\texttt{test\_asr\_windows.py}).
 
 \begin{thebibliography}{9}
 \bibitem{tdscha} L.~Monacelli and F.~Mauri,

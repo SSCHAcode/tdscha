@@ -81,6 +81,20 @@ def get_bonds(super_struct, unit, L):
     return bonds
 
 
+def get_triplets(super_struct, unit, L):
+    """A-atom triplets (A(n), A(n+1), A(n+2)) for the three-body term."""
+    itau = super_struct.get_itau(unit) - 1
+    r_lat = super_struct.coords - unit.coords[itau]
+    frac = np.linalg.solve(unit.unit_cell.T, r_lat.T).T
+    n_z = np.round(frac[:, 2]).astype(int) % L
+    idx_A = {}
+    for k in range(super_struct.N_atoms):
+        if itau[k] == 0:
+            idx_A[n_z[k]] = k
+    return [(idx_A[n], idx_A[(n + 1) % L], idx_A[(n + 2) % L])
+            for n in range(L)]
+
+
 def build_dyn(L):
     """Harmonic spring-chain dyn on the (1, 1, L) supercell."""
     unit = build_unit_structure()
@@ -110,7 +124,7 @@ def build_dyn(L):
     return dyn
 
 
-def make_ensemble(dyn, T, N, seed=0, g3=0.6, g4=0.0):
+def make_ensemble(dyn, T, N, seed=0, g3=0.6, g4=0.0, g3b=0.0):
     """SSCHA ensemble with deterministic bond anharmonicity.
 
     forces = harmonic bond force + anharmonic bond force. The harmonic part
@@ -120,6 +134,15 @@ def make_ensemble(dyn, T, N, seed=0, g3=0.6, g4=0.0):
     With g4=0 (default) the model is purely cubic: <d^2 V_anh> = D3 <u> = 0,
     so the SSCHA stationarity assumed by the vertex rescaling holds exactly
     in expectation (Interpolation_plan.md section 6.3).
+
+    g3b adds a THREE-BODY cubic term per cell and Cartesian component,
+        V_3b = g3b * s1^2 * s2,
+        s1 = uA(n+1) - uA(n),  s2 = uA(n+2) - uA(n+1),
+    whose Phi3 entries span three distinct cells. This matters for ASR
+    tests: a pairwise potential only populates tensor entries whose legs
+    sit on two sites, and (at L=3) the minimal-image kernel's acoustic-
+    sum-rule violation happens to carry zero weight on exactly those
+    entries -- pairwise toys cannot expose the windowed-ASR leak at all.
     """
     np.random.seed(seed)
     ens = sscha.Ensemble.Ensemble(dyn, T)
@@ -145,6 +168,18 @@ def make_ensemble(dyn, T, N, seed=0, g3=0.6, g4=0.0):
             f_harm[:, ja] += +fh
             f_anh[:, ia] += -fa
             f_anh[:, ja] += +fa
+
+    if g3b != 0.0:
+        for (i, j, k) in get_triplets(super_struct, unit, L):
+            for a in range(3):
+                ia, ja, ka = 3 * i + a, 3 * j + a, 3 * k + a
+                s1 = u_bohr[:, ja] - u_bohr[:, ia]
+                s2 = u_bohr[:, ka] - u_bohr[:, ja]
+                dv1 = 2.0 * g3b * s1 * s2       # dV/ds1
+                dv2 = g3b * s1 ** 2             # dV/ds2
+                f_anh[:, ia] += dv1
+                f_anh[:, ja] += dv2 - dv1
+                f_anh[:, ka] += -dv2
 
     # Remove the ensemble-average anharmonic force (mimic SSCHA stationarity)
     f_anh -= np.mean(f_anh, axis=0, keepdims=True)

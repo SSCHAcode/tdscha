@@ -3,7 +3,7 @@ direct (two seeds), plain interp, minimal-image interp (3 origins).
 Writes renorm_data.json."""
 import os, sys, json
 os.environ.setdefault("JULIA_NUM_THREADS", "1")
-sys.path.insert(0, "os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "test_interpolation")")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "test_interpolation"))
 import numpy as np
 import _toy_chain as TC
 import cellconstructor as CC

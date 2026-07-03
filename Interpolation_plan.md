@@ -28,8 +28,18 @@
 - DONE: report/interpolation/main.tex (full math, derivation appendices,
   benchmarks, example application vs the standard Spectral.py d3 bubble: peak
   agreement within the energy-grid step at interpolated q).
+- DONE: design-level ASR for non-plain windows (section 5.7,
+  `window_design="asr"`): doubled-support (2L) windows with exactly uniform class
+  sums = one-shot centering + ASR + symmetrization construction (no iterative
+  Apply_ASR analogue needed); explains the §5.5 field-projection bias as a
+  one-period no-go theorem. Pairwise-toy precision kept (asr+3origins 0.150 vs
+  minimal-image+3origins 0.122, floor 0.103, plain 0.299) with the vertex ASR
+  exact at every q̃ (deterministic 1e-15; stochastic plateau removed). Leak
+  geometry, pairwise immunity and the WS-resolution rule in §5.7(f); report
+  section + figures in report/interpolation (asr_kernel.pdf, asr_leak.pdf);
+  8 new tests in tests/test_interpolation/test_asr_windows.py.
 - TODO: LO-TO, off-mesh q_pert, IR/Raman sqrt(N_f) prefactor, distributed-mode
-  support, design-level ASR for windows, KPM variant (M5, skipped by decision).
+  support, KPM variant (M5, skipped by decision).
 
 **Goal.** Run the full q-space TDSCHA Lanczos (`Modules/QSpaceLanczos.py` +
 `Modules/tdscha_qspace.jl`) on a **fine** q-mesh not commensurate with the supercell of
@@ -427,6 +437,201 @@ stochastically. Measured effect on the chain toy: systematic deficit eliminated
 A per-configuration ASR note: the filtered displacement field needs no zero-mode
 projection (`f_Y → 0` kills the Γ acoustic components exactly); the force residuals
 keep the §5.5 projection.
+
+### 5.7 Design-level ASR: one projection for centering + ASR + symmetrization
+
+**Status: WORKING NOTES → to be validated numerically, then promoted.** This section
+records the strategy for enforcing the ASR under *non-plain* (sign-oscillating
+designed) windows, where the §5.5 field projection was found to bias the kernel by
+~30% and had to be disabled. The goal, following the observation that in
+`ForceTensor` the `Apply_ASR` projection *spoils the permutation symmetrization* and
+the two must be alternated iteratively to a fixed point, is a **single, one-shot
+construction** in which centering (the kernel target), the acoustic sum rule, the
+commensurate-limit exactness, and the symmetrization all hold **simultaneously and
+by construction** — accepting, if needed, a slightly larger window support.
+
+**(a) What the ASR means at the kernel level.** The expectation of the windowed
+estimator is the contraction of the (coarse-periodic) tensor with the pair kernel:
+
+```
+Φ_eff(δ1, δ2)  =  (1/L) S(δ1, δ2) · Φ_per(δ1 mod L, δ2 mod L),
+S(δ1, δ2)      =  Σ_s z(s) w(s+δ1) v(s+δ2)          (per dimension)
+```
+
+with `(δ1, δ2)` on the extended difference grid (support set by the window
+lengths). The periodic tensor inherits the exact ASR of the true Φ⁽³⁾ under mesh
+folding, in the form of *period-sum rules*: `Σ_{d over one period} Φ_per(d, ·) = 0`
+(v leg), same for the w leg, and `Σ_d Φ_per(d, d+Δ) = 0` for every fixed Δ (z leg,
+i.e. the sum over the first index at fixed positions of the other two, which in
+difference coordinates runs along diagonals). Therefore Φ_eff satisfies the ASR
+**for every Φ_per allowed by the exact sum rules** iff the kernel's *image sums are
+constant on each class*:
+
+```
+(ASR-v)  Σ_b S(δ1, d2 + bL)                 independent of d2   for every fixed δ1
+(ASR-w)  Σ_a S(d1 + aL, δ2)                 independent of d1   for every fixed δ2
+(ASR-z)  Σ_b S(d + bL, d + Δ + bL)          independent of d    for every fixed Δ
+```
+
+These are **linear constraints on S** — exactly like the partition-of-unity. In
+fact they *strengthen* it: (ASR-v) + (ASR-w) imply that the total class sum
+`Σ_{a,b} S(d1+aL, d2+bL)` is a single constant, so the commensurate-limit
+constraint reduces to one normalization row (`= L`). This is the structural reason
+a "single projection" exists here while `ForceTensor` must iterate: in tensor space
+the ASR and symmetrization projectors act on a huge object and do not commute; in
+window-design space **all the constraints are simultaneous linear conditions on a
+tiny object** (the kernel, `O(L²)` numbers, parameterized by `3K` windows), and the
+permutation symmetrization (w↔v orientation averaging + the z-leg estimator
+structure) is already built into the kernel definition `S_sym`, not applied after
+the fact. One constrained least-squares fit replaces the alternating projections.
+
+**(b) A sufficient window condition, and the one-period no-go.** A window `w` has
+*uniform class sums* if `W̄(d) = Σ_b w(d + bL)` is independent of `d`. Then
+
+```
+Σ_b S(δ1, d2+bL) = Σ_s z(s) w(s+δ1) V̄(s+d2) = V̄ · Σ_s z(s) w(s+δ1)   (d2-independent)
+```
+
+so **uniform class sums on the v (w) window imply (ASR-v) ((ASR-w)) identically**,
+for *any* other two windows. This immediately explains the §5.5 failure as a no-go
+theorem: for windows supported on **one period** (length L, the current design),
+the class sum is the window itself — uniform class sums ⇔ the plain window. An
+oscillating one-period window *cannot* inherit the ASR at the kernel level, and no
+per-configuration projection can fix it without modifying the kernel (the observed
+rank-one bias). The §5.5 `is_uniform` gate was the symptom of this theorem.
+
+**(c) The resolution: doubled support.** Let the windows live on **two periods**
+(support 2L, applied to the periodically-continued configuration with the true
+non-periodic Bloch phases — i.e. genuine zero-padding, the same move that makes
+tensor centering possible). Parameterize each window *exactly* on the constraint
+manifold:
+
+```
+w(d)     = h(d),            d = 0 … L−1
+w(d + L) = c_w − h(d)                       (h ∈ R^L and c_w free)
+```
+
+so `W̄(d) = c_w` uniformly, **by construction, not by penalty**. The feasible set
+now contains oscillating windows (`h = c_w/2 ± osc`) *and* the plain window
+(`h = 1, c_w = 1`: second period zero), so the design can only improve on the tent
+kernel. The kernel support grows to `|δ| ≤ 2L−1`; the minimal-image target is
+unchanged (supported in the Wigner–Seitz cell), the fit must also zero the kernel
+tail — this is the price ("increasing a bit the window").
+
+**(d) What comes for free.** With every slot on the constraint manifold:
+
+1. *(ASR-w), (ASR-v)* hold identically (point (b)). *(ASR-z)* is **not automatic**
+   in general — check numerically; if violated, either add its (linear) rows to the
+   per-slot LSQ, or restrict the z slot to plain-window class sums (for z uniform
+   over one period, `Σ_b Σ_{s∈period} w·v` telescopes to the full cross-correlation
+   `C_wv(Δ)`, which is manifestly d-independent).
+2. *Commensurate exactness* reduces to the single normalization row (point (a)).
+3. *Per-configuration acoustic zeros, with zero statistical noise.* At q̃ = 0 the
+   effective transform weight of the doubled window on the L-periodic data is the
+   class sum: `Σ_{s∈2L} w(s) x(s mod L) = Σ_{s∈L} W̄(s) x(s) = c_w Σ_s x(s) = 0`
+   **exactly per configuration** by Newton's third law / zero COM — the same
+   mechanism as the unwindowed coarse estimator, restored. Near Γ the leakage
+   vanishes as O(q̃) with a finite (noisy but tamed) slope. **No field projection is
+   needed at all** — the §5.5 machinery becomes a no-op for this design.
+4. *Symmetrization* is structural (w↔v averaging in `S_sym`, Hermiticity by the
+   orientation-averaged estimator) and commutes with everything above because it is
+   part of the parameterization, not a post-projection.
+
+**(e) Implementation notes.** On the L-periodic data domain a 2L-support window is
+a **q̃-dependent complex effective weight** per atom and dimension:
+
+```
+ŵ_q(s) = w(s) + w(s+L) e^{−2πi q_frac L}        (per dimension, s = 0 … L−1)
+```
+
+(the second period contributes the same data with an extra Bloch phase across the
+supercell). `_build_field_set` therefore needs per-q complex weights
+`(n_q, nat_sc)` instead of one real vector; the NUDFT already loops over q. Field
+dedup keys on the 1D window tuples. At commensurate q the phase is 1 and ŵ reduces
+to the class sum — plain behavior, V0 exactness untouched. D4 stays on the plain
+pass (plain = feasible point of the manifold; its ASR is already exact).
+
+**(f) Open questions and numerical findings (kept updated).**
+
+- *(ASR-z) automatic?* **YES** — settled numerically: every constrained fit
+  satisfies the diagonal image-sum constancy at 1e-15 with no extra rows. All
+  three leg sum rules are structural on the uniform-class-sum manifold.
+- *Fit quality.* The constrained ALS hits a hard floor **independent of K**
+  (L=3: RMS 0.147; L=4: 0.26) because **the minimal-image target itself violates
+  the ASR constraints** — the kernel-space restatement of "centering destroys the
+  sum rule" (§5.5), i.e. the same reason `Apply_ASR` must modify the centered
+  tensor. The correct target is the **projection of L·M onto the ASR+partition
+  affine subspace**, computed once in closed form (KKT / lstsq on the constraint
+  Gram matrix). Measured projection distances (RMS per grid point):
+  L=3: 0.144 (S=2L), 0.072 (S=3L), 0.045 (S=4L); L=4: 0.248 / 0.127 / 0.081;
+  L=6: 0.374 / 0.193 / 0.123. The windows **realize the projection almost
+  exactly** (0.1475 vs 0.1440 at L=3, S=2L; K=2 already suffices): the
+  multilinear window parameterization costs essentially nothing. For scale: the
+  plain (tent) kernel has RMS 0.315 at L=3 with exact ASR — the constrained
+  design halves the centering error at equal (exact) ASR, and support ×3 halves
+  it again. The residual is the *irreducible price of exact ASR at compact
+  support*, directly analogous to the modification `Apply_ASR` imposes on a
+  centered tensor.
+- *Weighted projection (optional refinement).* The unweighted projection spreads
+  the ASR correction uniformly over the difference grid; weighting the fit
+  residual by an estimate of the tensor decay (e.g. ρ^spread) concentrates
+  kernel fidelity where Φ⁽³⁾ is large — the exact analogue of the `power`
+  parameter of `Tensor3.Apply_ASR`. ASR and partition stay exact (structural /
+  hard-constrained); only the *distribution* of the irreducible residual moves.
+- *Where the leak actually bites (deterministic, settled):* contracting the exact
+  kernels with an ASR-satisfying three-body test tensor shows the minimal-image
+  leak **vanishes when both pair legs go to Γ together** (q_pert = 0: phases
+  cancel; also at every commensurate q̃1) but is **O(1) at fixed finite q̃1**
+  (|T| up to 8 on a tensor of scale 6) — the dangerous channel is a finite-q
+  phonon emitting a near-Γ acoustic phonon (two-phonon continuum edge). The
+  plain kernel is exactly zero everywhere; the asr design is 1e-15 everywhere.
+  Consequence: probes/tests must put q_pert at finite q (zone boundary), not Γ.
+- *Stochastic confirmation (zb probe, Lc=3→Lf=48, N=4000, g3=0.02, g3b=0.4,
+  q_pert=1/2):* acoustic-leg vertex row at q̃2=1/48: plain 0.94e-6 (decays ∝ q̃2),
+  minimal-image 7.2e-6 (plateau, 7.6× plain), asr 1.6e-6 (decays, tracks plain).
+  At the commensurate probe q̃2=1/3 all designs agree with plain to 1e-22 (field-
+  level commensurate collapse of the asr design verified).
+- *Response-level, SETTLED — two independent error channels:*
+  (1) **Lc=3→Lf=6 with g3b=0.08 (spread-2 tensor exactly ON the L=3
+  Wigner–Seitz tie boundary = Nyquist-ambiguous)**: aggregate renorm error —
+  noise floor 48.1, plain 50.6 (0 failures), mimg3 369.6 (6 spurious
+  non-negative-definite static responses), asr3 313.5 / asr_decay3 288.9
+  (8 failures). Under-resolution kills ALL oscillating designs (the tie
+  weight redistribution is O(1) with wrong phases in the response); plain's
+  tent is benign there. This is a CENTERING-RESOLUTION failure, not an ASR
+  one — same locality requirement as ForceTensor centering.
+  (2) **Lc=5→Lf=10 control (tensor WS-interior, resolvable)**: near-Γ probes
+  (renorm cm⁻¹, direct / plain / mimg / asr): q̃=1/10 ac: −56 / FAIL(g>0) /
+  −77 / −92; q̃=1/10 opt: −28 / −35 / −31 / −34; q̃=3/10 ac: −413 / −234 /
+  −396 / −407; q̃=3/10 opt: −793 / −341 / −733 / −752. Here PLAIN is the
+  broken one (tent bias halves the big renorms and flips a near-soft mode);
+  mimg and asr both track the direct reference, asr best on the strongly
+  renormalized modes and with exact ASR (mimg's structural vertex leak grows
+  in weight as the fine mesh densifies near Γ; at Lf=2Lc it is not yet fatal).
+  **Practical guidance:** designed windows (mimg AND asr) require the coarse
+  cell to RESOLVE the third-order range (spread < WS radius); under-resolution
+  → use plain. When resolvable → use asr (centering ≈ mimg, ASR exact, no
+  Γ-channel time bombs).
+- **Pairwise potentials are structurally immune to the windowed ASR leak**
+  (measured, then proven for L=3): probing the D3 vertex on the acoustic leg at
+  q̃ = n/24 (Lc=3, N=4000) showed NO difference plain vs minimal-image — all
+  decay ~ O(q̃). Reason: the minimal-image kernel's image-sum non-constancy is
+  concentrated on rows crossing the WS boundary (|δ1| = 2 for L=3), and there
+  the only nonzero weight, C(2, d2=1) = 3/2 from the (2,1)/(−1,1) tie split,
+  multiplies Φ_per(−1, 1) — an entry whose three legs span three DISTINCT
+  cells. A two-body (bond) potential only populates entries whose legs sit on
+  two sites, so exactly those entries vanish and the leak has nothing to
+  contract with. This also explains why the M3 benchmarks never showed ASR
+  artifacts. Consequence for testing: the toy needs a genuine THREE-BODY cubic
+  term (added: `g3b · s1²·s2` over A-atom triplets spanning 3 cells,
+  `_toy_chain.make_ensemble(..., g3b=...)`) to expose the leak. Real crystals
+  generically have three-site Φ⁽³⁾ entries, so the leak is real there.
+- *Variance cost of the doubled support:* small — pairwise-toy aggregate 0.150
+  (asr+3origins) vs 0.122 (minimal-image+3origins) at floor 0.103; part of the
+  gap is the 0.028 realization residual, part the extra kernel support. The
+  decay-weighted variant (ρ=0.4) measures WORSE on the short-ranged toy (0.196):
+  the larger far-range kernel entries cost variance — keep ρ=1 unless the
+  physical tensor range genuinely demands the reweighting.
 
 ---
 
