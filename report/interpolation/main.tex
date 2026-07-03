@@ -778,6 +778,100 @@ tensor on the same $k$-mesh and smearing. The SSCHA frequency is marked.}
 \end{figure}
 
 %======================================================================
+\section{Fourth order: spectral functions where $D_4$ is fundamental}
+\label{sec:d4}
+
+The bubble benchmark of Sec.~\ref{sec:bubble} validates the \emph{cubic}
+interpolation against an analytic diagram, with $D_4$ switched off. The
+four-phonon vertex is, however, interpolated on the same footing: its
+four-field Bloch averages are evaluated off-grid exactly like the $D_3$
+ones and rescaled by $s_4 = \Nc/\Nf$ (Sec.~\ref{sec:rescaling}). The only
+asymmetry is that the $D_4$ term rides a single plain-window pass rather
+than the designed multitaper passes used for $D_3$ (Sec.~\ref{sec:asr}):
+its range is shorter and its $\Nc/\Nf$ weight smaller, so the extra
+windowed passes are not spent on it. This section validates that choice
+end-to-end.
+
+There is no simple analytic diagram to compare against, because the static
+one-phonon self-energy of the \emph{bare} quartic vertex --- the tadpole
+$\tfrac12 \sum_k d_4(q\nu,-q\nu,k\mu,-k\mu)\,\chi_{k\mu}$ --- is exactly the
+quantity SSCHA already resums into the auxiliary frequency
+$\omega_{\mathrm{SSCHA}}$. A \emph{purely} quartic model therefore produces
+\emph{zero} anharmonic renormalization of the one-phonon line: with $D_3=0$
+the initial single-phonon state never couples to the two-phonon sector, the
+Lanczos chain terminates at first step, and $\omega_{\mathrm{eff}} =
+\omega_{\mathrm{SSCHA}}$ identically (we verified this numerically to
+machine zero). What survives of $D_4$ in the TDSCHA response is its action
+\emph{inside} the two-phonon continuum that $D_3$ opens; it is genuinely a
+fourth-order effect, but only visible together with a nonzero third order.
+
+Accordingly we validate $D_4$ by internal consistency in a mixed regime.
+The anharmonic diatomic chain is given a moderate cubic bond term
+($g_3 = 0.15$) and a \emph{strong} quartic one ($g_4 = 2.0$), so that the
+quartic vertex reshapes the spectrum by several tens of \si{cm^{-1}}. We
+compute the full $D_3{+}D_4$ one-phonon spectral function
+$A(q,\omega) = -\tfrac1\pi\,\mathrm{Im}\,G(q,\omega)$ (continued-fraction
+Green function, $N_{\mathrm{steps}}=110$, smearing $\approx\SI{6.6}{cm^{-1}}$)
+at wavevectors of the fine $(1,1,9)$ mesh, in two ways: interpolated from a
+coarse $(1,1,3)$ ensemble (minimal-image windows, two origins) and directly
+from an independent $(1,1,9)$ ensemble of the \emph{same} chain
+($N_I = 6000$ each). As a control we also record each spectrum with $D_4$
+switched off.
+
+Figure~\ref{fig:d4spectral} and the table below show the outcome at three
+interpolated wavevectors. The quartic vertex is fundamental: it hardens the
+peak by $30\dots56\,\si{cm^{-1}}$ relative to the $D_3$-only line
+(dashed), a shift comparable to the SSCHA frequency's own anharmonic budget
+and far larger than any interpolation error. The interpolated full spectrum
+(aqua) nonetheless lands on the direct fine-mesh reference (blue) to within
+one energy-grid step, $\lesssim\SI{2}{cm^{-1}}$ on the peak and
+$L_1 \approx 0.15\dots0.22$ on the whole normalized line shape (with
+$L_1 = \int |\hat A_{\mathrm{interp}} - \hat A_{\mathrm{direct}}|\,d\omega$,
+$\hat A$ normalized to unit area). Dropping $D_4$ from the interpolation
+raises $L_1$ to $\approx 1.7\dots1.8$ --- an order of magnitude worse, the
+two line shapes being essentially disjoint. The fourth order thus
+interpolates correctly and is indispensable, even though it never sees the
+designed windows.
+
+\begin{center}
+\begin{tabular}{cccccccc}
+\toprule
+$q$ & band & $\omega_{\mathrm{SSCHA}}$ & \multicolumn{2}{c}{peak (\si{cm^{-1}})}
+& $D_4$ shift & interp$-$dir & $L_1$ \\
+\cmidrule(lr){4-5}
+ & & (\si{cm^{-1}}) & $D_3$ & $D_3{+}D_4$ & (\si{cm^{-1}}) &
+(\si{cm^{-1}}) & full / $D_3$ \\
+\midrule
+$1/9$ & 5 & 2258.0 & 2198.8 & 2237.8 & $+39.0$ & $+1.9$ & $0.22 / 1.81$\\
+$2/9$ & 5 & 2177.4 & 2104.0 & 2159.8 & $+55.8$ & $\phantom{+}0.0$ & $0.15 / 1.80$\\
+$4/9$ & 4 & 1951.4 & 1907.0 & 1936.7 & $+29.7$ & $-1.9$ & $0.17 / 1.70$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Peaks are the direct fine-mesh values; the ``$D_4$ shift'' is
+$D_3{+}D_4$ minus $D_3$-only (direct), and ``interp$-$dir'' is the
+interpolated $D_3{+}D_4$ peak minus the direct one. At the operator level
+the two design choices are exact rather than merely accurate: the $D_4$
+block of $\Ltdscha$ scales strictly linearly in $s_4$ and is bit-identical
+across the plain, minimal-image and ASR window designs (it is produced by
+the same plain-window pass in all three), which the test suite checks
+directly.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/d4_spectral.pdf}
+\caption{One-phonon spectral functions in a $D_4$-dominated regime
+($g_3=0.15$, $g_4=2.0$) at interpolated wavevectors of the $(1,1,9)$ mesh.
+Blue: direct fine-mesh TDSCHA Lanczos ($D_3{+}D_4$). Aqua: interpolated
+from the coarse $(1,1,3)$ ensemble ($D_3{+}D_4$) --- it overlays the direct
+reference. Red dashed: the same interpolation with the fourth order dropped
+($D_3$ only), displaced by the quartic hardening of $30\dots56\,\si{cm^{-1}}$.
+The SSCHA frequency is marked; curves normalized to the direct peak.}
+\label{fig:d4spectral}
+\end{figure}
+
+%======================================================================
 \section{Limitations and outlook}
 \label{sec:outlook}
 

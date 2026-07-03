@@ -150,3 +150,40 @@ axes[0, 0].legend(loc="upper left", fontsize=7.5)
 fig.savefig(os.path.join(FIGS, "bubble.pdf"))
 plt.close(fig)
 print("bubble.pdf done")
+
+# ------------------------------------------------------ D4 spectral function
+with open("d4_spectral.json") as f:
+    d4 = json.load(f)
+en = np.array(d4["energies_cm"])
+probes = d4["probes"]
+LF = d4["meta"]["LF"]
+fig, axes = plt.subplots(1, len(probes), figsize=(7.0, 2.7),
+                         constrained_layout=True)
+for ax, pr in zip(np.atleast_1d(axes), probes):
+    a_dir = np.array(pr["direct_full"])
+    a_int = np.array(pr["interp_full"])
+    a_i3 = np.array(pr["interp_d3only"])
+    s = 1.0 / np.max(a_dir)
+    # reference: direct fine supercell, full D3+D4
+    ax.plot(en, a_dir * s, color=C_DIR, lw=2.6, alpha=0.5,
+            label="direct fine ($D_3{+}D_4$)")
+    # interpolated prediction, full
+    ax.plot(en, a_int * s, color=C_MIMG, lw=1.3,
+            label="interp ($D_3{+}D_4$)")
+    # interpolated but with D4 dropped -> displaced (D4 is fundamental)
+    ax.plot(en, a_i3 * s, color="#b0392b", lw=1.1, ls=(0, (4, 2)),
+            label="interp ($D_3$ only)")
+    ax.axvline(pr["w_sscha_cm"], color="#999999", lw=0.9, ls="--")
+    ax.annotate("SSCHA", xy=(pr["w_sscha_cm"], 0.98), rotation=90,
+                ha="right", va="top", color="#777777", fontsize=7.5)
+    p3, pf = pr["peak_direct_d3only"], pr["peak_direct_full"]
+    lo = min(p3, pf, pr["w_sscha_cm"])
+    ax.set_xlim(lo - 60, pr["w_sscha_cm"] + 40)
+    ax.set_title(r"$q=%d/%d$, band %d" % (pr["n_z"], LF, pr["band"]),
+                 fontsize=9)
+    ax.set_xlabel(r"$\omega$ (cm$^{-1}$)")
+np.atleast_1d(axes)[0].set_ylabel("spectral function (norm.)")
+np.atleast_1d(axes)[0].legend(loc="upper left", fontsize=7.0)
+fig.savefig(os.path.join(FIGS, "d4_spectral.pdf"))
+plt.close(fig)
+print("d4_spectral.pdf done")
