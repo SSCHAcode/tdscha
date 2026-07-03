@@ -17,29 +17,33 @@ The method (see Interpolation_plan.md for the full derivation):
 2. The SSCHA dynamical matrix is Fourier-interpolated (2nd order tensor,
    centered, with the acoustic sum rule) to obtain w(q), e(q) on the fine
    mesh, feeding the harmonic part of L and the chi/f_Y/f_psi factors.
-3. The mode-space vertices scale as d3 ~ N^-1/2 and d4 ~ N^-1 with the
-   number of cells N: the coarse-ensemble averages must be rescaled by
-   scale3 = sqrt(N_c/N_f) (D3 terms) and scale4 = N_c/N_f (D4 terms) to
-   represent the fine-mesh (N_f-cell) Lanczos operator.
-4. Acoustic sum rule: the per-configuration translation zero-modes are
-   projected out of displacements and force residuals before the transform,
-   so that every leg of the effective D3/D4 kernels vanishes on acoustic
-   modes at q -> 0 (Interpolation_plan.md section 5.5). With the plain
-   (full-period) window this only removes the exact per-configuration
-   zero-mode components: it is a no-op at commensurate q-points and on
-   the (masked) Gamma translations.
-
-This module implements the PLAIN-WINDOW estimator (milestone M2 of the
-plan): exact at commensurate q, tent-kernel interpolation between them.
-The designed multitaper windows ("stochastic centering", plan section 5)
-are milestone M3 and will plug into the same field-construction step.
+3. Vertex renormalization: mode-space d3 ~ N^-1/2 and d4 ~ N^-1, so the
+   coarse-ensemble averages are rescaled by scale3 = sqrt(N_c/N_f) (D3) and
+   scale4 = N_c/N_f (D4) to represent the fine-mesh Lanczos operator.
+4. Field PRE-FILTERING (essential, plan section 5.6): f_Y = 2w/(1+2n) is
+   applied on the coarse grid per configuration, which exactly strips the
+   phonon-propagator dressing of every displacement leg (Gaussian
+   integration by parts); the interpolated correlations then decay with the
+   range of the anharmonic force constants themselves.
+5. Acoustic sum rule (plan section 5.5): the (window-weighted) translation
+   zero-modes are projected out of the fields, so every leg of the
+   effective D3/D4 kernels vanishes on acoustic modes as q -> 0.
+6. Designed multitaper windows ("stochastic centering", plan sections
+   5.2-5.5, window_design="minimal_image"): the D3 estimator is evaluated
+   on a small set of windowed field passes whose per-dimension window
+   triples are fitted (ALS with partition-of-unity constraints) so that the
+   effective interpolation kernel approximates the minimal-image
+   (zero-padded) centering of ForceTensor -- without ever forming tensors.
+   The D4 terms use the plain full-period window (shorter range, smaller
+   N_c/N_f weight).
 
 Limitations (phase 1):
 - LO-TO splitting / effective charges are not applied to the interpolated
   dynamical matrix (lo_to_split must be None).
 - prepare_ir / prepare_raman inherit the coarse sqrt(N_c) Gamma-amplitude
-  prefactor; only the overall intensity scale is affected, not the
-  spectral shape.
+  prefactor; only the overall intensity scale is affected, not the shape.
+- The distributed (MPI config-sliced) loader is not yet wired for this
+  class; standard GoParallel parallelism over (config, sym) works.
 """
 
 from __future__ import print_function
@@ -57,9 +61,11 @@ import cellconstructor.symmetries
 import cellconstructor.ForceTensor
 import cellconstructor.Units
 
+import cellconstructor.Settings as Parallel
 from cellconstructor.Settings import ParallelPrint as print
 
 import tdscha.QSpaceLanczos as QL
+import tdscha.JuliaExt as JuliaExt
 
 
 __EPSILON__ = 1e-12
@@ -72,34 +78,22 @@ __EPSILON__ = 1e-12
 def generate_fine_mesh(uc_structure, mesh):
     """Generate a Gamma-centered uniform q-mesh (Gamma first).
 
-    Parameters
-    ----------
-    uc_structure : CC.Structure.Structure
-        The unit cell structure.
-    mesh : tuple(3) of int
-        The mesh dimensions (m1, m2, m3).
-
     Returns
     -------
     q_points : ndarray(N_f, 3)
         Cartesian q-points in the same units as dyn.q_tot (2pi/A free).
-        The first point is Gamma; ordering is lexicographic in the integer
-        mesh indices.
     idx : ndarray(N_f, 3), int
-        The integer mesh indices n of each point (q_frac = n / mesh, folded
-        to (-1/2, 1/2]).
+        Integer mesh indices n of each point (q_frac = n / mesh).
     """
     mesh = np.asarray(mesh, dtype=int)
     assert np.all(mesh > 0), "Invalid mesh {}".format(mesh)
 
-    bg = uc_structure.get_reciprocal_vectors() / (2 * np.pi)  # rows b_i, b_i . a_j = delta_ij
+    bg = uc_structure.get_reciprocal_vectors() / (2 * np.pi)
 
     idx = np.array(list(itertools.product(range(mesh[0]),
                                           range(mesh[1]),
                                           range(mesh[2]))), dtype=int)
     frac = idx / mesh[None, :]
-    # Fold into (-1/2, 1/2] for aesthetics (does not affect any Bloch phase:
-    # shifts are reciprocal lattice vectors)
     frac = frac - np.floor(frac + 0.5)
 
     q_points = frac @ bg
@@ -107,21 +101,17 @@ def generate_fine_mesh(uc_structure, mesh):
 
 
 def build_q_index_lookup(q_points, uc_structure, mesh, tol=1e-6):
-    """Build an O(1) lookup {mesh index tuple -> position in q_points}.
-
-    Works for any list of q-points lying on the uniform mesh (modulo G).
-    """
+    """Build an O(1) lookup {mesh index tuple -> position in q_points}."""
     mesh = np.asarray(mesh, dtype=int)
     lookup = {}
     for iq, q in enumerate(q_points):
-        key = _mesh_key(q, uc_structure, mesh, tol)
-        lookup[key] = iq
+        lookup[_mesh_key(q, uc_structure, mesh, tol)] = iq
     return lookup
 
 
 def _mesh_key(q, uc_structure, mesh, tol=1e-6):
     """Integer mesh-index key of a q-point (modulo reciprocal lattice)."""
-    frac = uc_structure.unit_cell @ np.asarray(q)  # frac_i = q . a_i
+    frac = uc_structure.unit_cell @ np.asarray(q)
     n = frac * mesh
     n_round = np.round(n)
     if np.max(np.abs(n - n_round)) > tol * np.max(mesh):
@@ -138,31 +128,11 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
                          verbose=False):
     """Fourier-interpolate the dynamical matrix on a list of q-points.
 
-    Uses ForceTensor.Tensor2 with real-space centering and (optionally) the
-    iterative acoustic sum rule, exactly like the standard force-constant
-    interpolation. Frequencies/polarizations are computed with the same
-    mass convention as CC.Phonons.DyagDinQ, and the time-reversal gauge
-    e(-q) = conj(e(q)) is enforced between +-q partners on the mesh.
+    ForceTensor.Tensor2 with real-space centering and (optionally) the
+    iterative acoustic sum rule; DyagDinQ mass conventions; time-reversal
+    gauge e(-q) = conj(e(q)) enforced between +-q partners.
 
-    Parameters
-    ----------
-    dyn : CC.Phonons.Phonons
-        The (coarse) SSCHA dynamical matrix.
-    q_points : ndarray(N_f, 3)
-        Target q-points (same units as dyn.q_tot).
-    use_asr : bool
-        Apply Tensor2.Apply_ASR() after centering.
-    reuse_commensurate : bool
-        For q-points matching dyn.q_tot, use dyn.dynmats directly instead of
-        the centered/ASR-projected interpolation (guarantees exact
-        reproduction of the coarse calculation on-grid).
-
-    Returns
-    -------
-    w_q : ndarray(n_bands, N_f)
-        Frequencies in Ry.
-    pols_q : ndarray(3*nat, n_bands, N_f), complex128
-        Polarization vectors.
+    Returns (w_q(nb, N_f) [Ry], pols_q(3nat, nb, N_f) complex).
     """
     uc = dyn.structure
     supercell = dyn.GetSupercell()
@@ -187,7 +157,6 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
 
     bg = uc.get_reciprocal_vectors() / (2 * np.pi)
 
-    # Match commensurate points
     commensurate_of = np.full(n_q, -1, dtype=int)
     if reuse_commensurate:
         for iq, q in enumerate(q_points):
@@ -196,7 +165,6 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
                     commensurate_of[iq] = jq
                     break
 
-    # Identify TRI partners on the list: iq -> index of -q (or -1)
     minus_of = np.full(n_q, -1, dtype=int)
     for iq, q in enumerate(q_points):
         for jq, q2 in enumerate(q_points):
@@ -224,8 +192,6 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
 
         D = fc * inv_sqrt_mm
         D = 0.5 * (D + np.conj(D.T))
-
-        # At time-reversal-invariant points (q = -q + G) the matrix is real
         if minus_of[iq] == iq:
             D = np.real(D)
 
@@ -234,7 +200,6 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
         pols_q[:, :, iq] = eigvects
         done[iq] = True
 
-        # Enforce the time-reversal gauge on the -q partner
         jq = minus_of[iq]
         if jq >= 0 and jq != iq and not done[jq]:
             w_q[:, jq] = w_q[:, iq]
@@ -249,6 +214,198 @@ def interpolate_dyn_fine(dyn, q_points, use_asr=True, reuse_commensurate=True,
 
 
 # =========================================================================
+# Window design toolbox ("stochastic centering", plan sections 5.2-5.5)
+# =========================================================================
+#
+# Per lattice dimension of length L, the D3 estimator pass with windows
+# (z, w, v) on the three field slots has the effective interpolation kernel
+#
+#   S_{z,w,v}(d1, d2) = sum_s z(s) w(s+d1) v(s+d2)        (zero-padded)
+#
+# on the correlation differences d1, d2 in [-(L-1), L-1]. The PLAIN
+# estimator is the single pass z = w = v = ones(L), whose kernel is the
+# "tent": weight L - spread on each image, summing to L over every
+# difference class (partition of unity => exact at commensurate q).
+# The design below fits K passes so that  sum_r S_r  approximates
+# L * M(d1, d2), where M is the minimal-image indicator with tie splits
+# (the separable analogue of ForceTensor centering), under the hard
+# partition constraint  sum_images sum_r S_r = L  (exact commensurate
+# limit preserved). w <-> v symmetry is built into the fitted kernel and
+# realized at runtime by averaging the two pass orientations.
+
+def minimal_image_target_1d(L):
+    """Target kernel L * M on the (2L-1)^2 difference grid.
+
+    M assigns each difference class (d1, d2) mod L to its minimal-spread
+    image(s) (spread = max(0,d1,d2) - min(0,d1,d2)), splitting ties."""
+    n = 2 * L - 1
+    target = np.zeros((n, n))
+
+    def spread(d1, d2):
+        return max(0, d1, d2) - min(0, d1, d2)
+
+    for d1 in range(L):
+        for d2 in range(L):
+            imgs = [(d1 + a * L, d2 + b * L) for a in (-1, 0) for b in (-1, 0)]
+            sp = [spread(*im) for im in imgs]
+            mn = min(sp)
+            winners = [im for im, s in zip(imgs, sp) if s == mn]
+            for im in winners:
+                target[im[0] + L - 1, im[1] + L - 1] = float(L) / len(winners)
+    return target
+
+
+def triple_kernel_1d(z, w, v):
+    """S(d1,d2) = sum_s z(s) w(s+d1) v(s+d2), windows zero-padded outside
+    their length-L support. Returns ndarray(2L-1, 2L-1)."""
+    L = len(z)
+    emb = 3 * L
+    Z = np.zeros(emb); Z[L:2 * L] = z
+    W = np.zeros(emb); W[L:2 * L] = w
+    V = np.zeros(emb); V[L:2 * L] = v
+    n = 2 * L - 1
+    S = np.zeros((n, n))
+    for i, d1 in enumerate(range(-(L - 1), L)):
+        for j, d2 in enumerate(range(-(L - 1), L)):
+            s0 = max(0, -d1, -d2)
+            s1 = min(emb, emb - d1, emb - d2)
+            S[i, j] = np.dot(Z[s0:s1] * W[s0 + d1:s1 + d1], V[s0 + d2:s1 + d2])
+    return S
+
+
+def _kernel_sym(z, w, v):
+    """w <-> v symmetrized kernel (matches the runtime orientation average)."""
+    S = triple_kernel_1d(z, w, v)
+    return 0.5 * (S + triple_kernel_1d(z, v, w).T)
+
+
+def _partition_residual(K_tot, L):
+    """Deviations of the per-class image sums from L."""
+    out = []
+    for d1 in range(L):
+        for d2 in range(L):
+            tot = 0.0
+            for a in (-1, 0, 1):
+                for b in (-1, 0, 1):
+                    i, j = d1 + a * L + L - 1, d2 + b * L + L - 1
+                    if 0 <= i < 2 * L - 1 and 0 <= j < 2 * L - 1:
+                        tot += K_tot[i, j]
+            out.append(tot - L)
+    return np.array(out)
+
+
+def design_windows_1d(L, K=3, iters=300, n_restarts=4, seed=0,
+                      partition_weight=1.0, verbose=False):
+    """Fit K window passes (z_r, w_r, v_r) per dimension by ALS.
+
+    Minimizes || sum_r S_sym(z_r, w_r, v_r) - L*M ||^2 with a strong
+    penalty on the partition-of-unity residuals. Pass 0 is seeded with the
+    plain window (guaranteed feasible point: the fit can only improve on
+    the tent kernel). Returns a list of (z, w, v) float arrays; the design
+    coefficient is folded into z.
+    """
+    if L == 1:
+        return [(np.ones(1), np.ones(1), np.ones(1))]
+    if L == 2:
+        # All nonzero differences are Wigner-Seitz ties: the tent kernel IS
+        # the minimal-image kernel. Plain window is exact.
+        return [(np.ones(2), np.ones(2), np.ones(2))]
+
+    target = minimal_image_target_1d(L)
+    n_pts = (2 * L - 1) ** 2
+
+    def model(passes, skip=None):
+        M = np.zeros_like(target)
+        for r, (z, w, v) in enumerate(passes):
+            if r == skip:
+                continue
+            M += _kernel_sym(z, w, v)
+        return M
+
+    def fit_slot(passes, r, slot):
+        """LSQ over the slot values (kernel is linear in each slot)."""
+        resid = target - model(passes, skip=r)
+        A = np.zeros((n_pts + L * L, L))
+        b = np.zeros(n_pts + L * L)
+        b[:n_pts] = resid.ravel()
+        # partition rows: target value is L minus other passes' class sums
+        part_other = _partition_residual(model(passes, skip=r), L) + L
+        for k in range(L):
+            trial = [np.array(x) for x in passes[r]]
+            trial[slot] = np.zeros(L)
+            trial[slot][k] = 1.0
+            Sk = _kernel_sym(*trial)
+            A[:n_pts, k] = Sk.ravel()
+            # class sums of the basis kernel (partition_residual returns
+            # classsum - L, which is only meaningful for a TOTAL kernel)
+            A[n_pts:, k] = partition_weight * (_partition_residual(Sk, L) + L)
+        b[n_pts:] = partition_weight * (L - part_other)
+        sol, *_ = np.linalg.lstsq(A, b, rcond=None)
+        new = [np.array(x) for x in passes[r]]
+        new[slot] = sol
+        return tuple(new)
+
+    best = None
+    best_err = np.inf
+    for trial in range(n_restarts):
+        rs = np.random.RandomState(1000 * L + 17 * K + trial + seed)
+        passes = [tuple(rs.randn(L) * 0.4 for _ in range(3)) for _ in range(K)]
+        # seed pass 0 with the plain window
+        passes[0] = (np.ones(L), np.ones(L), np.ones(L))
+        # ALS with a penalty ramp: fit freely first (the target satisfies the
+        # partition, so a good fit inherits it), then polish the partition.
+        schedule = [(iters, partition_weight),
+                    (iters // 4, 10 * partition_weight),
+                    (iters // 4, 100 * partition_weight)]
+        pw_backup = partition_weight
+        for n_it, pw in schedule:
+            partition_weight = pw
+            for it in range(n_it):
+                for r in range(K):
+                    for slot in range(3):
+                        passes[r] = fit_slot(passes, r, slot)
+        partition_weight = pw_backup
+        Ktot = model(passes)
+        err = np.sqrt(np.mean((Ktot - target) ** 2))
+        perr = np.max(np.abs(_partition_residual(Ktot, L)))
+        score = err + 10.0 * perr
+        if score < best_err:
+            best_err = score
+            best = ([tuple(np.array(x) for x in p) for p in passes], err, perr)
+
+    passes, err, perr = best
+    if verbose:
+        print("window design L={} K={}: kernel RMS err {:.2e}, "
+              "partition dev {:.2e}".format(L, K, err, perr))
+    if perr > 1e-6 * L:
+        warnings.warn("Window design (L={}, K={}) violates partition of "
+                      "unity by {:.2e}: the commensurate limit is only "
+                      "approximate. Increase K or iters.".format(L, K, perr))
+    return passes
+
+
+# Module-level cache of designs
+_WINDOW_DESIGN_CACHE = {}
+
+
+def get_window_design(L, K=3, max_K=5):
+    """Cached design; escalates K until the kernel is accurate enough."""
+    key = (int(L), int(K))
+    if key not in _WINDOW_DESIGN_CACHE:
+        target = minimal_image_target_1d(L)
+        best = None
+        for K_try in range(K, max_K + 1):
+            passes = design_windows_1d(L, K=K_try)
+            Ktot = sum(_kernel_sym(*p) for p in passes)
+            err = np.sqrt(np.mean((Ktot - target) ** 2)) / max(L, 1)
+            best = passes
+            if err < 1e-6:
+                break
+        _WINDOW_DESIGN_CACHE[key] = best
+    return _WINDOW_DESIGN_CACHE[key]
+
+
+# =========================================================================
 # The interpolated Lanczos
 # =========================================================================
 
@@ -257,39 +414,36 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
     Usage
     -----
-    >>> lanczos = QSpaceLanczosInterp(ensemble, fine_mesh=(4, 4, 4))
+    >>> lanczos = QSpaceLanczosInterp(ensemble, fine_mesh=(4, 4, 4),
+    ...                               window_design="minimal_image")
     >>> lanczos.init(use_symmetries=True)
     >>> lanczos.prepare_mode_q(iq, band)   # iq indexes the FINE mesh
     >>> lanczos.run_FT(100)
-
-    The two-phonon (a'/b') sector lives on the fine mesh: the perturbation
-    at q_pert can decay into pairs of interpolated phonons. The perturbation
-    q-point must be a point of the fine mesh.
 
     Parameters
     ----------
     ensemble : sscha.Ensemble.Ensemble
         The SSCHA ensemble (on the coarse supercell).
     fine_mesh : tuple(3) of int
-        The fine uniform Gamma-centered q-mesh. Does NOT need to be a
-        multiple of the coarse mesh, but the coarse points are reproduced
-        exactly only when it is a superset of the coarse mesh.
-    use_asr_dyn : bool
-        Apply the acoustic sum rule to the interpolated dynamical matrix.
-    reuse_commensurate : bool
-        Use the coarse dyn matrices directly at commensurate fine points.
-    w_min_guard : float
-        Frequencies (in Ry) below this threshold at q != Gamma are masked
-        with a warning (guards against numerically-zero interpolated
-        frequencies; genuine acoustic modes near Gamma are far above it).
-    allow_unstable : bool
-        If False (default), raise if the interpolated dyn has imaginary
-        frequencies away from Gamma.
+        The fine uniform Gamma-centered q-mesh.
+    window_design : str
+        "plain": single full-period window (tent interpolation kernel);
+        "minimal_image": designed multitaper windows approximating the
+        zero-padded minimal-image centering for the D3 terms (recommended).
+    window_K : int
+        Number of window passes per lattice dimension for the design.
+    prefilter : bool
+        Apply the f_Y pre-filter to the displacement fields (recommended;
+        see module docstring).
+    use_asr_dyn, reuse_commensurate, w_min_guard, allow_unstable :
+        See interpolate_dyn_fine and the plan document.
     """
 
     def __init__(self, ensemble, fine_mesh=None, use_asr_dyn=True,
                  reuse_commensurate=True, w_min_guard=1e-8,
                  allow_unstable=False, prefilter=True,
+                 window_design="plain", window_K=3, window_origins=1,
+                 asr_fields=True,
                  lo_to_split=None, **kwargs):
 
         if lo_to_split is not None:
@@ -299,13 +453,22 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         super().__init__(ensemble, lo_to_split=None, **kwargs)
 
-        interp_attrs = ['fine_mesh', '_fine_idx', '_q_lookup', '_fpsi_fine']
+        interp_attrs = ['fine_mesh', '_fine_idx', '_q_lookup', '_fpsi_fine',
+                        'window_design', 'window_K', 'window_origins', 'asr_fields',
+                        '_field_sets', '_window_passes', '_channels']
         self.__total_attributes__.extend(interp_attrs)
 
         self.fine_mesh = None
         self._fine_idx = None
         self._q_lookup = None
         self._fpsi_fine = None
+        self.window_design = window_design
+        self.window_K = window_K
+        self.window_origins = int(window_origins)
+        self.asr_fields = bool(asr_fields)
+        self._field_sets = None      # list of (X_q, Y_q) per distinct window
+        self._window_passes = None   # list of (c=1-folded, iz, iw, iv)
+        self._channels = None
 
         # Bare initialization (used by the distributed loader)
         if ensemble is None:
@@ -313,6 +476,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         if fine_mesh is None:
             raise ValueError("QSpaceLanczosInterp requires fine_mesh=(m1, m2, m3)")
+        if window_design not in ("plain", "minimal_image"):
+            raise ValueError("window_design must be 'plain' or 'minimal_image'")
 
         self.fine_mesh = np.asarray(fine_mesh, dtype=int)
         coarse_mesh = np.asarray(self.dyn.GetSupercell(), dtype=int)
@@ -320,7 +485,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         n_f = int(np.prod(self.fine_mesh))
 
         # Stash the coarse-grid quantities computed by the parent before we
-        # overwrite them: they are needed to build the pre-filtered fields.
+        # overwrite them (needed for the pre-filtered fields).
         coarse_data = {
             'q_points': np.array(self.q_points),
             'w_q': np.array(self.w_q),
@@ -363,7 +528,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                 raise ValueError(msg)
 
         small = (np.abs(self.w_q) < w_min_guard) & self.valid_modes_q
-        small[:, 0] = False  # Gamma translations already masked
+        small[:, 0] = False
         if np.any(small):
             warnings.warn("Masking {} interpolated modes with |w| < {} Ry "
                           "away from Gamma.".format(np.sum(small), w_min_guard))
@@ -373,12 +538,18 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             small_freq = np.abs(self.w_q) < CC.Phonons.__EPSILON_W__
             self.valid_modes_q &= ~small_freq
 
-        # == 4. Bloch fields on the fine mesh (NUDFT of the ensemble) ==
-        self._bloch_transform_ensemble_fine(
+        # == 4. Real-space channels and Bloch fields on the fine mesh ==
+        self.qspace_prefiltered = bool(prefilter)
+        self._channels = self._prepare_realspace_channels(
             coarse_data if prefilter else None)
 
-        # Fine-side f_psi table (folded into alpha1 in prefiltered mode)
-        self.qspace_prefiltered = bool(prefilter)
+        # Plain fields (always built: used directly in "plain" mode, and as
+        # the D4 pass and back-compat X_q/Y_q otherwise)
+        self.X_q, self.Y_q = self._build_field_set(weights=None)
+
+        if window_design == "minimal_image":
+            self._setup_window_passes()
+
         if prefilter:
             self._fpsi_fine = self._get_fpsi_table()
 
@@ -406,9 +577,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         """Coarse-grid f_Y = 2w/(1+2n) with masked modes set to zero."""
         w_c = coarse_data['w_q']
         valid_c = coarse_data['valid_modes_q']
-        n_qc = w_c.shape[1]
         fy = np.zeros_like(w_c)
-        for iq in range(n_qc):
+        for iq in range(w_c.shape[1]):
             valid = valid_c[:, iq]
             w = w_c[valid, iq]
             if self.T > __EPSILON__:
@@ -419,33 +589,17 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         return fy
 
     # ---------------------------------------------------------------
-    def _bloch_transform_ensemble_fine(self, coarse_data=None):
-        """Bloch transform the ensemble on the fine mesh (plain window NUDFT).
+    def _prepare_realspace_channels(self, coarse_data):
+        """Assemble the (unprojected) real-space channels once.
 
-        Replicates the conventions of sscha's vector_r2q (phase
-        exp(-2 pi i q . R) on the cell origin R of each supercell atom,
-        normalization 1/sqrt(N_c) with N_c the number of COARSE cells)
-        evaluated at the fine q-points, with:
-
-        - the rho-weighted symmetrized average force subtracted in real
-          space (kills its window leakage at incommensurate q, reduces to
-          the parent Gamma subtraction at commensurate q);
-        - the per-configuration translation zero-modes projected out
-          (acoustic sum rule, plan section 5.5): displacements lose their
-          mass-weighted center of mass, force residuals lose a rigid
-          mass-proportional redistribution of the net force. Both
-          subtracted patterns are exactly the translation modes in the
-          mass-scaled representation: optical components are untouched.
-
-        If coarse_data is given (pre-filter mode, plan section 5.6), the
-        displacement fields are filtered with f_Y = 2w/(1+2n) ON THE COARSE
-        GRID before the fine transform. By the Gaussian integration-by-parts
-        identity, (f_Y x) legs carry no phonon-propagator dressing: the
-        interpolated D3/D4 correlations then decay with the range of the
-        anharmonic force constants themselves instead of the (much longer)
-        propagator range, drastically reducing the interpolation error.
-        The Julia kernel is informed via qspace_prefiltered and the exact
-        fine-side f_psi factors are folded into alpha1.
+        Returns a dict with:
+          u_ch    : displacement channel (N, nat_sc, 3). If coarse_data is
+                    given this is the f_Y-PREFILTERED, mass-scaled field
+                    (Bohr sqrt(mass) units, no further scaling needed);
+                    otherwise the raw displacements (Angstrom).
+          f_ch    : force residual channel (N, nat_sc, 3), average force
+                    subtracted, Ry/Angstrom.
+          itau, r_lat, cell_idx, n_c, and the unit/mass scale vectors.
         """
         ens = self.ensemble
         uc = self.dyn.structure
@@ -455,10 +609,13 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         n_c = nat_sc // nat_uc
         N = self.N
 
-        itau = sc.get_itau(uc) - 1                     # (nat_sc,)
-        r_lat = sc.coords - uc.coords[itau]            # Angstrom, cell origins
+        itau = sc.get_itau(uc) - 1
+        r_lat = sc.coords - uc.coords[itau]          # Angstrom, cell origins
 
-        # --- Real-space data (match parent unit handling) ---
+        # integer cell indices of each supercell atom (for windows)
+        frac = np.linalg.solve(uc.unit_cell.T, r_lat.T).T
+        cell_idx = np.round(frac).astype(int) % np.asarray(self.dyn.GetSupercell())
+
         u_conv = 1.0
         f_conv = 1.0
         if ens.units == "default":
@@ -467,130 +624,327 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         elif ens.units == "hartree":
             f_conv = 2.0
 
-        u_sc = np.array(ens.u_disps, dtype=np.float64).reshape(N, nat_sc, 3)
-
-        # The real-space sscha_forces may be empty when the ensemble runs in
-        # Fourier-gradient mode (only *_qspace arrays are filled). Rebuild the
-        # real-space SSCHA forces from the q-space array with the inverse
-        # Bloch transform (exact on the coarse grid):
-        #   f(R, a) = 1/sqrt(N_c) sum_q e^{+2 pi i q . R} f_q(a)
-        q_coarse = np.array(self.dyn.q_tot)                       # (n_qc, 3), 2pi/A
-        phases_c = np.exp(-2j * np.pi * (q_coarse @ r_lat.T))     # (n_qc, nat_sc)
-        fsq = np.array(ens.sscha_forces_qspace)                   # (N, 3*nat_uc, n_qc)
+        # ---- force residual channel ----
+        # Real-space sscha_forces may be empty in Fourier-gradient mode:
+        # rebuild from the q-space array (exact inverse on the coarse grid).
+        q_coarse = np.array(self.dyn.q_tot)
+        phases_c = np.exp(-2j * np.pi * (q_coarse @ r_lat.T))   # (n_qc, nat_sc)
+        fsq = np.array(ens.sscha_forces_qspace)                 # (N, 3nat_uc, n_qc)
         f_sscha = np.zeros((N, nat_sc, 3), dtype=np.float64)
         for a in range(nat_uc):
             sel = np.where(itau == a)[0]
-            # inverse transform: conj phases, same 1/sqrt(N_c) normalization
             f_sscha[:, sel, :] = np.real(np.einsum(
                 'qk,iaq->ika', np.conj(phases_c[:, sel]),
                 fsq[:, 3 * a:3 * a + 3, :], optimize=True)) / np.sqrt(n_c)
 
         delta_f = np.array(ens.forces, dtype=np.float64).reshape(N, nat_sc, 3) - f_sscha
 
-        # --- Average force subtraction (real space, tiled over cells) ---
-        f_mean_uc = ens.get_average_forces(get_error=False)   # (nat_uc, 3)
+        f_mean_uc = ens.get_average_forces(get_error=False)
         qe_sym = CC.symmetries.QE_Symmetry(uc)
         qe_sym.SetupQPoint()
         qe_sym.SymmetrizeVector(f_mean_uc)
         delta_f -= f_mean_uc[itau, :][None, :, :]
 
-        # --- ASR zero-mode projection (per configuration) ---
-        m_sc = sc.get_masses_array()                   # (nat_sc,)
-        M_tot = np.sum(m_sc)
-        # displacements: remove the mass-weighted center of mass
-        com = np.einsum('k,ika->ia', m_sc, u_sc) / M_tot        # (N, 3)
-        u_sc = u_sc - com[:, None, :]
-        # forces: remove the net force, redistributed proportionally to the
-        # masses (the translation mode in the mass-scaled metric)
-        f_net = np.sum(delta_f, axis=1)                         # (N, 3)
-        delta_f = delta_f - (m_sc / M_tot)[None, :, None] * f_net[:, None, :]
+        # ---- displacement channel ----
+        if coarse_data is None:
+            u_ch = np.array(ens.u_disps, dtype=np.float64).reshape(N, nat_sc, 3)
+            u_prefiltered = False
+        else:
+            fy_c = self._get_fy_table_coarse(coarse_data)
+            X_c = coarse_data['X_q']
+            pols_c = coarse_data['pols_q']
+            q_c = coarse_data['q_points']
+            phases_cc = np.exp(-2j * np.pi * (q_c @ r_lat.T))
+            uf_sc = np.zeros((N, nat_sc, 3), dtype=np.float64)
+            idx3 = 3 * itau[:, None] + np.arange(3)[None, :]
+            for iq in range(X_c.shape[0]):
+                u_mass_q = (X_c[iq] * fy_c[:, iq][None, :]) @ pols_c[:, :, iq].T
+                uf_sc += np.real(np.conj(phases_cc[iq])[None, :, None]
+                                 * u_mass_q[:, idx3])
+            uf_sc /= np.sqrt(X_c.shape[0])
+            u_ch = uf_sc
+            u_prefiltered = True
 
-        # --- NUDFT at the fine q-points ---
-        # phase(q, k) = exp(-2 pi i q . R_k); normalization 1/sqrt(N_c)
-        phases = np.exp(-2j * np.pi * (self.q_points @ r_lat.T))  # (n_q, nat_sc)
+        m_uc = uc.get_masses_array()
+        return {
+            'u_ch': u_ch, 'f_ch': delta_f, 'u_prefiltered': u_prefiltered,
+            'itau': itau, 'r_lat': r_lat, 'cell_idx': cell_idx, 'n_c': n_c,
+            'm_sc': sc.get_masses_array(),
+            'u_conv': u_conv, 'f_conv': f_conv,
+            'sqrt_m3': np.sqrt(np.repeat(m_uc, 3)),
+        }
+
+    # ---------------------------------------------------------------
+    def _build_field_set(self, weights=None, perm=None):
+        """Bloch fields (X_q, Y_q) on the fine mesh for one window.
+
+        Parameters
+        ----------
+        weights : ndarray(nat_sc,) or None
+            Per-supercell-atom window weights W(n(k)) (None = plain window,
+            all ones). The window support and the Bloch phases live on the
+            FIXED fundamental domain.
+        perm : ndarray(nat_sc,) int or None
+            Atom permutation applied to the real-space data BEFORE
+            windowing: rolling the configuration by a lattice vector o and
+            keeping window+phases fixed realizes a window at origin o (the
+            leftover constant phase e^{-i q.o} cancels in every
+            momentum-conserving product). Ensemble translation invariance
+            makes the expected kernel origin-independent, so origin
+            averaging is a pure variance reduction.
+
+        Applies the window-weighted acoustic-sum-rule projections
+        (plan section 5.5) before the transform:
+          - raw displacements lose the W-weighted mass-weighted COM;
+          - prefiltered (mass-scaled) fields lose the W-weighted projection
+            on the sqrt(m) translation pattern;
+          - force residuals lose the W-weighted net force redistributed
+            proportionally to the masses.
+        """
+        ch = self._channels
+        N = self.N
+        itau = ch['itau']
+        nat_uc = len(np.unique(itau))
+        nat_sc = len(itau)
+        m_sc = ch['m_sc']
+
+        W = np.ones(nat_sc) if weights is None else np.asarray(weights, float)
+
+        if perm is None:
+            u = ch['u_ch'].copy()
+            f = ch['f_ch'].copy()
+        else:
+            u = ch['u_ch'][:, perm, :].copy()
+            f = ch['f_ch'][:, perm, :].copy()
+
+        # --- zero-mode (ASR) projections ---
+        # Applied only to (near-)uniform windows: there the per-configuration
+        # sum rules (Newton's third law, zero COM) make the projection exact
+        # and essentially free of statistical cost. For sign-oscillating
+        # designed windows the W-weighted zero-mode is a rank-one
+        # modification of the effective window: projecting the FIELD would
+        # silently change the interpolation kernel away from the designed
+        # one (verified: it introduces an O(30%) systematic bias on the toy
+        # model). The designed kernels approximate the minimal-image
+        # centering, whose residual ASR violation is the same as that of a
+        # centered (pre-Apply_ASR) tensor; folding the ASR constraint into
+        # the kernel design itself is future work (plan section 5.5).
+        is_uniform = np.max(W) - np.min(W) < 1e-12 * max(1.0, np.max(np.abs(W)))
+        if self.asr_fields and is_uniform:
+            WM = np.sum(W * m_sc)
+            if ch['u_prefiltered']:
+                sqm = np.sqrt(m_sc)
+                coeff = np.einsum('k,k,ika->ia', W, sqm, u) / WM      # (N, 3)
+                u -= sqm[None, :, None] * coeff[:, None, :]
+            else:
+                com = np.einsum('k,k,ika->ia', W, m_sc, u) / WM
+                u -= com[:, None, :]
+            f_net = np.einsum('k,ika->ia', W, f)
+            f -= (m_sc / WM)[None, :, None] * f_net[:, None, :]
+
+        # --- windowed NUDFT ---
+        phases = np.exp(-2j * np.pi * (self.q_points @ ch['r_lat'].T))
+        phases_w = phases * W[None, :]
 
         def nudft(field_sc):
-            """(N, nat_sc, 3) real/complex -> (n_q, N, 3*nat_uc)."""
             out = np.zeros((self.n_q, N, 3 * nat_uc), dtype=np.complex128)
             for a in range(nat_uc):
                 sel = np.where(itau == a)[0]
                 out[:, :, 3 * a:3 * a + 3] = np.einsum(
-                    'qk,ika->qia', phases[:, sel], field_sc[:, sel, :],
+                    'qk,ika->qia', phases_w[:, sel], field_sc[:, sel, :],
                     optimize=True)
-            return out / np.sqrt(n_c)
+            return out / np.sqrt(ch['n_c'])
 
-        m_uc = uc.get_masses_array()
-        sqrt_m3 = np.sqrt(np.repeat(m_uc, 3))
+        u_tilde = nudft(u)
+        f_tilde = nudft(f)
 
-        # --- Displacement channel ---
-        if coarse_data is None:
-            # Raw fields: NUDFT then unit conversion + mass scaling
-            u_tilde = nudft(u_sc)
-            u_scale = u_conv * sqrt_m3
+        if ch['u_prefiltered']:
+            u_scale = np.ones_like(ch['sqrt_m3'])
         else:
-            # Pre-filtered fields: apply f_Y on the coarse grid in mode
-            # space (this is exact there), rebuild the filtered real-space
-            # configuration, and transform THAT. The coarse X_q already
-            # includes units and mass scaling.
-            fy_c = self._get_fy_table_coarse(coarse_data)   # (nb, n_qc)
-            X_c = coarse_data['X_q']                        # (n_qc, N, nb)
-            pols_c = coarse_data['pols_q']
-            q_c = coarse_data['q_points']
-            n_qc = X_c.shape[0]
+            u_scale = ch['u_conv'] * ch['sqrt_m3']
 
-            phases_cc = np.exp(-2j * np.pi * (q_c @ r_lat.T))  # (n_qc, nat_sc)
-            uf_sc = np.zeros((N, nat_sc, 3), dtype=np.float64)
-            for iq in range(n_qc):
-                # back to Cartesian (mass-scaled) unit-cell components:
-                # x = u_mass . conj(P)  =>  u_mass = x . P^T (P unitary)
-                u_mass_q = (X_c[iq] * fy_c[:, iq][None, :]) @ pols_c[:, :, iq].T
-                # inverse Bloch transform (conjugate phases):
-                # uf[i, k, alpha] += conj(phase[k]) * u_mass_q[i, 3*itau[k]+alpha]
-                idx = 3 * itau[:, None] + np.arange(3)[None, :]   # (nat_sc, 3)
-                uf_sc += np.real(np.conj(phases_cc[iq])[None, :, None]
-                                 * u_mass_q[:, idx])
-            uf_sc /= np.sqrt(n_qc)
-
-            u_tilde = nudft(uf_sc)
-            u_scale = np.ones_like(sqrt_m3)  # already scaled
-
-        # --- Force channel (always raw: y legs carry no propagator) ---
-        f_tilde = nudft(delta_f)
-
-        # --- Mode projection ---
-        self.X_q = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
-        self.Y_q = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
+        X = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
+        Y = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
         for iq in range(self.n_q):
-            u_mass = u_tilde[iq] * u_scale[None, :]
-            f_mass = f_tilde[iq] * (f_conv / sqrt_m3[None, :])
             pol_iq = self.pols_q[:, :, iq]
-            self.X_q[iq] = u_mass @ np.conj(pol_iq)
-            self.Y_q[iq] = f_mass @ np.conj(pol_iq)
+            X[iq] = (u_tilde[iq] * u_scale[None, :]) @ np.conj(pol_iq)
+            Y[iq] = (f_tilde[iq] * (ch['f_conv'] / ch['sqrt_m3'][None, :])) @ np.conj(pol_iq)
+        return X, Y
 
     # ---------------------------------------------------------------
-    def _call_julia_qspace(self, R1, alpha1_flat):
-        """Fold the exact fine-side f_psi factors into alpha1 (prefiltered).
+    def _setup_window_passes(self):
+        """Build the windowed field sets for the minimal-image design.
 
-        In prefiltered mode the kernel contracts alpha1 with the FILTERED
-        fields (f_Y x), so alpha1 must carry the compensating f_psi factors:
-        alpha1 : x* x* = (alpha1 o f_psi x f_psi) : (f_Y x)* (f_Y x)*.
-        The buffer_u-based sums then use f_psi = 1 in the kernel (the factor
-        is already inside the modified alpha1).
+        3D windows are per-dimension products; passes are the product of
+        the per-dimension pass lists, replicated over `window_origins`
+        rigid origin shifts of the window (the ensemble average is
+        origin-independent -- translation invariance -- so origin
+        averaging is a pure variance reduction; the pass weight 1/n_origins
+        is folded into the z-slot window). Field sets are deduplicated
+        across passes/slots/origins by hashing the window values.
+        """
+        coarse = np.asarray(self.dyn.GetSupercell(), dtype=int)
+        designs = [get_window_design(coarse[d], K=self.window_K)
+                   for d in range(3)]
+
+        cell_idx = self._channels['cell_idx']    # (nat_sc, 3)
+
+        # Origin shifts: realized by PERMUTING THE DATA (rolling the
+        # configuration by a lattice vector) while the window support and
+        # the Bloch phases stay on the fixed fundamental domain. Shifting
+        # the window cyclically instead would wrap its support across the
+        # domain boundary with inconsistent absolute phases and destroy the
+        # designed kernel (verified).
+        n_orig = max(1, int(self.window_origins))
+        d_max = int(np.argmax(coarse))
+        shifts = []
+        for j in range(n_orig):
+            s = np.zeros(3, dtype=int)
+            s[d_max] = (j * coarse[d_max]) // n_orig
+            if not any(np.array_equal(s, t) for t in shifts):
+                shifts.append(s)
+
+        # atom permutation per shift: perm[k] = atom at cell n(k) + shift
+        cell_lookup = {}
+        itau = self._channels['itau']
+        for k in range(len(itau)):
+            cell_lookup[(itau[k],) + tuple(cell_idx[k] % coarse)] = k
+        perms = []
+        for s in shifts:
+            perm = np.array([cell_lookup[(itau[k],) + tuple((cell_idx[k] + s) % coarse)]
+                             for k in range(len(itau))], dtype=int)
+            perms.append(perm)
+
+        field_cache = {}     # (window-bytes, origin) -> index in _field_sets
+        self._field_sets = []
+
+        def get_set(w3d, i_orig):
+            key = (np.round(w3d, 12).tobytes(), i_orig)
+            if key not in field_cache:
+                field_cache[key] = len(self._field_sets)
+                self._field_sets.append(self._build_field_set(
+                    weights=w3d, perm=perms[i_orig] if i_orig > 0 else None))
+            return field_cache[key]
+
+        self._window_passes = []
+        for p0 in designs[0]:
+            for p1 in designs[1]:
+                for p2 in designs[2]:
+                    for i_orig in range(len(shifts)):
+                        per_slot = []
+                        for slot in range(3):
+                            w3d = (p0[slot][cell_idx[:, 0]]
+                                   * p1[slot][cell_idx[:, 1]]
+                                   * p2[slot][cell_idx[:, 2]])
+                            if slot == 0:
+                                w3d = w3d / len(shifts)
+                            per_slot.append(get_set(w3d, i_orig))
+                        self._window_passes.append(tuple(per_slot))
+
+        if Parallel.am_i_the_master():
+            print("Stochastic centering: {} window passes ({} origins), {} "
+                  "distinct field sets".format(len(self._window_passes),
+                                               len(shifts),
+                                               len(self._field_sets)))
+
+    # ---------------------------------------------------------------
+    def _fold_alpha1(self, alpha1_flat):
+        """Fold the fine-side f_psi factors into alpha1 (prefiltered mode)."""
+        blocks = self._unflatten_blocks(np.array(alpha1_flat))
+        folded = []
+        for pair_idx, (iq1, iq2) in enumerate(self.unique_pairs):
+            fold = np.outer(self._fpsi_fine[:, iq1], self._fpsi_fine[:, iq2])
+            folded.append(blocks[pair_idx] * fold)
+        return self._flatten_blocks(folded)
+
+    def _call_slots(self, fields_z, fields_w, fields_v, R1, alpha1_flat,
+                    compute_d3, compute_d4):
+        """One slot-resolved kernel call, parallel over (config, sym)."""
+        jl = JuliaExt.get_main()
+
+        n_total = self.n_syms_qspace * self.N
+        n_processors = Parallel.GetNProc()
+        count = n_total // n_processors
+        remainer = n_total % n_processors
+        indices = []
+        for rank in range(n_processors):
+            if rank < remainer:
+                start = np.int64(rank * (count + 1))
+                stop = np.int64(start + count + 1)
+            else:
+                start = np.int64(rank * count + remainer)
+                stop = np.int64(start + count)
+            indices.append([start + 1, stop])
+
+        unique_pairs_arr = np.array(self.unique_pairs, dtype=np.int32) + 1
+        valid_modes = np.array(self.valid_modes_q, dtype=np.bool_)
+        iq_pert_jl = int(self.iq_pert) + 1
+
+        Xz, Yz = fields_z
+        Xw, Yw = fields_w
+        Xv, Yv = fields_v
+
+        def get_combined(start_end):
+            return jl.get_perturb_averages_qspace_slots(
+                Xz, Yz, Xw, Yw, Xv, Yv,
+                self.w_q, self.rho, R1, alpha1_flat,
+                float(self.T), bool(compute_d3), bool(compute_d4),
+                iq_pert_jl, unique_pairs_arr,
+                int(start_end[0]), int(start_end[1]),
+                valid_modes,
+                float(self.qspace_scale3), float(self.qspace_scale4),
+                bool(self.qspace_prefiltered))
+
+        return Parallel.GoParallel(get_combined, indices, "+")
+
+    def _call_julia_qspace(self, R1, alpha1_flat):
+        """Anharmonic averages: windowed multi-pass or single plain pass.
+
+        In prefiltered mode the exact fine-side f_psi factors are folded
+        into alpha1 (the kernel contracts alpha1 with the FILTERED fields).
         """
         if self.qspace_prefiltered:
-            blocks = self._unflatten_blocks(np.array(alpha1_flat))
-            folded = []
-            for pair_idx, (iq1, iq2) in enumerate(self.unique_pairs):
-                fold = np.outer(self._fpsi_fine[:, iq1], self._fpsi_fine[:, iq2])
-                folded.append(blocks[pair_idx] * fold)
-            alpha1_flat = self._flatten_blocks(folded)
-        return super()._call_julia_qspace(R1, alpha1_flat)
+            alpha1_flat = self._fold_alpha1(alpha1_flat)
+
+        plain = (self.X_q, self.Y_q)
+
+        if self.window_design != "minimal_image" or self._window_passes is None:
+            if self._distributed:
+                return super()._call_julia_qspace(R1, alpha1_flat)
+            # single plain pass through the batched slot kernel
+            combined = self._call_slots(plain, plain, plain, R1, alpha1_flat,
+                                        True, not self.ignore_v4)
+            f_pert = combined[:self.n_bands]
+            return f_pert, self._unflatten_blocks(combined[self.n_bands:])
+
+        # D3 terms: sum of windowed passes, both (w,v) orientations averaged
+        # (preserves the transpose symmetry of the pair blocks). The plain
+        # estimator normalization corresponds to sum_r S_r = L*M with the
+        # design windows unnormalized (plain pass = all-ones), so no extra
+        # prefactor appears here.
+        combined = None
+        for (iz, iw, iv) in self._window_passes:
+            fz = self._field_sets[iz]
+            fw = self._field_sets[iw]
+            fv = self._field_sets[iv]
+            r1 = self._call_slots(fz, fw, fv, R1, alpha1_flat, True, False)
+            r2 = self._call_slots(fz, fv, fw, R1, alpha1_flat, True, False)
+            part = 0.5 * (r1 + r2)
+            combined = part if combined is None else combined + part
+
+        # D4 terms: single plain-window pass (plan section 5.4)
+        if not self.ignore_v4:
+            combined = combined + self._call_slots(
+                plain, plain, plain, R1, alpha1_flat, False, True)
+
+        f_pert = combined[:self.n_bands]
+        d2v_blocks = self._unflatten_blocks(combined[self.n_bands:])
+        return f_pert, d2v_blocks
 
     # ---------------------------------------------------------------
     def build_q_pair_map(self, iq_pert):
         """O(N_f) pair map via integer mesh-index arithmetic."""
         if self._fine_idx is None:
-            # Bare/distributed instance: fall back to the parent search
             return super().build_q_pair_map(iq_pert)
 
         mesh = self.fine_mesh
