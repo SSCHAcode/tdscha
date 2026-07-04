@@ -701,9 +701,10 @@ def get_window_design_asr(L, K=3, max_K=5, decay_weight=None):
 _ATOMIC_WINDOW_CACHE = {}
 
 
-def _structure_cache_key(structure, supercell, far):
+def _structure_cache_key(structure, supercell, far, pinned_slot=None):
     return (tuple(np.asarray(supercell, dtype=int)),
             int(far),
+            None if pinned_slot is None else pinned_slot,
             tuple(np.round(np.asarray(structure.unit_cell).ravel(), 10)),
             tuple(np.round(np.asarray(structure.coords).ravel(), 10)))
 
@@ -726,17 +727,20 @@ def _atomic_leg_images(structure, supercell, far, a, b, d):
     return [(tuple(ext[i]), 1.0 / len(winners)) for i in winners]
 
 
-def get_atomic_window_passes(structure, supercell, far=3):
+def get_atomic_window_passes(structure, supercell, far=3, pinned_slot=0):
     """Geometry-only pinned atomic window passes.
 
-    One pass is built for each pinned primitive atom a:
-      z_a(R) = delta_{R,0};
-      w_b(R) = v_b(R) = atomic minimal-image selector for pair (a,b).
+    One pass is built for each pinned primitive atom a. The selected
+    pinned_slot (0=z, 1=w, 2=v) is a delta at the origin; the other two
+    slots are atomic minimal-image selectors relative to that pinned atom.
 
     The returned window maps use keys (primitive_atom, extended_cell_tuple).
     They are converted to per-q complex weights by _window_map_to_qweights.
     """
-    key = _structure_cache_key(structure, supercell, far)
+    pinned_slot = int(pinned_slot)
+    if pinned_slot not in (0, 1, 2):
+        raise ValueError("pinned_slot must be 0, 1, or 2")
+    key = _structure_cache_key(structure, supercell, far, pinned_slot)
     if key in _ATOMIC_WINDOW_CACHE:
         return _ATOMIC_WINDOW_CACHE[key]
 
@@ -745,16 +749,87 @@ def get_atomic_window_passes(structure, supercell, far=3):
                                             range(L[2]))), dtype=int)
     passes = []
     for a in range(structure.N_atoms):
-        z = {(a, (0, 0, 0)): 1.0}
+        maps = [None, None, None]
+        maps[pinned_slot] = {(a, (0, 0, 0)): 1.0}
         leg = {}
         for b in range(structure.N_atoms):
             for d in cells:
                 for ext, w in _atomic_leg_images(structure, L, far, a, b, d):
                     leg[(b, ext)] = leg.get((b, ext), 0.0) + w
-        passes.append((z, leg, dict(leg)))
+        for slot in range(3):
+            if slot != pinned_slot:
+                maps[slot] = dict(leg)
+        passes.append(tuple(maps))
 
     _ATOMIC_WINDOW_CACHE[key] = passes
     return passes
+
+
+_ATOMIC_ASR_WINDOW_CACHE = {}
+
+
+def _plain_atom_window(structure, supercell, coeff=1.0):
+    """Uniform atom/cell window on the fundamental supercell."""
+    L = np.asarray(supercell, dtype=int)
+    out = {}
+    for a in range(structure.N_atoms):
+        for cell in itertools.product(range(L[0]), range(L[1]), range(L[2])):
+            out[(a, tuple(cell))] = float(coeff)
+    return out
+
+
+def _map_to_vector(map_, keys):
+    return np.array([map_.get(k, 0.0) for k in keys], dtype=np.float64)
+
+
+def _vector_to_map(vec, keys, tol=1e-14):
+    return {k: float(v) for k, v in zip(keys, vec) if abs(v) > tol}
+
+
+def get_atomic_asr_window_passes(structure, supercell, far=3, svd_tol=1e-10):
+    """ASR-compatible atom-resolved passes.
+
+    For each force channel, average the raw pinned-atom pair kernel over
+    the pinned atom and use a uniform pinned-slot window. The non-pinned
+    pair kernel is factorized by SVD into window products. Because every
+    atomic leg map has unit folded class sums, the factorized averaged
+    target has constant image sums on the non-pinned legs; the uniform
+    pinned window makes the pinned-leg ASR exact as well.
+    """
+    key = _structure_cache_key(structure, supercell, far, "asr")
+    if key in _ATOMIC_ASR_WINDOW_CACHE:
+        return _ATOMIC_ASR_WINDOW_CACHE[key]
+
+    out = []
+    nat = structure.N_atoms
+    for channel in range(3):
+        raw = get_atomic_window_passes(structure, supercell, far=far,
+                                       pinned_slot=channel)
+        other = [s for s in range(3) if s != channel]
+        keys0 = sorted(set().union(*(set(p[other[0]]) for p in raw)))
+        keys1 = sorted(set().union(*(set(p[other[1]]) for p in raw)))
+        M = np.zeros((len(keys0), len(keys1)), dtype=np.float64)
+        for p in raw:
+            M += np.outer(_map_to_vector(p[other[0]], keys0),
+                          _map_to_vector(p[other[1]], keys1))
+        M /= float(nat)
+
+        U, svals, Vh = np.linalg.svd(M, full_matrices=False)
+        if len(svals) == 0:
+            continue
+        cutoff = float(svd_tol) * max(1.0, svals[0])
+        for r, sval in enumerate(svals):
+            if sval <= cutoff:
+                continue
+            maps = [None, None, None]
+            maps[channel] = _plain_atom_window(structure, supercell,
+                                               coeff=sval)
+            maps[other[0]] = _vector_to_map(U[:, r], keys0)
+            maps[other[1]] = _vector_to_map(Vh[r, :], keys1)
+            out.append((channel, tuple(maps)))
+
+    _ATOMIC_ASR_WINDOW_CACHE[key] = out
+    return out
 
 
 def _window_map_to_qweights(window, q_points, structure, itau, cell_idx,
@@ -859,6 +934,11 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         atomic-basis minimal images relative to it, and all coarse origins
         are summed. This breaks the L=2 basis ties without constructing a
         d3 tensor; D4 still uses the plain pass.
+        "atomic_asr": experimental diagnostic prototype: the force slot is
+        uniform and the atom-averaged pair kernel is SVD-factorized into
+        slot windows. This is not a production mode; on the SnTe L=2 case
+        it removes the pinned-atom basis-offset information needed for good
+        centering.
     window_K : int
         Number of window passes per lattice dimension for the design.
     window_far : int
@@ -936,9 +1016,17 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         if fine_mesh is None:
             raise ValueError("QSpaceLanczosInterp requires fine_mesh=(m1, m2, m3)")
-        if window_design not in ("plain", "minimal_image", "asr", "atomic"):
+        if window_design not in ("plain", "minimal_image", "asr",
+                                 "atomic", "atomic_asr"):
             raise ValueError("window_design must be 'plain', 'minimal_image' "
-                             "'asr', or 'atomic'")
+                             "'asr', 'atomic', or 'atomic_asr'")
+        if window_design == "atomic_asr":
+            warnings.warn(
+                "window_design='atomic_asr' is an experimental diagnostic "
+                "prototype and is not validated for production interpolation; "
+                "use window_design='atomic' for the SnTe L=2 tensor-free "
+                "centering fix.",
+                RuntimeWarning)
         if d3_mode not in ("stochastic", "tensor"):
             raise ValueError("d3_mode must be 'stochastic' or 'tensor'")
         if d3_mode == "tensor":
@@ -1021,7 +1109,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the D4 pass and back-compat X_q/Y_q otherwise)
         self.X_q, self.Y_q = self._build_field_set(weights=None)
 
-        if window_design in ("minimal_image", "asr", "atomic"):
+        if window_design in ("minimal_image", "asr", "atomic", "atomic_asr"):
             self._setup_window_passes()
 
         if prefilter or d3_mode == "tensor":
@@ -1291,11 +1379,13 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the window cyclically instead would wrap its support across the
         # domain boundary with inconsistent absolute phases and destroy the
         # designed kernel (verified).
-        if self.window_design == "atomic":
+        if self.window_design in ("atomic", "atomic_asr"):
             shifts = [np.array(s, dtype=int)
                       for s in itertools.product(range(coarse[0]),
                                                  range(coarse[1]),
                                                  range(coarse[2]))]
+            if self.window_design == "atomic_asr":
+                shifts = [np.zeros(3, dtype=int)]
         else:
             n_orig = max(1, int(self.window_origins))
             d_max = int(np.argmax(coarse))
@@ -1329,22 +1419,41 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             return field_cache[key]
 
         if self.window_design == "atomic":
-            geom_passes = get_atomic_window_passes(
-                self.dyn.structure, coarse, far=self.window_far)
             self._window_passes = []
-            for maps in geom_passes:
-                weights = [_window_map_to_qweights(
-                    m, self.q_points, self.dyn.structure, itau, cell_idx,
-                    coarse) for m in maps]
-                for i_orig in range(len(shifts)):
-                    self._window_passes.append(tuple(
-                        get_set(w, i_orig) for w in weights))
+            for channel in range(3):
+                geom_passes = get_atomic_window_passes(
+                    self.dyn.structure, coarse, far=self.window_far,
+                    pinned_slot=channel)
+                for maps in geom_passes:
+                    weights = [_window_map_to_qweights(
+                        m, self.q_points, self.dyn.structure, itau, cell_idx,
+                        coarse) for m in maps]
+                    for i_orig in range(len(shifts)):
+                        self._window_passes.append((channel,) + tuple(
+                            get_set(w, i_orig) for w in weights))
 
             if Parallel.am_i_the_master():
-                print("Stochastic centering [atomic]: {} window passes "
+                print("Stochastic centering [atomic-perm]: {} window passes "
                       "({} full origins), {} distinct field sets".format(
                           len(self._window_passes), len(shifts),
                           len(self._field_sets)))
+            return
+
+        if self.window_design == "atomic_asr":
+            self._window_passes = []
+            geom_passes = get_atomic_asr_window_passes(
+                self.dyn.structure, coarse, far=self.window_far)
+            for channel, maps in geom_passes:
+                weights = [_window_map_to_qweights(
+                    m, self.q_points, self.dyn.structure, itau, cell_idx,
+                    coarse) for m in maps]
+                self._window_passes.append((channel,) + tuple(
+                    get_set(w, 0) for w in weights))
+
+            if Parallel.am_i_the_master():
+                print("Stochastic centering [atomic-asr]: {} SVD/channel "
+                      "passes, {} distinct field sets".format(
+                          len(self._window_passes), len(self._field_sets)))
             return
 
         if self.window_design == "asr":
@@ -1484,7 +1593,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         return self._flatten_blocks(folded)
 
     def _call_slots(self, fields_z, fields_w, fields_v, R1, alpha1_flat,
-                    compute_d3, compute_d4):
+                    compute_d3, compute_d4, d3_channels=(True, True, True)):
         """One slot-resolved kernel call, parallel over (config, sym)."""
         jl = JuliaExt.get_main()
 
@@ -1519,7 +1628,10 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                 int(start_end[0]), int(start_end[1]),
                 valid_modes,
                 float(self.qspace_scale3), float(self.qspace_scale4),
-                bool(self.qspace_prefiltered))
+                bool(self.qspace_prefiltered),
+                True,
+                bool(d3_channels[0]), bool(d3_channels[1]),
+                bool(d3_channels[2]))
 
         return Parallel.GoParallel(get_combined, indices, "+")
 
@@ -1556,7 +1668,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         plain = (self.X_q, self.Y_q)
 
-        if (self.window_design not in ("minimal_image", "asr", "atomic")
+        if (self.window_design not in ("minimal_image", "asr", "atomic",
+                                       "atomic_asr")
                 or self._window_passes is None):
             if self._distributed:
                 return super()._call_julia_qspace(R1, alpha1_flat)
@@ -1572,16 +1685,29 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # design windows unnormalized (plain pass = all-ones), so no extra
         # prefactor appears here.
         combined = None
-        for (iz, iw, iv) in self._window_passes:
-            fz = self._field_sets[iz]
-            fw = self._field_sets[iw]
-            fv = self._field_sets[iv]
-            r1 = self._call_slots(fz, fw, fv, R1, alpha1_flat, True, False)
-            if self.window_design == "atomic" or iw == iv:
-                part = r1
+        for pinfo in self._window_passes:
+            if self.window_design in ("atomic", "atomic_asr"):
+                channel, iz, iw, iv = pinfo
+                fz = self._field_sets[iz]
+                fw = self._field_sets[iw]
+                fv = self._field_sets[iv]
+                d3_channels = (channel == 0, channel == 1, channel == 2)
+                part = self._call_slots(fz, fw, fv, R1, alpha1_flat,
+                                        True, False,
+                                        d3_channels=d3_channels)
             else:
-                r2 = self._call_slots(fz, fv, fw, R1, alpha1_flat, True, False)
-                part = 0.5 * (r1 + r2)
+                iz, iw, iv = pinfo
+                fz = self._field_sets[iz]
+                fw = self._field_sets[iw]
+                fv = self._field_sets[iv]
+                r1 = self._call_slots(fz, fw, fv, R1, alpha1_flat,
+                                      True, False)
+                if iw == iv:
+                    part = r1
+                else:
+                    r2 = self._call_slots(fz, fv, fw, R1, alpha1_flat,
+                                          True, False)
+                    part = 0.5 * (r1 + r2)
             combined = part if combined is None else combined + part
 
         # D4 terms: single plain-window pass (plan section 5.4)

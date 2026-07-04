@@ -790,7 +790,10 @@ function get_perturb_averages_qspace_slots_kernel(
     start_index::Int64,
     end_index::Int64,
     scale3::Float64,
-    scale4::Float64
+    scale4::Float64,
+    d3_force_z::Bool=true,
+    d3_force_w::Bool=true,
+    d3_force_v::Bool=true
 )
     n_pairs = size(unique_pairs, 1)
     n_syms = length(symmetries)
@@ -831,12 +834,16 @@ function get_perturb_averages_qspace_slots_kernel(
         # === D3 weights from R1 (slot z) ===
         weight_R = zero(ComplexF64)
         weight_Rf = zero(ComplexF64)
-        if compute_d3
+        if compute_d3 && (d3_force_w || d3_force_v)
             for nu in 1:n_bands
                 weight_R += f_Y[nu, iq_pert] * conj(xz_pert[nu]) * R1[nu]
-                weight_Rf += R1[nu] * conj(yz_pert[nu])
             end
             weight_R *= rho[i_config] / 3.0 * scale3
+        end
+        if compute_d3 && d3_force_z
+            for nu in 1:n_bands
+                weight_Rf += R1[nu] * conj(yz_pert[nu])
+            end
             weight_Rf *= rho[i_config] / 3.0 * scale3
         end
 
@@ -877,22 +884,29 @@ function get_perturb_averages_qspace_slots_kernel(
             total_sum += (iq1 < iq2 ? 2 * local_w : local_w)
         end
 
-        buf_f_weight = zero(ComplexF64)
+        buf_f_weight_w = zero(ComplexF64)
+        buf_f_weight_v = zero(ComplexF64)
         for iq in 1:n_q
             for nu in 1:n_bands
                 idx = (iq-1)*n_bands + nu
-                buf_f_weight += bu_w[iq, nu] * f_psi[nu, iq] * conj(yw_rot[idx])
-                buf_f_weight += bu_v[iq, nu] * f_psi[nu, iq] * conj(yv_rot[idx])
+                buf_f_weight_w += bu_w[iq, nu] * f_psi[nu, iq] * conj(yw_rot[idx])
+                buf_f_weight_v += bu_v[iq, nu] * f_psi[nu, iq] * conj(yv_rot[idx])
             end
         end
 
         # === f_pert (D3 from alpha1, outputs on slot z) ===
         if compute_d3
-            w1 = -total_sum / 2.0 * rho[i_config] / 3.0 * scale3
-            w2 = -buf_f_weight * rho[i_config] / 3.0 * scale3
+            w1 = d3_force_z ? -total_sum / 2.0 * rho[i_config] / 3.0 * scale3 : zero(ComplexF64)
+            bfw = (d3_force_w ? buf_f_weight_w : zero(ComplexF64)) +
+                  (d3_force_v ? buf_f_weight_v : zero(ComplexF64))
+            w2 = -bfw * rho[i_config] / 3.0 * scale3
             for nu in 1:n_bands
-                f_pert[nu] += w1 * yz_pert[nu]
-                f_pert[nu] += w2 * f_Y[nu, iq_pert] * xz_pert[nu]
+                if d3_force_z
+                    f_pert[nu] += w1 * yz_pert[nu]
+                end
+                if d3_force_w || d3_force_v
+                    f_pert[nu] += w2 * f_Y[nu, iq_pert] * xz_pert[nu]
+                end
             end
         end
 
@@ -901,13 +915,10 @@ function get_perturb_averages_qspace_slots_kernel(
         total_wb = zero(ComplexF64)
         if compute_d4
             total_wD4 = -total_sum * rho[i_config] / 8.0 * scale4
-            total_wb = -buf_f_weight * rho[i_config] / 4.0 * scale4
+            total_wb = -(buf_f_weight_w + buf_f_weight_v) * rho[i_config] / 4.0 * scale4
         end
 
-        w_cross = weight_R + total_wD4
-        w_diag = weight_Rf + total_wb
-
-        if w_cross != 0 || w_diag != 0
+        if weight_R != 0 || weight_Rf != 0 || total_wD4 != 0 || total_wb != 0
             for p in 1:n_pairs
                 iq1 = unique_pairs[p, 1]
                 iq2 = unique_pairs[p, 2]
@@ -922,8 +933,20 @@ function get_perturb_averages_qspace_slots_kernel(
                     for nu2 in 1:n_bands
                         r1_2 = f_Y[nu2, iq2] * xv2[nu2]
                         r2_2 = yv2[nu2]
-                        contrib = -w_cross * (r1_1 * r2_2 + r2_1 * r1_2)
-                        contrib -= w_diag * r1_1 * r1_2
+                        contrib = zero(ComplexF64)
+                        if compute_d3 && d3_force_v
+                            contrib -= weight_R * r1_1 * r2_2
+                        end
+                        if compute_d3 && d3_force_w
+                            contrib -= weight_R * r2_1 * r1_2
+                        end
+                        if compute_d3 && d3_force_z
+                            contrib -= weight_Rf * r1_1 * r1_2
+                        end
+                        if compute_d4
+                            contrib -= total_wD4 * (r1_1 * r2_2 + r2_1 * r1_2)
+                            contrib -= total_wb * r1_1 * r1_2
+                        end
                         d2v_blocks[p][nu1, nu2] += contrib
                     end
                 end
@@ -967,7 +990,10 @@ function get_perturb_averages_qspace_slots(
     scale3::Float64,
     scale4::Float64,
     prefiltered::Bool,
-    batched::Bool=true
+    batched::Bool=true,
+    d3_force_z::Bool=true,
+    d3_force_w::Bool=true,
+    d3_force_v::Bool=true
 )
     n_q = size(Xz, 1)
     n_bands = size(Xz, 3)
@@ -1008,7 +1034,8 @@ function get_perturb_averages_qspace_slots(
     f_pert, d2v = kernel(
         Xz, Yz, Xw, Yw, Xv, Yv, f_Y, f_psi, rho, R1, alpha1_blocks,
         symmetries, compute_d3, compute_d4, iq_pert, unique_pairs,
-        n_bands, n_q, start_index, end_index, scale3, scale4)
+        n_bands, n_q, start_index, end_index, scale3, scale4,
+        d3_force_z, d3_force_w, d3_force_v)
 
     result = zeros(ComplexF64, n_bands + n_pairs * n_bands^2)
     result[1:n_bands] = f_pert
@@ -1051,7 +1078,10 @@ function _slots_kernel_batched(
     start_index::Int64,
     end_index::Int64,
     scale3::Float64,
-    scale4::Float64
+    scale4::Float64,
+    d3_force_z::Bool=true,
+    d3_force_w::Bool=true,
+    d3_force_v::Bool=true
 )
     n_pairs = size(unique_pairs, 1)
     n_syms = length(symmetries)
@@ -1118,14 +1148,20 @@ function _slots_kernel_batched(
             # === D3 weights from R1 (slot z) ===
             weight_R = zeros(ComplexF64, B)
             weight_Rf = zeros(ComplexF64, B)
-            if compute_d3
+            if compute_d3 && (d3_force_w || d3_force_v || d3_force_z)
                 Xz_qp = view(Xz_r, qp_rows, :)
                 Yz_qp = view(Yz_r, qp_rows, :)
                 for b in 1:B
                     wr = zero(ComplexF64); wrf = zero(ComplexF64)
-                    @inbounds for nu in 1:nb
-                        wr += conj(Xz_qp[nu, b]) * aR1[nu]
-                        wrf += R1[nu] * conj(Yz_qp[nu, b])
+                    if d3_force_w || d3_force_v
+                        @inbounds for nu in 1:nb
+                            wr += conj(Xz_qp[nu, b]) * aR1[nu]
+                        end
+                    end
+                    if d3_force_z
+                        @inbounds for nu in 1:nb
+                            wrf += R1[nu] * conj(Yz_qp[nu, b])
+                        end
                     end
                     weight_R[b] = wr * rho_c[b] / 3.0 * scale3
                     weight_Rf[b] = wrf * rho_c[b] / 3.0 * scale3
@@ -1166,14 +1202,17 @@ function _slots_kernel_batched(
                 end
             end
 
-            buf_f = zeros(ComplexF64, B)
+            buf_f_w = zeros(ComplexF64, B)
+            buf_f_v = zeros(ComplexF64, B)
             for b in 1:B
-                acc = zero(ComplexF64)
+                acc_w = zero(ComplexF64)
+                acc_v = zero(ComplexF64)
                 @inbounds for i in 1:n_total
-                    acc += BUw[i, b] * fpsi_vec[i] * conj(Yw_r[i, b])
-                    acc += BUv[i, b] * fpsi_vec[i] * conj(Yv_r[i, b])
+                    acc_w += BUw[i, b] * fpsi_vec[i] * conj(Yw_r[i, b])
+                    acc_v += BUv[i, b] * fpsi_vec[i] * conj(Yv_r[i, b])
                 end
-                buf_f[b] = acc
+                buf_f_w[b] = acc_w
+                buf_f_v[b] = acc_v
             end
 
             # === f_pert (D3 from alpha1, slot z outputs) ===
@@ -1181,29 +1220,40 @@ function _slots_kernel_batched(
                 Xz_qp = view(Xz_r, qp_rows, :)
                 Yz_qp = view(Yz_r, qp_rows, :)
                 for b in 1:B
-                    w1 = -total_sum[b] / 2.0 * rho_c[b] / 3.0 * scale3
-                    w2 = -buf_f[b] * rho_c[b] / 3.0 * scale3
+                    w1 = d3_force_z ? -total_sum[b] / 2.0 * rho_c[b] / 3.0 * scale3 : zero(ComplexF64)
+                    bfw = (d3_force_w ? buf_f_w[b] : zero(ComplexF64)) +
+                          (d3_force_v ? buf_f_v[b] : zero(ComplexF64))
+                    w2 = -bfw * rho_c[b] / 3.0 * scale3
                     @inbounds for nu in 1:nb
-                        f_pert[nu] += w1 * Yz_qp[nu, b]
-                        f_pert[nu] += w2 * f_Y[nu, iq_pert] * Xz_qp[nu, b]
+                        if d3_force_z
+                            f_pert[nu] += w1 * Yz_qp[nu, b]
+                        end
+                        if d3_force_w || d3_force_v
+                            f_pert[nu] += w2 * f_Y[nu, iq_pert] * Xz_qp[nu, b]
+                        end
                     end
                 end
             end
 
             # === combined d2v weights per column ===
-            w_cross = zeros(ComplexF64, B)
+            w_cross_v = zeros(ComplexF64, B)
+            w_cross_w = zeros(ComplexF64, B)
             w_diag = zeros(ComplexF64, B)
             any_w = false
             for b in 1:B
-                wc = weight_R[b]
-                wd = weight_Rf[b]
+                wcv = (compute_d3 && d3_force_v) ? weight_R[b] : zero(ComplexF64)
+                wcw = (compute_d3 && d3_force_w) ? weight_R[b] : zero(ComplexF64)
+                wd = (compute_d3 && d3_force_z) ? weight_Rf[b] : zero(ComplexF64)
                 if compute_d4
-                    wc += -total_sum[b] * rho_c[b] / 8.0 * scale4
-                    wd += -buf_f[b] * rho_c[b] / 4.0 * scale4
+                    wd4 = -total_sum[b] * rho_c[b] / 8.0 * scale4
+                    wcv += wd4
+                    wcw += wd4
+                    wd += -(buf_f_w[b] + buf_f_v[b]) * rho_c[b] / 4.0 * scale4
                 end
-                w_cross[b] = wc
+                w_cross_v[b] = wcv
+                w_cross_w[b] = wcw
                 w_diag[b] = wd
-                any_w = any_w || (wc != 0) || (wd != 0)
+                any_w = any_w || (wcv != 0) || (wcw != 0) || (wd != 0)
             end
 
             if any_w
@@ -1222,14 +1272,14 @@ function _slots_kernel_batched(
                         A1v[nu, b] = f_Y[nu, iq1] * Xw_r[r1s[1]+nu-1, b]   # r1w
                         A2v[nu, b] = Yw_r[r1s[1]+nu-1, b]                 # r2w
                     end
-                    # T1 = r2v scaled by -w_cross columns
+                    # T1 = r2v scaled by force-v / D4 cross columns
                     @inbounds for b in 1:B, nu in 1:nb
-                        T1v[nu, b] = -w_cross[b] * Yv_r[r2s[1]+nu-1, b]
+                        T1v[nu, b] = -w_cross_v[b] * Yv_r[r2s[1]+nu-1, b]
                     end
                     mul!(d2v_blocks[p], A1v, transpose(T1v), 1.0, 1.0)
-                    # T1 = r1v scaled by -w_cross
+                    # T1 = r1v scaled by force-w / D4 cross columns
                     @inbounds for b in 1:B, nu in 1:nb
-                        T1v[nu, b] = -w_cross[b] * f_Y[nu, iq2] * Xv_r[r2s[1]+nu-1, b]
+                        T1v[nu, b] = -w_cross_w[b] * f_Y[nu, iq2] * Xv_r[r2s[1]+nu-1, b]
                     end
                     mul!(d2v_blocks[p], A2v, transpose(T1v), 1.0, 1.0)
                     # T1 = r1v scaled by -w_diag

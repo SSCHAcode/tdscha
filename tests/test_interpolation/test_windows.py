@@ -92,6 +92,46 @@ def test_batched_equals_scalar_kernel(small_system):
     assert np.max(np.abs(r_scalar - r_batch)) < 1e-12 * scale
 
 
+def test_d3_channel_masks_sum_to_full_kernel(small_system):
+    """The explicit force_z/force_w/force_v masks must be an exact
+    decomposition of the original all-channel D3 slot kernel for identical
+    fields. This is the Julia 1/3 + 2/3 permutation-symmetry split used by
+    the atom-resolved windows."""
+    import tdscha.JuliaExt as JuliaExt
+    dyn, ens = small_system
+    li = QI.QSpaceLanczosInterp(ens, fine_mesh=(1, 1, 6),
+                                window_design="plain")
+    li.init(use_symmetries=True)
+    li.prepare_mode_q(1, 4)
+
+    jl = JuliaExt.get_main()
+    rs = np.random.RandomState(11)
+    nb = li.n_bands
+    R1 = rs.randn(nb) + 1j * rs.randn(nb)
+    n_al = len(li.unique_pairs) * nb ** 2
+    alpha1 = rs.randn(n_al) + 1j * rs.randn(n_al)
+
+    up = np.array(li.unique_pairs, dtype=np.int32) + 1
+    vm = np.array(li.valid_modes_q, dtype=np.bool_)
+    args = (li.X_q, li.Y_q, li.X_q, li.Y_q, li.X_q, li.Y_q,
+            li.w_q, li.rho, R1, alpha1, float(li.T), True, False,
+            int(li.iq_pert) + 1, up, 1, int(li.n_syms_qspace * li.N), vm,
+            1.0, 1.0, True, True)
+
+    full = np.array(jl.get_perturb_averages_qspace_slots(
+        *args, True, True, True))
+    parts = [
+        np.array(jl.get_perturb_averages_qspace_slots(
+            *args, True, False, False)),
+        np.array(jl.get_perturb_averages_qspace_slots(
+            *args, False, True, False)),
+        np.array(jl.get_perturb_averages_qspace_slots(
+            *args, False, False, True)),
+    ]
+    scale = np.max(np.abs(full))
+    assert np.max(np.abs(full - sum(parts))) < 1e-12 * scale
+
+
 def test_windowed_trivial_mesh_equals_plain(small_system):
     """On a coarse mesh where every window design is trivial (L <= 2 per
     dimension), the minimal_image path must equal the plain path exactly."""

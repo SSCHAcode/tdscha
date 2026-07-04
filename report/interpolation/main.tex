@@ -638,9 +638,9 @@ minimizes the triplet perimeter over replicas.  The coarse data therefore
 contains the needed information; the missing ingredient is atom-resolved
 centering.
 
-The production tensor-free fix is a pinned, atom-resolved kernel.  For one
-primitive atom $a$ and one coarse origin $\mathbf{o}$, pin the perturbation
-slot to
+The tensor-free fix is a pinned, atom-resolved kernel.  For one primitive
+atom $a$ and one coarse origin $\mathbf{o}$, first consider pinning the
+perturbation slot to
 \begin{equation}
 z_{a\mathbf{o}}(b,\mathbf{n}) =
 \delta_{ab}\,\delta_{\mathbf{n}\mathbf{o}}.
@@ -676,6 +676,42 @@ $\exp[-i\tilde\qv\cdot(\mathbf m\mathbf L)\mathbf A]$; this is just the
 per-$q$, per-atom weight path already used by the doubled-support ASR
 windows.  No $\Phi^{(3)}$ value enters Eq.~\eqref{eq:atomicimages}.
 
+The stochastic D3 estimator in the Julia implementation already represents
+the permutation symmetry of $\Phi^{(3)}$ by splitting the three possible
+force legs: one third of the estimator has the force on the perturbation
+slot $z$, and the remaining two thirds have the force on the two pair slots
+$w$ and $v$.  The atom-resolved implementation must follow the same split.
+The production path therefore runs three channel families:
+\begin{align}
+\text{force on }z &: \quad z\text{-pinned windows as in }
+  \eqref{eq:atomickernel},\\
+\text{force on }w &: \quad w\text{-pinned windows, with }z,v
+  \text{ centered relative to }w,\\
+\text{force on }v &: \quad v\text{-pinned windows, with }z,w
+  \text{ centered relative to }v.
+\end{align}
+For identical slot windows, the sum of the three channel calls is
+algebraically identical to the original all-channel D3 kernel; this is now a
+unit test.  For SnTe the pass count is consequently
+$3\times2\times8=48$ D3 channel passes, but only 32 distinct field sets
+because many windows are reused.
+
+The same class-sum structure gives the strict-$\Gamma$ acoustic sum rule
+without constructing the tensor.  For every folded atom/cell class, the
+non-pinned atomic windows have total selected-image weight one.  After
+summing all pinned atoms and all coarse origins, the pinned slot has the
+same unit class sum.  Hence contracting an ASR-satisfying folded coarse
+$\Phi^{(3)}$ with a uniform acoustic displacement at $q=0$ sees exactly the
+same folded sums as the plain commensurate estimator, and vanishes.  What is
+not automatic is the first moment of the image distribution: near $\Gamma$,
+different centered images can change the $O(q)$ acoustic-vertex slope.
+This is now treated as a diagnostic/correction problem rather than by
+averaging away the pinned atom.  A low-rank prototype that used a uniform
+pinned slot and an SVD of the atom-averaged pair kernel reduced SnTe to the
+bad plain result (peak $\simeq52\,\mathrm{cm}^{-1}$), showing that the
+atom-conditioned basis-offset information must remain in the leading
+kernel.
+
 Before using this in the stochastic estimator we performed an oracle test:
 contract the \emph{periodic} SnTe $\Phi^{(3)}$ tensor with candidate
 geometry kernels, but use the tensor only to measure the kernel quality.
@@ -697,7 +733,10 @@ normalized $L^1$ vs tensor-D3\\
 \midrule
 direct $4^3$ q-Lanczos & 37.56 & 0 & 0.0542\\
 tensor-D3 oracle & 37.64 & 0.0542 & 0\\
-atomic, $N_I=1000$, 30 steps & 37.72 & 0.0865 & 0.0466\\
+atomic, z-pinned prototype, $N_I=1000$, 30 steps
+  & 37.72 & 0.0865 & 0.0466\\
+atomic, permutation-correct, $N_I=300$, 20 steps
+  & 38.50 & 0.3569 & 0.3202\\
 plain cell-index window & 52.28 & 1.7507 & 1.7496\\
 old $d_3$ bubble & 38.46 & 0.3162 & 0.2797\\
 \bottomrule
@@ -705,11 +744,15 @@ old $d_3$ bubble & 38.46 & 0.3162 & 0.2797\\
 \end{center}
 The static response has $g>0$ (unstable) as in the direct $4^3$ and
 tensor-D3 calculations; the broken plain interpolation instead produced a
-spurious stable $\approx 50\,\mathrm{cm}^{-1}$ response.  The atomic mode
-therefore reaches the centered-tensor quality on the real-material test
-without constructing or storing the third-order tensor.  Its current cost
-is the number of pinned-atom/origin passes (SnTe: $2\times8=16$ D3 pass
-calls); D4 remains on the single plain pass.
+spurious stable $\approx 50\,\mathrm{cm}^{-1}$ response.  The atom-resolved
+mode therefore fixes the peak position and the static instability of the
+real-material test without constructing or storing the third-order tensor.
+The best long stochastic run so far is the earlier z-pinned prototype; the
+current permutation-correct mode has only been run to $N_I=300$, where the
+peak is already correct but the line-shape $L^1$ is still visibly noisy.
+Its current cost is the number of force-channel/pinned-atom/origin passes
+(SnTe: $3\times2\times8=48$ D3 pass calls); D4 remains on the single plain
+pass.
 
 %======================================================================
 \section{Implementation and cost}
