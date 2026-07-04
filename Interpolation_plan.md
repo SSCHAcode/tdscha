@@ -38,6 +38,32 @@
   geometry, pairwise immunity and the WS-resolution rule in §5.7(f); report
   section + figures in report/interpolation (asr_kernel.pdf, asr_leak.pdf);
   8 new tests in tests/test_interpolation/test_asr_windows.py.
+- DONE (2026-07-04): **hybrid tensor-D3 mode** (`d3_mode="tensor"`,
+  section 5.8) — fix for the real-material failure found on SnTe
+  (2×2×2 → 4×4×4 interpolation stuck at ~52 cm⁻¹ vs the correct ~38): at L=2
+  no window design can represent the atomic-basis, perimeter-minimizing
+  centering of `Tensor3.Center(Far=3)`, yet the SAME 2×2×2 stochastic d3,
+  centered that way, reproduces the direct 4×4×4 result through the old
+  Spectral bubble. Since every D3 term of the Lanczos has one leg pinned at
+  q_pert and the estimator is linear in the D3 correlations, the D3 channel
+  is replaced by a deterministic contraction of the centered Tensor3
+  interpolated at the fine pairs — by construction identical to Spectral's
+  vertex interpolation. VALIDATED: SnTe interp 2×2×2→4×4×4 dynamic TO peak
+  37.6 cm⁻¹ = direct 4×4×4 (lineshape L1 0.054; was 52.3 broken); identity
+  static = free-energy-Hessian reference 21.28 exactly; 5 new toy-chain
+  tests green (`tests/test_interpolation/test_d3_tensor_mode.py`). Full
+  numbers in §5.8(f) and in the SnTe issue file
+  (`.../SnTe_FF/Spectral/TDSCHA_Interpolate/issues.md`).
+- DONE (2026-07-04): **tensor-free atomic centering**
+  (`window_design="atomic"`, section 5.9) — production-compatible fix for
+  the same SnTe 2×2×2→4×4×4 failure without computing/storing Φ³. The
+  q_pert leg is pinned to one primitive atom and all coarse origins; the
+  pair legs use geometry-only atomic-basis minimal images with extended
+  images folded back by Bloch phases. SnTe Γ TO D3-only benchmark:
+  N=1000, 30 steps peak 37.7 cm⁻¹ (direct 37.56, tensor-D3 37.64,
+  broken plain 52.28), normalized L1 vs direct 0.0865 and vs tensor-D3
+  0.0466. Added pure geometry tests in
+  `tests/test_interpolation/test_atomic_windows.py`.
 - TODO: LO-TO, off-mesh q_pert, IR/Raman sqrt(N_f) prefactor, distributed-mode
   support, KPM variant (M5, skipped by decision).
 
@@ -632,6 +658,234 @@ pass (plain = feasible point of the manifold; its ASR is already exact).
   decay-weighted variant (ρ=0.4) measures WORSE on the short-ranged toy (0.196):
   the larger far-range kernel entries cost variance — keep ρ=1 unless the
   physical tensor range genuinely demands the reweighting.
+
+### 5.8 Hybrid tensor-D3 mode: when the window formalism cannot center (L=2, real materials)
+
+**Status: DONE, VALIDATED (2026-07-04), triggered by the SnTe failure.** Interpolating
+the SnTe force-field model from the 2×2×2 tutorial ensemble to 4×4×4 leaves the
+Γ TO peak at ~52 cm⁻¹ instead of the correct ~38 (direct 4×4×4 ensemble AND the
+old `Spectral` d3 bubble agree on ~38). Crucially, the old bubble is built from
+the **same 2×2×2 ensemble** (stochastic d3 of `get_free_energy_hessian`,
+N=10000) followed by `Tensor3.Center(Far=3) + Apply_ASR` — so the coarse data
+contains the physics and the failure is purely our interpolation kernel.
+
+**(a) Three structural gaps of the window kernels w.r.t. `Tensor3.Center`.**
+
+1. *One-period no-go at L=2* (§5.7b): every nonzero cell difference is a WS
+   tie, so plain = minimal-image = the only design; each δ=1 class is split
+   50/50 between the ±1 images with wrong relative phases at off-grid q̃.
+2. *Cell-index vs atomic-basis metric*: the kernel `K₃(δ1, δ2)` acts on CELL
+   difference classes; `Center` assigns weight by actual interatomic
+   Cartesian distances including the basis offsets τ_b − τ_a. It is exactly
+   the basis offset that breaks the L=2 ties (and why `Center` needs
+   Far up to 3 on a 2×2×2 fcc supercell: the distance-minimal replica can
+   sit outside the first supercell parallelepiped).
+3. *Separability vs perimeter criterion*: `Center` minimizes the triplet
+   perimeter |r_ab| + |r_ac| + |r_bc| over replica pairs — a coupled,
+   non-separable criterion in the (non-orthogonal) supercell fractional
+   coordinates. Per-dimension window products cannot represent it; even the
+   pair-leg version would need per-atom, multi-period windows.
+
+**(b) The exact reorganization that makes a tensor fix legitimate.** Every D3
+term of the q-space Lanczos has one leg pinned at `q_pert` (`weight_R`,
+`weight_Rf`, `w1`, `w2` in the §1 table), and the estimator is LINEAR in the
+3-field correlations. Its infinite-N expectation is therefore
+
+```
+(D3 action at fine q̃)  =  Σ_{coarse data}  (kernel)  ×  (coarse d3 correlations)
+```
+
+for ANY windowed scheme — the windows only choose the kernel. Averaging the
+per-configuration data first (= the stochastic d3 of the free-energy Hessian)
+and interpolating with the centered-tensor kernel of `Spectral` is then an
+exact substitution of a better kernel, not an approximation with new inputs.
+The D3 channel needs only the N_f mode-space blocks with one leg at q_pert:
+
+```
+D3̃[ν, ν1, ν2](q̃1, q̃2) = N_f^{-1/2} Σ_{abc} e_ν^a(q_pert) conj(e_{ν1}^b(q̃1)) conj(e_{ν2}^c(q̃2))
+                          (m_a m_b m_c)^{-1/2}  Φ̂³_{abc}(−q̃1, −q̃2)
+```
+
+(leg a at cell 0 carries the implied momentum q̃1 + q̃2 = q_pert; legs b, c
+pair with the displacement fields x(q̃1), x(q̃2), whence the conjugated
+polarization vectors — verified by the Wick derivation of the estimator
+expectation, see the report appendix.)
+
+with `Φ̂³(q2, q3) = Σ_{R2 R3} Φ³(0, R2, R3) e^{+2πi (q2·R2 + q3·R3)}`
+= `Tensor3.Interpolate(−q2, −q3)` (cellconstructor phase convention
+`e^{−2πi q·r}`), i.e. `D3̃` uses `Tensor3.Interpolate(q̃1, q̃2)`.
+Storage O(N_f · nb³) — no large tensor ever lives on the fine mesh.
+
+**(c) Deterministic replacement of the stochastic D3 terms** (derived from the
+Gaussian IBP expectation of the fused kernel, conventions of `vector_r2q`
+(phase e^{−2πi q·R}, 1/√N_c), TRI gauge e(−q) = conj(e(q)), force Taylor
+f = −½ Φ³ u u; the three Wick orderings weight_R (2 orientations) + weight_Rf
+(1) sum to the full contraction, likewise w1 (1) + w2 (2)):
+
+```
+d2v(q̃1, q̃2)_{ν1 ν2}  =  + Σ_ν  R1[ν] · D3̃[ν, ν1, ν2]
+f_pert[ν]            =  + ½ Σ_{ordered pairs (q̃1 q̃2)} Σ_{ν1 ν2}
+                          conj(D3̃[ν, ν1, ν2]) f_ψ(q̃1 ν1) f_ψ(q̃2 ν2) α1_{ν1 ν2}
+```
+
+("ordered pairs" = unique pairs with off-diagonal counted twice via the
+transpose-symmetric α1 blocks, matching the factor-2 of `total_sum`). The two
+maps are mutual adjoints by construction (same D3̃), so L stays Hermitian
+exactly; there is no n_syms average (the centered tensor is already
+symmetric) and no scale3 (the N_f^{-1/2} normalization is direct, replacing
+N_c^{-1/2}·sqrt(N_c/N_f)). The fine-side f_ψ appear explicitly — the tensor
+path bypasses the prefilter folding (`_fold_alpha1`), which remains for the
+stochastic D4 pass. Mode-validity masks are applied to the blocks. D4 stays
+on the stochastic plain-window pass with scale4 (shorter range, smaller
+weight, §5.4); ignore_v3 keeps the existing semantics (R1 zeroed upstream ⇒
+d2v_D3 = 0, f_pert-from-α1 still active, as in the stochastic path).
+
+**(d) API.**
+
+```
+lanczos = QSpaceLanczosInterp(ens, fine_mesh=(4,4,4),
+                              d3_mode="tensor", d3_tensor=t3)   # centered CC Tensor3
+```
+
+`d3_tensor` must be a `cellconstructor.ForceTensor.Tensor3` already
+`Center()`ed (+ `Apply_ASR()`), in Ry/Bohr³ consistent with the dyn — the
+exact object the Spectral bubble consumes; typically from the stochastic d3
+of `get_free_energy_hessian(..., verbose=True)` on the same ensemble.
+`window_design` is forced to "plain" in this mode (windows only ever served
+the D3 channel). Blocks are (re)built at `build_q_pair_map` time (they
+depend on q_pert), cost N_f · nb³ contractions via one zgemm chain.
+
+**(e) Scope note.** This mode reintroduces a stored Φ³ (size N_c²·(3nat)³ —
+the same object Spectral already requires, affordable whenever the coarse
+ensemble is), trading requirement 1 for correctness whenever the coarse
+supercell cannot resolve the D3 range in the window sense (WS-resolution
+rule, §5.7f) or the L=2/atomic-basis/perimeter gaps of point (a) apply.
+The tensor-free windowed schemes remain the default for L ≥ 3 resolvable
+cases and for D4 always.
+
+**(f) Validation — ALL PASSED (2026-07-04).**
+
+- *Toy chain, operator level* (`tests/test_interpolation/test_d3_tensor_mode.py`,
+  5 tests green): deterministic d2v+f_pert vs the stochastic estimator on the
+  identity mesh at non-TRI q_pert agree with pure-noise residuals — relative
+  L2 0.134 / 0.101 / 0.047 at N = 2k/8k/32k (1/√N), LSQ scalar fit → 0.999.
+  Hermiticity |b−c| < 1e-8 on a genuinely interpolated mesh (the two maps are
+  exact mutual adjoints by construction). Physics interp 3→6 with the exact
+  Φ³ tensor: aggregate renorm error vs an independent direct fine ensemble
+  at the stochastic noise floor (< 0.20; plain-window error is ~0.30).
+- *SnTe (the trigger case, D3-only, no LO-TO; scripts in the issue dir):*
+  identity 2×2×2 static = **21.28 cm⁻¹ = the free-energy-Hessian static
+  reference exactly** (the static Lanczos with tensor d3 IS the Hessian
+  bubble); interp 2×2×2→4×4×4 static g > 0 exactly like the direct 4×4×4
+  (the plain window had produced a spurious stable 50.3); interp
+  2×2×2→4×4×4 **dynamic TO peak 37.6 cm⁻¹ = direct 4×4×4** (bubble 38.5,
+  broken plain interp 52.3), normalized-lineshape L1(interp, direct) =
+  0.054 against a direct-vs-bubble method baseline of 0.322.
+
+### 5.9 Tensor-free "atomic" windows: stochastic centering that works at L=2
+
+**Status: DONE, VALIDATED on SnTe (2026-07-04).** Requirement from Lorenzo:
+the production scheme must be purely stochastic — computing/storing Φ³ is too
+heavy for large supercells — and must reach Center(Far)-quality interpolation
+*even on the SnTe 2×2×2 case*; the §5.8 tensor mode remains as the validated
+reference/oracle. The centering recipe may differ from ForceTensor's
+(perimeter) as long as the quality matches.
+
+**(a) What the §5.8 analysis says a working window scheme MUST have.**
+
+1. *Atom resolution*: the kernel must weight images per interatomic offset
+   τ_b − τ_a, not per cell-difference class (this is what breaks the L=2
+   ties). ⇒ per-atom windows w_b(s): the NUDFT weight becomes a
+   (n_q, nat_sc) array — infrastructure ALREADY EXISTS (`_build_field_set`
+   accepts per-q complex per-atom weights, used by the "asr" design).
+2. *Multi-period support*: distinct images of a class must get distinct
+   weights ⇒ support ≥ 2L per dimension (the §5.7 doubled-support machinery,
+   with the e^{−2πi q·L a} second-period Bloch phases).
+3. *No per-dimension separability assumption*: for non-orthogonal (fcc)
+   supercells the distance-minimal image is not separable in fractional
+   coordinates ⇒ design directly in 3D (window = arbitrary function of the
+   cell index vector + atom, fitted as a whole; the small L makes this
+   affordable: nat·(2L)³ values per slot per pass).
+
+**(b) Candidate kernel targets (geometry-only — the design must never see
+the tensor, else it is cheating).**
+
+- *Leg-wise atomic minimal-image ("atomic")*: image of pair leg b at cell
+  difference δ⃗1 assigned by minimizing |τ_b − τ_a + (δ⃗1 + n⃗L)·cell| over
+  replicas n⃗ (ties split), independently for the two pair legs, both
+  relative to the z-slot atom a. Product structure over legs ⇒ compatible
+  with the shared-s window kernel K^{abc}(δ1,δ2) = Σ_s z_a(s) w_b(s+δ1)
+  v_c(s+δ2) (a CP decomposition in a ⊗ (b,δ1) ⊗ (c,δ2); §5.2 measured small
+  CP ranks for the cell-index analogue).
+- *Perimeter (ForceTensor's criterion)*: jointly minimizes
+  |r_ab| + |r_ac| + |r_bc| — NOT leg-factorizable; reachable only via
+  higher-rank CP fits or a pinned-z-slot estimator variant (kernel
+  w_b(δ1)·v_c(δ2) exact per origin, full origin average costs ×N_c — cheap
+  precisely in the small-N_c regime where all of this matters).
+
+**(c) Decision experiment (before building anything).** The expectation of
+ANY window scheme is a deterministic contraction of the periodic tensor with
+its kernel. Use the SnTe Φ³ as a TEST ORACLE ONLY: contract Φ_per with
+(plain | leg-wise atomic | perimeter) kernels, compare the D3 vertex blocks
+at the 4×4×4 fine pairs against Tensor3.Interpolate(Far=3). If leg-wise
+atomic ≈ perimeter on SnTe ⇒ the shared-s per-atom window design suffices;
+otherwise fall back to the pinned-slot variant.
+
+**Result (2026-07-04, `kernel_study.py`):** plain is unusable on the
+interpolated Γ-pair blocks (mean relative Frobenius error 1.048, max
+1.582); leg-wise atomic minimal images are already very close to the
+perimeter reference (mean 0.008, max 0.011); the geometry-only perimeter
+target matches `Tensor3.Center(Far=3)` on interpolated pairs at numerical
+zero. The diagnostic's commensurate rows show a reference-normalization/gauge
+mismatch and are not the off-grid quality metric. Decision: implement the
+pinned-z **leg-wise atomic** kernel first, because it is already at the
+sub-percent/percent level on the failed SnTe blocks, has exact unit class
+sums, and is much cheaper than a high-rank perimeter CP factorization.
+
+**Smoke test (2026-07-04):** `window_design="atomic"` on SnTe
+2×2×2→4×4×4 with N=20, Γ TO, D3-only constructs 16 D3 passes
+(2 pinned atoms × 8 full origins), 32 distinct field sets and 36 pair
+blocks; two Lanczos steps run without construction or normalization errors.
+
+**(d) Implemented estimator.** `window_design="atomic"` uses one pass per
+pinned primitive atom `a` and all coarse origins `o`. The z-slot window is
+`δ_{atom,a} δ_{cell,o}`; the two pair-leg windows assign each atom/class
+`(b,δ)` to the geometry-only minimal images of
+`τ_b-τ_a+(δ+nL)A`, splitting exact distance ties. Extended images are folded
+back onto the periodic supercell with the correct Bloch phase
+`exp[-2πi q·(nL A)]`, using the existing per-q atom-weight path of
+`_build_field_set`. The full-origin sum restores the translation sum of the
+plain estimator, so no `1/N_c` origin-averaging prefactor is used. D4 stays
+plain. API:
+
+```
+lanc = QSpaceLanczosInterp(ens, fine_mesh=(4,4,4),
+                           window_design="atomic", window_far=3)
+```
+
+`window_far` is the geometry replica search range, analogous to
+`Tensor3.Center(Far=...)` but never using Φ³.
+
+**(e) SnTe validation.** D3-only, no LO-TO, Γ TO, 2×2×2 ensemble interpolated
+to 4×4×4:
+
+- N=300, 20 Lanczos steps: static `g=+7.20e6` (unstable, like direct/tensor),
+  dynamic peak 38.2 cm⁻¹; normalized L1 vs direct 4×4×4 = 0.293 (short/noisy),
+  vs tensor-D3 = 0.254.
+- N=1000, 30 Lanczos steps: static `g=+5.39e6` (unstable), dynamic peak
+  **37.7 cm⁻¹**; normalized L1 vs direct 4×4×4 = **0.0865**, vs tensor-D3 =
+  **0.0466**. References: direct 4×4×4 peak 37.56, tensor-D3 37.64, old bubble
+  38.46, broken plain 52.28 (plain L1 vs direct 1.7507). This matches the
+  tensor-FC3 quality while never constructing or storing Φ³.
+
+**(f) Tests.** `tests/test_interpolation/test_atomic_windows.py` checks:
+atomic-basis tie breaking at L=2, unit class sums of the atom/class windows,
+and the extended-cell Bloch phase used to fold images back to the periodic
+supercell.
+
+**(g) Expected side benefit.** Atomic-basis ties are exactly the §5.7(f)
+error channel 1 (tensor spread AT the WS boundary kills all cell-index
+designs): atom-resolved windows should shift that resolution limit too.
 
 ---
 

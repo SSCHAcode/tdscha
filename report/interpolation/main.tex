@@ -48,11 +48,14 @@ which centering, the acoustic sum rule, the commensurate limit and the
 permutation symmetrization all hold simultaneously in a \emph{single}
 constrained fit --- where tensor space requires the iterative
 \texttt{Apply\_ASR}/symmetrization alternation of
-\texttt{ForceTensor}. We derive the method, prove its equivalence with
-centered-tensor interpolation, validate it against direct fine-supercell
-calculations on an anharmonic chain model, and demonstrate agreement with
-the standard $d_3$ dynamic-bubble spectral functions of
-\texttt{cellconstructor.Spectral} at interpolated wavevectors.
+\texttt{ForceTensor}. Finally, for $L=2$ real-material cells where
+cell-index windows cannot break basis ties, we introduce atom-resolved
+pinned windows that use only geometry and recover the SnTe
+$2^3\to4^3$ benchmark without constructing $\Phi^{(3)}$. We derive the
+method, prove its equivalence with centered-tensor interpolation, validate
+it against direct fine-supercell calculations on an anharmonic chain model,
+and demonstrate agreement with the standard $d_3$ dynamic-bubble spectral
+functions of \texttt{cellconstructor.Spectral} at interpolated wavevectors.
 \end{abstract}
 
 \tableofcontents
@@ -620,6 +623,95 @@ while plain and ASR designs vanish with $\tilde q_2$.}
 \end{figure}
 
 %======================================================================
+\section{Atom-resolved pinned centering for $L=2$ real-material cells}
+\label{sec:atomic}
+
+The cell-index windows above deliberately mimic the minimal-spread image
+assignment in the \emph{supercell lattice}.  On the SnTe force-field
+benchmark this is not enough.  The tutorial ensemble has a $2\times2\times2$
+supercell: every nonzero cell difference is a Wigner--Seitz tie for a
+one-period cell-index kernel, so the plain tent is the only admissible
+assignment.  However \texttt{ForceTensor.Tensor3.Center(Far=3)} succeeds on
+the same data because it makes a finer, geometry-dependent choice: it uses
+the actual Cartesian interatomic vectors, including the basis offsets, and
+minimizes the triplet perimeter over replicas.  The coarse data therefore
+contains the needed information; the missing ingredient is atom-resolved
+centering.
+
+The production tensor-free fix is a pinned, atom-resolved kernel.  For one
+primitive atom $a$ and one coarse origin $\mathbf{o}$, pin the perturbation
+slot to
+\begin{equation}
+z_{a\mathbf{o}}(b,\mathbf{n}) =
+\delta_{ab}\,\delta_{\mathbf{n}\mathbf{o}}.
+\end{equation}
+For a pair-leg atom $b$ in cell-difference class $\boldsymbol\delta$ choose
+the geometry-only atomic minimal images
+\begin{equation}
+\mathcal I_{ab}(\boldsymbol\delta) =
+\arg\min_{\mathbf m\in[-F,F]^3}
+\left| \boldsymbol\tau_b-\boldsymbol\tau_a
+      +(\boldsymbol\delta+\mathbf m\mathbf L)\mathbf A \right|,
+\label{eq:atomicimages}
+\end{equation}
+splitting exact ties uniformly.  The same window is used for the two
+pair slots.  Summing over all origins restores the translation sum that
+the delta-pinned $z$ window removes, so no $1/\Nc$ origin-averaging
+prefactor is applied.  The realized D3 kernel is
+\begin{equation}
+K^{abc}_{\rm at}(\boldsymbol\delta_1,\boldsymbol\delta_2)
+= \sum_{\mathbf r_1\in\mathcal I_{ab}(\boldsymbol\delta_1)}
+  \sum_{\mathbf r_2\in\mathcal I_{ac}(\boldsymbol\delta_2)}
+  \frac{
+  e^{-i\tilde\qv_1\cdot \mathbf r_1}
+  e^{-i\tilde\qv_2\cdot \mathbf r_2}}
+  {|\mathcal I_{ab}(\boldsymbol\delta_1)|\,
+   |\mathcal I_{ac}(\boldsymbol\delta_2)|},
+\label{eq:atomickernel}
+\end{equation}
+with $\mathbf r=(\boldsymbol\delta+\mathbf m\mathbf L)\mathbf A$.
+At runtime an extended image outside the fundamental supercell is folded
+onto the periodic atom and multiplied by the corresponding Bloch phase
+$\exp[-i\tilde\qv\cdot(\mathbf m\mathbf L)\mathbf A]$; this is just the
+per-$q$, per-atom weight path already used by the doubled-support ASR
+windows.  No $\Phi^{(3)}$ value enters Eq.~\eqref{eq:atomicimages}.
+
+Before using this in the stochastic estimator we performed an oracle test:
+contract the \emph{periodic} SnTe $\Phi^{(3)}$ tensor with candidate
+geometry kernels, but use the tensor only to measure the kernel quality.
+On the interpolated $\Gamma$-pair blocks of the failed $2^3\to4^3$ case,
+the plain cell-index kernel has mean relative Frobenius error $1.048$
+(max $1.582$) against \texttt{Tensor3.Center(Far=3)}.  The leg-wise atomic
+kernel has mean $0.008$ (max $0.011$), while the full perimeter target is
+zero within numerical precision.  Thus the cheap leg-wise atomic kernel is
+already close enough to the validated tensor oracle.
+
+The SnTe response benchmark confirms this.  For the D3-only, no-LO--TO
+$\Gamma$ TO spectrum, interpolating the $2\times2\times2$ ensemble to
+$4\times4\times4$ with \texttt{window\_design="atomic"} gives:
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+calculation & peak (\si{cm^{-1}}) & normalized $L^1$ vs direct &
+normalized $L^1$ vs tensor-D3\\
+\midrule
+direct $4^3$ q-Lanczos & 37.56 & 0 & 0.0542\\
+tensor-D3 oracle & 37.64 & 0.0542 & 0\\
+atomic, $N_I=1000$, 30 steps & 37.72 & 0.0865 & 0.0466\\
+plain cell-index window & 52.28 & 1.7507 & 1.7496\\
+old $d_3$ bubble & 38.46 & 0.3162 & 0.2797\\
+\bottomrule
+\end{tabular}
+\end{center}
+The static response has $g>0$ (unstable) as in the direct $4^3$ and
+tensor-D3 calculations; the broken plain interpolation instead produced a
+spurious stable $\approx 50\,\mathrm{cm}^{-1}$ response.  The atomic mode
+therefore reaches the centered-tensor quality on the real-material test
+without constructing or storing the third-order tensor.  Its current cost
+is the number of pinned-atom/origin passes (SnTe: $2\times8=16$ D3 pass
+calls); D4 remains on the single plain pass.
+
+%======================================================================
 \section{Implementation and cost}
 \label{sec:implementation}
 
@@ -638,6 +730,10 @@ equally fast (the sparse rotation dominates), the BLAS-3 structure being
 aimed at production band counts. Cost per Lanczos iteration:
 $O(K^3\, N_I\, n_{\mathrm{sym}}\, \Nf\, n_b^2)$ --- linear in the fine
 mesh, with $K^3$ the window-pass count ($=1$ for the plain estimator).
+The atom-resolved mode of Sec.~\ref{sec:atomic} has pass count
+$n_{\rm at}\Nc$ (one pinned atom times all coarse origins; 16 for the SnTe
+$2^3$ cell) and remains linear in $\Nf$, but with a larger constant than
+the tensor-D3 oracle.
 Measured wall times for one full application of $\Ltdscha$
 (Fig.~\ref{fig:scaling}) confirm near-linear scaling over
 $\Nf = 8 \dots 128$.
@@ -1010,7 +1106,13 @@ benchmark/figure scripts referenced in the repository
 and \texttt{asr\_figs.py} for Sec.~\ref{sec:asr}); the decisive physics
 comparisons are enforced as regression tests
 (\texttt{test\_physics\_interp.py}, \texttt{test\_windows.py},
-\texttt{test\_asr\_windows.py}).
+\texttt{test\_asr\_windows.py}).  The atom-resolved geometry checks are in
+\texttt{test\_atomic\_windows.py}.  The SnTe oracle and response numbers of
+Sec.~\ref{sec:atomic} are tracked in
+\texttt{SnTe\_FF/Spectral/TDSCHA\_Interpolate/issues.md}; the relevant
+scripts/data are \texttt{kernel\_study.py},
+\texttt{atomic\_d3\_N300\_s20.dat} and
+\texttt{atomic\_d3\_N1000\_s30.dat}.
 
 \begin{thebibliography}{9}
 \bibitem{tdscha} L.~Monacelli and F.~Mauri,

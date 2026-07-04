@@ -688,6 +688,131 @@ def get_window_design_asr(L, K=3, max_K=5, decay_weight=None):
 
 
 # =========================================================================
+# Atom-resolved pinned windows (plan section 5.9)
+#
+# These windows are a tensor-free way to break the L=2 Wigner-Seitz ties that
+# pure cell-index kernels cannot break.  The q_pert leg is pinned to one
+# primitive atom and one coarse-cell origin; the two pair legs are assigned to
+# the atomic-basis minimal images relative to that pinned atom.  Summing over
+# all coarse origins restores the missing translation sum, so the commensurate
+# limit has the same normalization as the plain full-window estimator.
+# =========================================================================
+
+_ATOMIC_WINDOW_CACHE = {}
+
+
+def _structure_cache_key(structure, supercell, far):
+    return (tuple(np.asarray(supercell, dtype=int)),
+            int(far),
+            tuple(np.round(np.asarray(structure.unit_cell).ravel(), 10)),
+            tuple(np.round(np.asarray(structure.coords).ravel(), 10)))
+
+
+def _atomic_leg_images(structure, supercell, far, a, b, d):
+    """Atomic-basis minimal images of leg b relative to pinned atom a.
+
+    Returns [(extended_cell, weight), ...] with tie splitting.  The target
+    is geometry-only: no force-constant value enters this assignment.
+    """
+    L = np.asarray(supercell, dtype=int)
+    reps = np.array(list(itertools.product(range(-far, far + 1), repeat=3)),
+                    dtype=int)
+    ext = np.asarray(d, dtype=int)[None, :] + reps * L[None, :]
+    vecs = ext @ structure.unit_cell
+    dist = np.linalg.norm(structure.coords[b] - structure.coords[a] + vecs,
+                          axis=1)
+    mn = np.min(dist)
+    winners = np.where(dist < mn + 1e-6)[0]
+    return [(tuple(ext[i]), 1.0 / len(winners)) for i in winners]
+
+
+def get_atomic_window_passes(structure, supercell, far=3):
+    """Geometry-only pinned atomic window passes.
+
+    One pass is built for each pinned primitive atom a:
+      z_a(R) = delta_{R,0};
+      w_b(R) = v_b(R) = atomic minimal-image selector for pair (a,b).
+
+    The returned window maps use keys (primitive_atom, extended_cell_tuple).
+    They are converted to per-q complex weights by _window_map_to_qweights.
+    """
+    key = _structure_cache_key(structure, supercell, far)
+    if key in _ATOMIC_WINDOW_CACHE:
+        return _ATOMIC_WINDOW_CACHE[key]
+
+    L = np.asarray(supercell, dtype=int)
+    cells = np.array(list(itertools.product(range(L[0]), range(L[1]),
+                                            range(L[2]))), dtype=int)
+    passes = []
+    for a in range(structure.N_atoms):
+        z = {(a, (0, 0, 0)): 1.0}
+        leg = {}
+        for b in range(structure.N_atoms):
+            for d in cells:
+                for ext, w in _atomic_leg_images(structure, L, far, a, b, d):
+                    leg[(b, ext)] = leg.get((b, ext), 0.0) + w
+        passes.append((z, leg, dict(leg)))
+
+    _ATOMIC_WINDOW_CACHE[key] = passes
+    return passes
+
+
+def _window_map_to_qweights(window, q_points, structure, itau, cell_idx,
+                            supercell):
+    """Convert an extended-cell atom window to _build_field_set weights."""
+    L = np.asarray(supercell, dtype=int)
+    W = np.zeros((len(q_points), len(itau)), dtype=np.complex128)
+    lookup = {}
+    for k, (a, n) in enumerate(zip(itau, cell_idx)):
+        lookup[(int(a),) + tuple((np.asarray(n, dtype=int) % L))] = k
+
+    for (a, ext_cell), value in window.items():
+        ext = np.asarray(ext_cell, dtype=int)
+        base = ext % L
+        shift = ext - base
+        k = lookup[(int(a),) + tuple(base)]
+        r_shift = shift @ structure.unit_cell
+        W[:, k] += value * np.exp(-2j * np.pi * (q_points @ r_shift))
+    return W
+
+
+# =========================================================================
+# Third-order tensor helper (hybrid tensor-D3 mode, plan section 5.8)
+# =========================================================================
+
+def load_d3_tensor(dyn, d3_realspace, far=3, apply_asr=True):
+    """Build a centered cellconstructor Tensor3 for d3_mode="tensor".
+
+    Parameters
+    ----------
+    dyn : CC.Phonons.Phonons
+        The (coarse) SSCHA dynamical matrix defining structure/supercell.
+    d3_realspace : ndarray(3*nat_sc, 3*nat_sc, 3*nat_sc) or str
+        The real-space third-order tensor in Ry/Bohr^3 on the coarse
+        supercell (e.g. the stochastic d3 saved by
+        sscha get_free_energy_hessian(..., verbose=True) times 2 for
+        Ha -> Ry), or the path of an .npy file containing it.
+    far : int
+        Replica search range of Tensor3.Center. Must be large enough that
+        the minimal-perimeter image assignment is closed under permutation
+        symmetry (cellconstructor raises otherwise); SnTe 2x2x2 needs 3.
+    apply_asr : bool
+        Re-impose the acoustic sum rule after centering (recommended,
+        centering destroys it).
+    """
+    if isinstance(d3_realspace, str):
+        d3_realspace = np.load(d3_realspace)
+    t3 = CC.ForceTensor.Tensor3(dyn.structure,
+                                dyn.structure.generate_supercell(dyn.GetSupercell()),
+                                dyn.GetSupercell())
+    t3.SetupFromTensor(d3_realspace)
+    t3.Center(Far=far)
+    if apply_asr:
+        t3.Apply_ASR()
+    return t3
+
+
+# =========================================================================
 # The interpolated Lanczos
 # =========================================================================
 
@@ -722,20 +847,43 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         mesh densely samples the Gamma neighborhood (acoustic two-phonon
         continuum), where an ASR leak is amplified by the diverging
         occupation/propagator factors.
-        NOTE: both designed modes assume the coarse supercell RESOLVES
-        the third-order force-constant range (spread strictly inside the
-        Wigner-Seitz cell) -- the same locality assumption as tensor
-        centering in ForceTensor/Spectral. If the range reaches the WS
-        boundary the image assignment is Nyquist-ambiguous and the
-        oscillating designs degrade catastrophically near Gamma at strong
-        coupling; use "plain" (measured, plan section 5.7f).
+        NOTE: "minimal_image" and "asr" assume the coarse supercell
+        resolves the third-order force-constant range in the cell-index
+        sense (spread strictly inside the Wigner-Seitz cell). If the range
+        reaches the WS boundary the image assignment is Nyquist-ambiguous
+        and the oscillating designs degrade catastrophically near Gamma at
+        strong coupling. "atomic" is the atom-resolved L=2 remedy when
+        basis offsets break those ties.
+        "atomic": atom-resolved pinned windows (plan section 5.9): one
+        q_pert-slot atom is pinned, the two pair legs use geometry-only
+        atomic-basis minimal images relative to it, and all coarse origins
+        are summed. This breaks the L=2 basis ties without constructing a
+        d3 tensor; D4 still uses the plain pass.
     window_K : int
         Number of window passes per lattice dimension for the design.
+    window_far : int
+        Replica search range for window_design="atomic"; analogous to the
+        Far argument of Tensor3.Center, but used only in geometry-only
+        atomic minimal-image assignments.
     window_decay : float in (0, 1] or None
         Only for window_design="asr": metric weight rho**spread used in
         the kernel projection/fit (the analogue of Apply_ASR's `power`);
         concentrates centering fidelity at short range where the physical
         Phi3 is large. None = uniform metric.
+    d3_mode : str
+        "stochastic" (default): the D3 channel uses the windowed
+        per-configuration estimator (tensor-free).
+        "tensor": the D3 vertex is interpolated DETERMINISTICALLY from a
+        centered third-order force-constant tensor -- by construction the
+        same interpolation as the cellconstructor.Spectral d3 bubble
+        (plan section 5.8). It remains useful as an oracle/control or when
+        an explicit FC3 is already available. D4 stays on the stochastic
+        plain pass.
+    d3_tensor : CC.ForceTensor.Tensor3
+        Required for d3_mode="tensor": the third-order tensor on the
+        COARSE supercell, already Center()ed (+ Apply_ASR()), in Ry/Bohr^3
+        consistent with the dyn -- the exact object the Spectral bubble
+        consumes (see load_d3_tensor). Not serialized on save/load.
     prefilter : bool
         Apply the f_Y pre-filter to the displacement fields (recommended;
         see module docstring).
@@ -747,7 +895,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                  reuse_commensurate=True, w_min_guard=1e-8,
                  allow_unstable=False, prefilter=True,
                  window_design="plain", window_K=3, window_origins=1,
-                 asr_fields=True, window_decay=None,
+                 asr_fields=True, window_decay=None, window_far=3,
+                 d3_mode="stochastic", d3_tensor=None,
                  lo_to_split=None, **kwargs):
 
         if lo_to_split is not None:
@@ -759,7 +908,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         interp_attrs = ['fine_mesh', '_fine_idx', '_q_lookup', '_fpsi_fine',
                         'window_design', 'window_K', 'window_origins', 'asr_fields',
-                        'window_decay',
+                        'window_decay', 'window_far',
+                        'd3_mode', '_d3_tensor', '_d3_blocks',
                         '_field_sets', '_window_passes', '_channels']
         self.__total_attributes__.extend(interp_attrs)
 
@@ -772,6 +922,10 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         self.window_origins = int(window_origins)
         self.asr_fields = bool(asr_fields)
         self.window_decay = window_decay
+        self.window_far = int(window_far)
+        self.d3_mode = d3_mode
+        self._d3_tensor = d3_tensor      # centered CC Tensor3 (transient)
+        self._d3_blocks = None           # per-pair D3 blocks (built per q_pert)
         self._field_sets = None      # list of (X_q, Y_q) per distinct window
         self._window_passes = None   # list of (c=1-folded, iz, iw, iv)
         self._channels = None
@@ -782,9 +936,22 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         if fine_mesh is None:
             raise ValueError("QSpaceLanczosInterp requires fine_mesh=(m1, m2, m3)")
-        if window_design not in ("plain", "minimal_image", "asr"):
+        if window_design not in ("plain", "minimal_image", "asr", "atomic"):
             raise ValueError("window_design must be 'plain', 'minimal_image' "
-                             "or 'asr'")
+                             "'asr', or 'atomic'")
+        if d3_mode not in ("stochastic", "tensor"):
+            raise ValueError("d3_mode must be 'stochastic' or 'tensor'")
+        if d3_mode == "tensor":
+            if d3_tensor is None:
+                raise ValueError(
+                    "d3_mode='tensor' requires d3_tensor (a centered "
+                    "cellconstructor Tensor3; see load_d3_tensor)")
+            if window_design != "plain":
+                warnings.warn(
+                    "d3_mode='tensor': the designed windows only serve the "
+                    "stochastic D3 channel; forcing window_design='plain'.")
+                window_design = "plain"
+                self.window_design = "plain"
 
         self.fine_mesh = np.asarray(fine_mesh, dtype=int)
         coarse_mesh = np.asarray(self.dyn.GetSupercell(), dtype=int)
@@ -854,10 +1021,11 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the D4 pass and back-compat X_q/Y_q otherwise)
         self.X_q, self.Y_q = self._build_field_set(weights=None)
 
-        if window_design in ("minimal_image", "asr"):
+        if window_design in ("minimal_image", "asr", "atomic"):
             self._setup_window_passes()
 
-        if prefilter:
+        if prefilter or d3_mode == "tensor":
+            # (also needed by the deterministic tensor-D3 f_pert contraction)
             self._fpsi_fine = self._get_fpsi_table()
 
         # == 5. Vertex renormalization N_c -> N_f ==
@@ -1115,14 +1283,6 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         constraint sum_r c_z c_w c_v = 1), configuration by configuration.
         """
         coarse = np.asarray(self.dyn.GetSupercell(), dtype=int)
-        if self.window_design == "asr":
-            designs = [get_window_design_asr(coarse[d], K=self.window_K,
-                                             decay_weight=self.window_decay)
-                       for d in range(3)]
-        else:
-            designs = [get_window_design(coarse[d], K=self.window_K)
-                       for d in range(3)]
-
         cell_idx = self._channels['cell_idx']    # (nat_sc, 3)
 
         # Origin shifts: realized by PERMUTING THE DATA (rolling the
@@ -1131,14 +1291,20 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the window cyclically instead would wrap its support across the
         # domain boundary with inconsistent absolute phases and destroy the
         # designed kernel (verified).
-        n_orig = max(1, int(self.window_origins))
-        d_max = int(np.argmax(coarse))
-        shifts = []
-        for j in range(n_orig):
-            s = np.zeros(3, dtype=int)
-            s[d_max] = (j * coarse[d_max]) // n_orig
-            if not any(np.array_equal(s, t) for t in shifts):
-                shifts.append(s)
+        if self.window_design == "atomic":
+            shifts = [np.array(s, dtype=int)
+                      for s in itertools.product(range(coarse[0]),
+                                                 range(coarse[1]),
+                                                 range(coarse[2]))]
+        else:
+            n_orig = max(1, int(self.window_origins))
+            d_max = int(np.argmax(coarse))
+            shifts = []
+            for j in range(n_orig):
+                s = np.zeros(3, dtype=int)
+                s[d_max] = (j * coarse[d_max]) // n_orig
+                if not any(np.array_equal(s, t) for t in shifts):
+                    shifts.append(s)
 
         # atom permutation per shift: perm[k] = atom at cell n(k) + shift
         cell_lookup = {}
@@ -1162,7 +1328,29 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                     weights=w3d, perm=perms[i_orig] if i_orig > 0 else None))
             return field_cache[key]
 
+        if self.window_design == "atomic":
+            geom_passes = get_atomic_window_passes(
+                self.dyn.structure, coarse, far=self.window_far)
+            self._window_passes = []
+            for maps in geom_passes:
+                weights = [_window_map_to_qweights(
+                    m, self.q_points, self.dyn.structure, itau, cell_idx,
+                    coarse) for m in maps]
+                for i_orig in range(len(shifts)):
+                    self._window_passes.append(tuple(
+                        get_set(w, i_orig) for w in weights))
+
+            if Parallel.am_i_the_master():
+                print("Stochastic centering [atomic]: {} window passes "
+                      "({} full origins), {} distinct field sets".format(
+                          len(self._window_passes), len(shifts),
+                          len(self._field_sets)))
+            return
+
         if self.window_design == "asr":
+            designs = [get_window_design_asr(coarse[d], K=self.window_K,
+                                             decay_weight=self.window_decay)
+                       for d in range(3)]
             # per-dimension second-period Bloch phases, (n_q,) each
             uc_cell = self.dyn.structure.unit_cell
             ph = [np.exp(-2j * np.pi *
@@ -1178,6 +1366,9 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                     wq *= wA[None, :] + wB[None, :] * ph[d][:, None]
                 return wq
         else:
+            designs = [get_window_design(coarse[d], K=self.window_K)
+                       for d in range(3)]
+
             def make_weight(p0, p1, p2, slot):
                 return (p0[slot][cell_idx[:, 0]]
                         * p1[slot][cell_idx[:, 1]]
@@ -1202,6 +1393,85 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                                                   len(self._window_passes),
                                                   len(shifts),
                                                   len(self._field_sets)))
+
+    # ---------------------------------------------------------------
+    # Hybrid tensor-D3 mode (plan section 5.8)
+    # ---------------------------------------------------------------
+    def _build_d3_blocks(self):
+        """Mode-space D3 vertex blocks at the fine pairs of this q_pert.
+
+        For each unique pair (q1, q2) with q1 + q2 = q_pert + G:
+
+          D3[nu, nu1, nu2] = N_f^{-1/2} sum_abc e_nu^a(q_pert)
+                             conj(e_nu1^b(q1)) conj(e_nu2^c(q2))
+                             (m_a m_b m_c)^{-1/2} Phi3_hat_abc(-q1, -q2)
+
+        with Phi3_hat(-q1, -q2) = Tensor3.Interpolate(q1, q2) in the
+        cellconstructor phase convention e^{-2 pi i q.r} — the SAME centered
+        interpolation the Spectral d3 bubble uses. Leg a (cell 0) carries the
+        implied momentum q1 + q2 = q_pert; legs b, c pair with the
+        displacement fields, whence the conjugated polarization vectors.
+        Mode-validity masks are applied to every leg. Storage
+        O(n_pairs * nb^3): no tensor ever lives on the fine mesh.
+        """
+        if self._d3_tensor is None:
+            raise ValueError(
+                "d3_mode='tensor' but no d3_tensor is attached (it is not "
+                "serialized on save/load: re-assign lanczos._d3_tensor).")
+
+        nb = self.n_bands
+        inv_sqrt_m3 = 1.0 / np.sqrt(
+            np.repeat(self.dyn.structure.get_masses_array(), 3))
+        norm = 1.0 / np.sqrt(self.n_q)
+
+        E_pert = (self.pols_q[:, :, self.iq_pert]
+                  * self.valid_modes_q[None, :, self.iq_pert]) \
+            * inv_sqrt_m3[:, None]
+
+        self._d3_blocks = []
+        for (iq1, iq2) in self.unique_pairs:
+            phi3 = self._d3_tensor.Interpolate(
+                np.asarray(self.q_points[iq1], dtype=np.float64),
+                np.asarray(self.q_points[iq2], dtype=np.float64), asr=False)
+            E1 = np.conj(self.pols_q[:, :, iq1]
+                         * self.valid_modes_q[None, :, iq1]) \
+                * inv_sqrt_m3[:, None]
+            E2 = np.conj(self.pols_q[:, :, iq2]
+                         * self.valid_modes_q[None, :, iq2]) \
+                * inv_sqrt_m3[:, None]
+            block = np.einsum('abc,an,bp,cq->npq', phi3, E_pert, E1, E2,
+                              optimize=True) * norm
+            self._d3_blocks.append(block)
+
+    def _apply_d3_tensor(self, R1, alpha1_blocks):
+        """Deterministic D3 action from the interpolated vertex blocks.
+
+        Exact infinite-N limit of the stochastic D3 terms (weight_R,
+        weight_Rf -> d2v; w1, w2 -> f_pert), mutually adjoint by
+        construction (same blocks on both maps -> L stays Hermitian):
+
+          d2v(q1, q2)[nu1, nu2] = + sum_nu R1[nu] D3[nu, nu1, nu2]
+          f_pert[nu] = + 1/2 sum_ordered-pairs conj(D3[nu, nu1, nu2])
+                         f_psi(q1, nu1) f_psi(q2, nu2) alpha1[nu1, nu2]
+
+        (off-diagonal pairs counted twice, matching total_sum; the
+        transpose-symmetric alpha1 blocks make the reversed orientation
+        identical). No n_syms average (the centered tensor is already
+        symmetric) and no scale3 (N_f^{-1/2} is direct in the blocks).
+        """
+        nb = self.n_bands
+        fpsi = self._fpsi_fine
+        f_pert = np.zeros(nb, dtype=np.complex128)
+        d2v_blocks = []
+        for p, (iq1, iq2) in enumerate(self.unique_pairs):
+            D3 = self._d3_blocks[p]
+            d2v_blocks.append(np.einsum('n,npq->pq', R1, D3))
+            fold = np.outer(fpsi[:, iq1], fpsi[:, iq2])
+            w = 1.0 if iq1 == iq2 else 2.0
+            f_pert += 0.5 * w * np.einsum(
+                'npq,pq->n', np.conj(D3), fold * alpha1_blocks[p],
+                optimize=True)
+        return f_pert, d2v_blocks
 
     # ---------------------------------------------------------------
     def _fold_alpha1(self, alpha1_flat):
@@ -1259,12 +1529,34 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         In prefiltered mode the exact fine-side f_psi factors are folded
         into alpha1 (the kernel contracts alpha1 with the FILTERED fields).
         """
+        # Hybrid tensor-D3 mode (plan section 5.8): the D3 channel is a
+        # deterministic contraction of the centered-tensor vertex blocks
+        # (with EXPLICIT f_psi factors, so it uses the unfolded alpha1);
+        # only the D4 terms go through the stochastic kernel.
+        if self.d3_mode == "tensor":
+            if self._distributed:
+                raise NotImplementedError(
+                    "d3_mode='tensor' with the distributed loader is not "
+                    "supported yet.")
+            alpha1_blocks = self._unflatten_blocks(np.array(alpha1_flat))
+            f_pert, d2v_blocks = self._apply_d3_tensor(R1, alpha1_blocks)
+            if not self.ignore_v4:
+                a1_kernel = self._fold_alpha1(alpha1_flat) \
+                    if self.qspace_prefiltered else alpha1_flat
+                plain = (self.X_q, self.Y_q)
+                combined = self._call_slots(plain, plain, plain, R1,
+                                            a1_kernel, False, True)
+                f_pert = f_pert + combined[:self.n_bands]
+                d4_blocks = self._unflatten_blocks(combined[self.n_bands:])
+                d2v_blocks = [a + b for a, b in zip(d2v_blocks, d4_blocks)]
+            return f_pert, d2v_blocks
+
         if self.qspace_prefiltered:
             alpha1_flat = self._fold_alpha1(alpha1_flat)
 
         plain = (self.X_q, self.Y_q)
 
-        if (self.window_design not in ("minimal_image", "asr")
+        if (self.window_design not in ("minimal_image", "asr", "atomic")
                 or self._window_passes is None):
             if self._distributed:
                 return super()._call_julia_qspace(R1, alpha1_flat)
@@ -1285,8 +1577,11 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             fw = self._field_sets[iw]
             fv = self._field_sets[iv]
             r1 = self._call_slots(fz, fw, fv, R1, alpha1_flat, True, False)
-            r2 = self._call_slots(fz, fv, fw, R1, alpha1_flat, True, False)
-            part = 0.5 * (r1 + r2)
+            if self.window_design == "atomic" or iw == iv:
+                part = r1
+            else:
+                r2 = self._call_slots(fz, fv, fw, R1, alpha1_flat, True, False)
+                part = 0.5 * (r1 + r2)
             combined = part if combined is None else combined + part
 
         # D4 terms: single plain-window pass (plan section 5.4)
@@ -1320,6 +1615,10 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                 self.unique_pairs.append((iq1, iq2))
 
         self._compute_block_layout()
+
+        # tensor-D3 mode: the vertex blocks depend on q_pert via the pairs
+        if self.d3_mode == "tensor":
+            self._build_d3_blocks()
 
     # ---------------------------------------------------------------
     def find_fine_q(self, q):
