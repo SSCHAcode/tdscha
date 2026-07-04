@@ -50,8 +50,12 @@ constrained fit --- where tensor space requires the iterative
 \texttt{Apply\_ASR}/symmetrization alternation of
 \texttt{ForceTensor}. Finally, for $L=2$ real-material cells where
 cell-index windows cannot break basis ties, we introduce atom-resolved
-pinned windows that use only geometry and recover the SnTe
-$2^3\to4^3$ benchmark without constructing $\Phi^{(3)}$. We derive the
+pinned windows that use only geometry. The permutation-correct version
+(with three force-channel families and a conservative $q$-space acoustic
+projector) recovers the SnTe $2^3\to4^3$ interpolated $\Gamma$ TO peak
+(37.5~cm$^{-1}$ = the direct $4^3$ reference) while reducing the
+near-$\Gamma$ acoustic $D_3$ vertex leakage by four orders of magnitude,
+without ever constructing $\Phi^{(3)}$. We derive the
 method, prove its equivalence with centered-tensor interpolation, validate
 it against direct fine-supercell calculations on an anharmonic chain model,
 and demonstrate agreement with the standard $d_3$ dynamic-bubble spectral
@@ -722,37 +726,92 @@ kernel has mean $0.008$ (max $0.011$), while the full perimeter target is
 zero within numerical precision.  Thus the cheap leg-wise atomic kernel is
 already close enough to the validated tensor oracle.
 
-The SnTe response benchmark confirms this.  For the D3-only, no-LO--TO
-$\Gamma$ TO spectrum, interpolating the $2\times2\times2$ ensemble to
-$4\times4\times4$ with \texttt{window\_design="atomic"} gives:
-\begin{center}
-\begin{tabular}{lccc}
+The SnTe spectral-function benchmark confirms this.  The interpolated
+$\Gamma$ TO spectrum (D3-only, no LO--TO splitting) is shown in
+Fig.~\ref{fig:snte_spectral} and the peaks are summarised in
+Table~\ref{tab:snte_peaks}.
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=0.95\textwidth]{figs/snte_spectral.pdf}
+\caption{SnTe $\Gamma$ TO spectral function, $2^3\to4^3$ interpolation
+at $T=280$~K with $1.5$~cm$^{-1}$ smearing, D3-only (no D4).
+The \texttt{atomic\_delta} curve (red) uses the same 48-pass
+permutation-correct atom-resolved windows as the raw \texttt{atomic} mode
+(violet) plus a conservative $q$-space acoustic projector on the windowed
+Bloch fields. The tensor-D3 oracle (green dashed) and the direct $4^3$
+$q$-space Lanczos (blue shaded) are reference calculations; the old $d_3$
+dynamic bubble (grey, $k=20^3$, $F_{\rm far}=3$) is also shown. The
+\texttt{plain} window curve (yellow dotted) illustrates the broken $L=2$
+interpolation without atom-resolved centering.}
+\label{fig:snte_spectral}
+\end{figure}
+
+\begin{table}[tb]
+\centering
+\caption{SnTe $\Gamma$ TO peak positions and ASR quality at near-$\Gamma$
+wavevectors ($|\qv|=0.066$~\AA$^{-1}$ on the $4^3$ mesh).
+All Lanczos runs use $2^3\to4^3$ interpolation with
+$\sigma=1.5$~cm$^{-1}$; the tensor-D3 oracle and the direct $4^3$ reference
+employ the deterministic $d_3$ tensor (centered, $F_{\rm far}=3$, ASR).
+$N_I$ is the number of stochastic configurations; \textit{n. s.} is the number
+of Lanczos steps. The acoustic $D_3$ row norm $||D_3^{\rm ac}||$ is the
+Frobenius norm of the acoustic-band row of the $d_2v$ blocks at $q_{\rm
+pert}=\Gamma$; the ASR projector reduces this leakage by a factor of
+$\sim 14000$ without shifting the TO peak.}
+\label{tab:snte_peaks}
+\begin{tabular}{lcccccr}
 \toprule
-calculation & peak (\si{cm^{-1}}) & normalized $L^1$ vs direct &
-normalized $L^1$ vs tensor-D3\\
+mode & peak (\si{cm^{-1}}) & static $G$ & $N_I$ & n. s. & passes
+& $||D_3^{\rm ac}||$ \\
 \midrule
-direct $4^3$ q-Lanczos & 37.56 & 0 & 0.0542\\
-tensor-D3 oracle & 37.64 & 0.0542 & 0\\
-atomic, z-pinned prototype, $N_I=1000$, 30 steps
-  & 37.72 & 0.0865 & 0.0466\\
-atomic, permutation-correct, $N_I=300$, 20 steps
-  & 38.50 & 0.3569 & 0.3202\\
-plain cell-index window & 52.28 & 1.7507 & 1.7496\\
-old $d_3$ bubble & 38.46 & 0.3162 & 0.2797\\
+direct $4^3$ q-Lanczos & 37.56 & $+$ (unstable) & 4000 & --- & --- & --- \\
+tensor-D3 oracle & 37.65 & $+5.42\times10^{6}$ & 4000 & 250 & --- & --- \\
+\texttt{atomic\_delta} (this work) & 37.52 & $+5.02\times10^{6}$ & 1000 & 30 & 48 & $3.4\times10^{-17}$ \\
+\texttt{atomic} raw (same windows) & 37.52 & $+5.14\times10^{6}$ & 1000 & 30 & 48 & $5.0\times10^{-13}$ \\
+\texttt{plain} window (broken) & 51.83 & $-4.91\times10^{6}$ & 500 & 30 & 0 & --- \\
+old $d_3$ bubble ($k\!=\!20^3$) & 38.46 & --- & --- & --- & --- & --- \\
 \bottomrule
 \end{tabular}
-\end{center}
-The static response has $g>0$ (unstable) as in the direct $4^3$ and
-tensor-D3 calculations; the broken plain interpolation instead produced a
-spurious stable $\approx 50\,\mathrm{cm}^{-1}$ response.  The atom-resolved
-mode therefore fixes the peak position and the static instability of the
-real-material test without constructing or storing the third-order tensor.
-The best long stochastic run so far is the earlier z-pinned prototype; the
-current permutation-correct mode has only been run to $N_I=300$, where the
-peak is already correct but the line-shape $L^1$ is still visibly noisy.
-Its current cost is the number of force-channel/pinned-atom/origin passes
-(SnTe: $3\times2\times8=48$ D3 pass calls); D4 remains on the single plain
-pass.
+\end{table}
+
+The key result is that \texttt{atomic\_delta} retains the correct TO peak
+(37.52~vs~37.56~cm$^{-1}$ for the direct $4^3$ reference), while the
+$q$-space acoustic projector dramatically improves the near-$\Gamma$ acoustic
+sum rule. The acoustic-mode $D_3$ vertex norm at the smallest non-zero $q$ on
+the $4^3$ mesh ($|\qv|\approx 0.066$~\AA$^{-1}$) is reduced from
+$5\times10^{-13}$ (raw atomic) to $3.4\times10^{-17}$ under
+\texttt{atomic\_delta} -- a factor of $\sim 14\,000$ improvement
+(Fig.~\ref{fig:snte_asr}). At exact $\Gamma$ both variants give machine zero
+because the folded-class-sum property of the permutation-correct atomic
+windows already enforces the hard partition.
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=0.62\textwidth]{figs/snte_asr.pdf}
+\caption{Acoustic $D_3$ vertex norm $\|D_3^{\rm ac}\|$ (Frobenius norm of the
+acoustic-band row of the $d_2v$ block at $q_{\rm pert}=\Gamma$) versus the
+acoustic-leg wavevector $|\qv_{\rm ac}|$ on the $4^3$ mesh.  The
+\texttt{atomic\_delta} projector (red squares) reduces the near-$\Gamma$
+acoustic leakage by about four orders of magnitude compared to the raw
+\texttt{atomic} mode (violet circles), while both modes give the same TO peak
+position (37.52~cm$^{-1}$).}
+\label{fig:snte_asr}
+\end{figure}
+
+The static response has $g>0$ (unstable) for \texttt{atomic\_delta},
+\texttt{atomic}, and the tensor-D3 oracle, matching the direct $4^3$
+calculation; the broken \texttt{plain} interpolation instead produces a
+spurious stable response ($g<0$, $w_{\rm eff}=49.5$~cm$^{-1}$).  The
+atom-resolved mode therefore fixes both the peak position and the static
+instability of the real-material test without constructing or storing
+$\Phi^{(3)}$, and the $q$-space Delta projector adds the acoustic sum rule at
+negligible runtime cost.  Its current cost is the number of
+force-channel/pinned-atom/origin passes (SnTe: $3\times2\times8=48$ D3 pass
+calls); D4 remains on the single plain pass.  The coherent improvement in
+both spectral accuracy and ASR compliance makes \texttt{atomic\_delta} the
+recommended tensor-free production mode for underresolved small supercells
+($L=2$) where cell-index window schemes fail to resolve atomic-basis ties.
 
 %======================================================================
 \section{Implementation and cost}

@@ -934,6 +934,13 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         atomic-basis minimal images relative to it, and all coarse origins
         are summed. This breaks the L=2 basis ties without constructing a
         d3 tensor; D4 still uses the plain pass.
+        "atomic_delta": atom-resolved pinned windows plus a conservative
+        q-space ASR Delta projector. The raw atomic centering passes are
+        kept unchanged; before mode projection each windowed Cartesian field
+        has only its uniform acoustic component subtracted with a
+        Tensor3.Interpolate(asr=True)-style sinc factor. This realizes an
+        additive correction to the raw atomic estimator, not a replacement
+        of its pinned-atom geometry.
         "atomic_asr": experimental diagnostic prototype: the force slot is
         uniform and the atom-averaged pair kernel is SVD-factorized into
         slot windows. This is not a production mode; on the SnTe L=2 case
@@ -1017,9 +1024,10 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         if fine_mesh is None:
             raise ValueError("QSpaceLanczosInterp requires fine_mesh=(m1, m2, m3)")
         if window_design not in ("plain", "minimal_image", "asr",
-                                 "atomic", "atomic_asr"):
+                                 "atomic", "atomic_delta", "atomic_asr"):
             raise ValueError("window_design must be 'plain', 'minimal_image' "
-                             "'asr', 'atomic', or 'atomic_asr'")
+                             "'asr', 'atomic', 'atomic_delta', or "
+                             "'atomic_asr'")
         if window_design == "atomic_asr":
             warnings.warn(
                 "window_design='atomic_asr' is an experimental diagnostic "
@@ -1109,7 +1117,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the D4 pass and back-compat X_q/Y_q otherwise)
         self.X_q, self.Y_q = self._build_field_set(weights=None)
 
-        if window_design in ("minimal_image", "asr", "atomic", "atomic_asr"):
+        if window_design in ("minimal_image", "asr", "atomic",
+                             "atomic_delta", "atomic_asr"):
             self._setup_window_passes()
 
         if prefilter or d3_mode == "tensor":
@@ -1338,14 +1347,67 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             u_scale = np.ones_like(ch['sqrt_m3'])
         else:
             u_scale = ch['u_conv'] * ch['sqrt_m3']
+        f_scale = ch['f_conv'] / ch['sqrt_m3']
+
+        u_cart = u_tilde * u_scale[None, None, :]
+        f_cart = f_tilde * f_scale[None, None, :]
+
+        if self.window_design == "atomic_delta":
+            self._apply_atomic_delta_projector(u_cart, f_cart)
 
         X = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
         Y = np.zeros((self.n_q, N, self.n_bands), dtype=np.complex128)
         for iq in range(self.n_q):
             pol_iq = self.pols_q[:, :, iq]
-            X[iq] = (u_tilde[iq] * u_scale[None, :]) @ np.conj(pol_iq)
-            Y[iq] = (f_tilde[iq] * (ch['f_conv'] / ch['sqrt_m3'][None, :])) @ np.conj(pol_iq)
+            X[iq] = u_cart[iq] @ np.conj(pol_iq)
+            Y[iq] = f_cart[iq] @ np.conj(pol_iq)
         return X, Y
+
+    # ---------------------------------------------------------------
+    def _apply_atomic_delta_projector(self, u_cart, f_cart):
+        """Tensor3-style q-space ASR Delta for atom-resolved windows.
+
+        This is deliberately conservative: it does not alter any atomic
+        window or pinned-atom image assignment.  It subtracts only the
+        uniform acoustic Cartesian component from the already-windowed
+        fields, multiplied by the same sinc-like support factor used by
+        Tensor3.Interpolate(asr=True).  The product of projected fields is
+        the raw atomic estimator plus an implicit additive Delta.
+        """
+        ch = self._channels
+        nat = self.dyn.structure.N_atoms
+        sqrt_m = np.sqrt(self.dyn.structure.get_masses_array())
+        trans = np.zeros((3, 3 * nat), dtype=np.float64)
+        for cart in range(3):
+            trans[cart, 3 * np.arange(nat) + cart] = sqrt_m
+        norm = float(np.sum(sqrt_m ** 2))
+
+        # Odd support size analogous to Tensor3.Interpolate(asr=True).
+        # Atomic centering searches images d + m L with |m| <= Far.  The
+        # corresponding centered support spans -Far*L ... +Far*L, hence
+        # length 2*Far*L + 1.  It is odd, so the sinc kernel is real and
+        # equals one at Gamma.
+        L = np.asarray(self.dyn.GetSupercell(), dtype=int)
+        N_i = 2 * int(self.window_far) * L + 1
+        at = self.dyn.structure.unit_cell
+        tol = 1e-8
+        fq = np.ones(self.n_q, dtype=np.float64)
+        for iq, q in enumerate(self.q_points):
+            factors = np.ones(3, dtype=np.float64)
+            aq = at @ q
+            mask = np.abs(np.sin(np.pi * aq)) > tol
+            factors[mask] = (np.sin(N_i[mask] * np.pi * aq[mask]) /
+                             (N_i[mask] * np.sin(np.pi * aq[mask])))
+            fq[iq] = np.prod(factors)
+
+        for iq in range(self.n_q):
+            if abs(fq[iq]) < 1e-14:
+                continue
+            for basis in trans:
+                cu = (u_cart[iq] @ basis) / norm
+                cf = (f_cart[iq] @ basis) / norm
+                u_cart[iq] -= fq[iq] * cu[:, None] * basis[None, :]
+                f_cart[iq] -= fq[iq] * cf[:, None] * basis[None, :]
 
     # ---------------------------------------------------------------
     def _setup_window_passes(self):
@@ -1379,7 +1441,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # the window cyclically instead would wrap its support across the
         # domain boundary with inconsistent absolute phases and destroy the
         # designed kernel (verified).
-        if self.window_design in ("atomic", "atomic_asr"):
+        if self.window_design in ("atomic", "atomic_delta", "atomic_asr"):
             shifts = [np.array(s, dtype=int)
                       for s in itertools.product(range(coarse[0]),
                                                  range(coarse[1]),
@@ -1418,7 +1480,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                     weights=w3d, perm=perms[i_orig] if i_orig > 0 else None))
             return field_cache[key]
 
-        if self.window_design == "atomic":
+        if self.window_design in ("atomic", "atomic_delta"):
             self._window_passes = []
             for channel in range(3):
                 geom_passes = get_atomic_window_passes(
@@ -1433,10 +1495,14 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                             get_set(w, i_orig) for w in weights))
 
             if Parallel.am_i_the_master():
-                print("Stochastic centering [atomic-perm]: {} window passes "
-                      "({} full origins), {} distinct field sets".format(
-                          len(self._window_passes), len(shifts),
-                          len(self._field_sets)))
+                label = "atomic-delta" if self.window_design == "atomic_delta" \
+                    else "atomic-perm"
+                extra = " + q-space ASR Delta projector" \
+                    if self.window_design == "atomic_delta" else ""
+                print("Stochastic centering [{}]: {} window passes "
+                      "({} full origins), {} distinct field sets{}".format(
+                          label, len(self._window_passes), len(shifts),
+                          len(self._field_sets), extra))
             return
 
         if self.window_design == "atomic_asr":
@@ -1669,7 +1735,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         plain = (self.X_q, self.Y_q)
 
         if (self.window_design not in ("minimal_image", "asr", "atomic",
-                                       "atomic_asr")
+                                       "atomic_delta", "atomic_asr")
                 or self._window_passes is None):
             if self._distributed:
                 return super()._call_julia_qspace(R1, alpha1_flat)
@@ -1686,7 +1752,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         # prefactor appears here.
         combined = None
         for pinfo in self._window_passes:
-            if self.window_design in ("atomic", "atomic_asr"):
+            if self.window_design in ("atomic", "atomic_delta",
+                                      "atomic_asr"):
                 channel, iz, iw, iv = pinfo
                 fz = self._field_sets[iz]
                 fw = self._field_sets[iw]
