@@ -983,7 +983,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                  allow_unstable=False, prefilter=True,
                  window_design="plain", window_K=3, window_origins=1,
                  asr_fields=True, window_decay=None, window_far=3,
-                 d3_mode="stochastic", d3_tensor=None,
+                 d3_mode="stochastic", d3_tensor=None, d4_center=False,
                  lo_to_split=None, **kwargs):
 
         if lo_to_split is not None:
@@ -996,7 +996,7 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         interp_attrs = ['fine_mesh', '_fine_idx', '_q_lookup', '_fpsi_fine',
                         'window_design', 'window_K', 'window_origins', 'asr_fields',
                         'window_decay', 'window_far',
-                        'd3_mode', '_d3_tensor', '_d3_blocks',
+                        'd3_mode', '_d3_tensor', '_d3_blocks', 'd4_center',
                         '_field_sets', '_window_passes', '_channels']
         self.__total_attributes__.extend(interp_attrs)
 
@@ -1011,6 +1011,24 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         self.window_decay = window_decay
         self.window_far = int(window_far)
         self.d3_mode = d3_mode
+        # D4 centering mode (atomic window designs only):
+        #   False        -> single plain-window D4 pass (default)
+        #   True         -> legacy external-reference centering (guardrail)
+        #   "reference"  -> legacy external-reference centering
+        #   "leg"        -> experimental pin-force-leg split; algebraically
+        #                   consistent but wrong-sign on the SnTe/Fm-3m
+        #                   smoke benchmark as of 2026-07-05.
+        if d4_center not in (False, True, "leg", "reference"):
+            raise ValueError("d4_center must be False, True, 'leg', or "
+                             "'reference'")
+        if d4_center == "leg":
+            import warnings
+            warnings.warn(
+                "d4_center='leg' is experimental and currently fails the "
+                "SnTe/Fm-3m D4 spectral-shift benchmark; use only for "
+                "diagnostics.",
+                RuntimeWarning)
+        self.d4_center = d4_center
         self._d3_tensor = d3_tensor      # centered CC Tensor3 (transient)
         self._d3_blocks = None           # per-pair D3 blocks (built per q_pert)
         self._field_sets = None      # list of (X_q, Y_q) per distinct window
@@ -1659,7 +1677,8 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         return self._flatten_blocks(folded)
 
     def _call_slots(self, fields_z, fields_w, fields_v, R1, alpha1_flat,
-                    compute_d3, compute_d4, d3_channels=(True, True, True)):
+                    compute_d3, compute_d4, d3_channels=(True, True, True),
+                    d4_channels=(True, True, True, True)):
         """One slot-resolved kernel call, parallel over (config, sym)."""
         jl = JuliaExt.get_main()
 
@@ -1697,7 +1716,9 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                 bool(self.qspace_prefiltered),
                 True,
                 bool(d3_channels[0]), bool(d3_channels[1]),
-                bool(d3_channels[2]))
+                bool(d3_channels[2]),
+                bool(d4_channels[0]), bool(d4_channels[1]),
+                bool(d4_channels[2]), bool(d4_channels[3]))
 
         return Parallel.GoParallel(get_combined, indices, "+")
 
@@ -1777,10 +1798,75 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                     part = 0.5 * (r1 + r2)
             combined = part if combined is None else combined + part
 
-        # D4 terms: single plain-window pass (plan section 5.4)
+        # D4 terms
+        d4_mode = self.d4_center
+        if d4_mode is True:
+            # The pin-force-leg construction is algebraically appealing
+            # (channel split + commensurate identity), but SnTe/Fm-3m
+            # spectra show a wrong-sign D4 shift.  Keep it available as
+            # d4_center="leg" for diagnostics, but do not select it from
+            # the boolean production switch until the four-leg target is
+            # fixed.
+            d4_mode = "reference"
         if not self.ignore_v4:
-            combined = combined + self._call_slots(
-                plain, plain, plain, R1, alpha1_flat, False, True)
+            if (d4_mode == "leg" and self.window_design in
+                    ("atomic", "atomic_delta")):
+                # Pin-one-leg permutation-correct D4 centering (the exact D4
+                # analogue of the D3 force channels).  The force leg of the
+                # four-phonon estimator occupies four positions: external
+                # w/v (term A) and internal w/v (term B).  For each pinned
+                # primitive atom/origin the force leg carries the DELTA
+                # window and the other three legs the atom-resolved window
+                # W_{a,o}.  The delta only ever touches the FORCE (Y) field
+                # of its slot -- the displacement (X) field of the same slot
+                # belongs to other legs and stays windowed -- so mixing
+                # (X from the window set, Y from the delta set) per slot
+                # plus the Julia d4_force_* channel gates realizes the
+                # centering with no new field sets:
+                #   W-force call (channels ew+iw): Yw = delta, Xw/Xv/Yv = W
+                #   V-force call (channels ev+iv): Yv = delta, Xw/Yw/Xv = W
+                # Summing pinned atoms and full coarse origins reconstructs
+                # the force-leg sum (no 1/(nat*Nc) prefactor, exactly like
+                # the D3 channels); at commensurate q every term is linear
+                # in the delta Y field and the W legs collapse to plain, so
+                # the sum equals the plain D4 estimator per configuration.
+                ch0 = [p for p in self._window_passes if p[0] == 0]
+                d4 = None
+                for (_, iz, iw, iv) in ch0:
+                    Xd, Yd = self._field_sets[iz]     # delta at (a, origin)
+                    Xa, Ya = self._field_sets[iw]     # atomic window W_{a,o}
+                    part = self._call_slots(
+                        (Xa, Ya), (Xa, Yd), (Xa, Ya), R1, alpha1_flat,
+                        False, True,
+                        d4_channels=(True, False, True, False))
+                    part = part + self._call_slots(
+                        (Xa, Ya), (Xa, Ya), (Xa, Yd), R1, alpha1_flat,
+                        False, True,
+                        d4_channels=(False, True, False, True))
+                    d4 = part if d4 is None else d4 + part
+                combined = combined + d4
+            elif (d4_mode == "reference" and self.window_design in
+                    ("atomic", "atomic_delta")):
+                # Legacy external-reference centering (kept for comparison
+                # only).  All four D4 legs carry the same atomic window
+                # W_{a,o} of the channel-0 passes, averaged over the pinned
+                # atom and origins.  Permutation-symmetric and ASR-safe,
+                # but the centering reference is NOT a vertex leg: at L=2
+                # every leg suffers the tie dilution and the R3m benchmark
+                # showed no improvement over plain.
+                ch0 = [p for p in self._window_passes if p[0] == 0]
+                d4 = None
+                for (_, iz, iw, iv) in ch0:
+                    fw = self._field_sets[iw]
+                    fv = self._field_sets[iv]
+                    part = self._call_slots(fw, fw, fv, R1, alpha1_flat,
+                                            False, True)
+                    d4 = part if d4 is None else d4 + part
+                combined = combined + d4 / len(ch0)
+            else:
+                # single plain-window pass (plan section 5.4)
+                combined = combined + self._call_slots(
+                    plain, plain, plain, R1, alpha1_flat, False, True)
 
         f_pert = combined[:self.n_bands]
         d2v_blocks = self._unflatten_blocks(combined[self.n_bands:])

@@ -793,7 +793,11 @@ function get_perturb_averages_qspace_slots_kernel(
     scale4::Float64,
     d3_force_z::Bool=true,
     d3_force_w::Bool=true,
-    d3_force_v::Bool=true
+    d3_force_v::Bool=true,
+    d4_force_ew::Bool=true,
+    d4_force_ev::Bool=true,
+    d4_force_iw::Bool=true,
+    d4_force_iv::Bool=true
 )
     n_pairs = size(unique_pairs, 1)
     n_syms = length(symmetries)
@@ -911,14 +915,26 @@ function get_perturb_averages_qspace_slots_kernel(
         end
 
         # === D4 total weights ===
-        total_wD4 = zero(ComplexF64)
+        # The four D4 force-leg channels (analogue of the D3 force split):
+        #   ew: force on the EXTERNAL w leg  -> the y_w(q1) * f_Y x_v(q2) part
+        #   ev: force on the EXTERNAL v leg  -> the f_Y x_w(q1) * y_v(q2) part
+        #   iw: force on the INTERNAL w leg  -> the buf_f_weight_w part
+        #   iv: force on the INTERNAL v leg  -> the buf_f_weight_v part
+        # All four true reproduces the original fused D4 term exactly.
+        total_wD4_ew = zero(ComplexF64)
+        total_wD4_ev = zero(ComplexF64)
         total_wb = zero(ComplexF64)
         if compute_d4
-            total_wD4 = -total_sum * rho[i_config] / 8.0 * scale4
-            total_wb = -(buf_f_weight_w + buf_f_weight_v) * rho[i_config] / 4.0 * scale4
+            wd4 = -total_sum * rho[i_config] / 8.0 * scale4
+            total_wD4_ew = d4_force_ew ? wd4 : zero(ComplexF64)
+            total_wD4_ev = d4_force_ev ? wd4 : zero(ComplexF64)
+            total_wb = -((d4_force_iw ? buf_f_weight_w : zero(ComplexF64)) +
+                         (d4_force_iv ? buf_f_weight_v : zero(ComplexF64))) *
+                       rho[i_config] / 4.0 * scale4
         end
 
-        if weight_R != 0 || weight_Rf != 0 || total_wD4 != 0 || total_wb != 0
+        if weight_R != 0 || weight_Rf != 0 || total_wD4_ew != 0 ||
+           total_wD4_ev != 0 || total_wb != 0
             for p in 1:n_pairs
                 iq1 = unique_pairs[p, 1]
                 iq2 = unique_pairs[p, 2]
@@ -944,7 +960,8 @@ function get_perturb_averages_qspace_slots_kernel(
                             contrib -= weight_Rf * r1_1 * r1_2
                         end
                         if compute_d4
-                            contrib -= total_wD4 * (r1_1 * r2_2 + r2_1 * r1_2)
+                            contrib -= total_wD4_ev * r1_1 * r2_2
+                            contrib -= total_wD4_ew * r2_1 * r1_2
                             contrib -= total_wb * r1_1 * r1_2
                         end
                         d2v_blocks[p][nu1, nu2] += contrib
@@ -993,7 +1010,11 @@ function get_perturb_averages_qspace_slots(
     batched::Bool=true,
     d3_force_z::Bool=true,
     d3_force_w::Bool=true,
-    d3_force_v::Bool=true
+    d3_force_v::Bool=true,
+    d4_force_ew::Bool=true,
+    d4_force_ev::Bool=true,
+    d4_force_iw::Bool=true,
+    d4_force_iv::Bool=true
 )
     n_q = size(Xz, 1)
     n_bands = size(Xz, 3)
@@ -1035,7 +1056,8 @@ function get_perturb_averages_qspace_slots(
         Xz, Yz, Xw, Yw, Xv, Yv, f_Y, f_psi, rho, R1, alpha1_blocks,
         symmetries, compute_d3, compute_d4, iq_pert, unique_pairs,
         n_bands, n_q, start_index, end_index, scale3, scale4,
-        d3_force_z, d3_force_w, d3_force_v)
+        d3_force_z, d3_force_w, d3_force_v,
+        d4_force_ew, d4_force_ev, d4_force_iw, d4_force_iv)
 
     result = zeros(ComplexF64, n_bands + n_pairs * n_bands^2)
     result[1:n_bands] = f_pert
@@ -1081,7 +1103,11 @@ function _slots_kernel_batched(
     scale4::Float64,
     d3_force_z::Bool=true,
     d3_force_w::Bool=true,
-    d3_force_v::Bool=true
+    d3_force_v::Bool=true,
+    d4_force_ew::Bool=true,
+    d4_force_ev::Bool=true,
+    d4_force_iw::Bool=true,
+    d4_force_iv::Bool=true
 )
     n_pairs = size(unique_pairs, 1)
     n_syms = length(symmetries)
@@ -1245,10 +1271,15 @@ function _slots_kernel_batched(
                 wcw = (compute_d3 && d3_force_w) ? weight_R[b] : zero(ComplexF64)
                 wd = (compute_d3 && d3_force_z) ? weight_Rf[b] : zero(ComplexF64)
                 if compute_d4
+                    # D4 force-leg channels (see the scalar kernel):
+                    # ev -> w_cross_v (f_Y x_w * y_v), ew -> w_cross_w
+                    # (y_w * f_Y x_v), iw/iv -> the internal-force diagonal.
                     wd4 = -total_sum[b] * rho_c[b] / 8.0 * scale4
-                    wcv += wd4
-                    wcw += wd4
-                    wd += -(buf_f_w[b] + buf_f_v[b]) * rho_c[b] / 4.0 * scale4
+                    wcv += d4_force_ev ? wd4 : zero(ComplexF64)
+                    wcw += d4_force_ew ? wd4 : zero(ComplexF64)
+                    wd += -((d4_force_iw ? buf_f_w[b] : zero(ComplexF64)) +
+                            (d4_force_iv ? buf_f_v[b] : zero(ComplexF64))) *
+                          rho_c[b] / 4.0 * scale4
                 end
                 w_cross_v[b] = wcv
                 w_cross_w[b] = wcw

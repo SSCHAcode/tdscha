@@ -64,6 +64,100 @@
   broken plain 52.28), normalized L1 vs direct 0.0865 and vs tensor-D3
   0.0466. Added pure geometry tests in
   `tests/test_interpolation/test_atomic_windows.py`.
+- IN PROGRESS (2026-07-05): **D4 interpolation/centering on SnTe**
+  (section 5.10). The R3m T=180 benchmark shows that the current plain-D4
+  interpolation under-captures the direct fine-mesh D4 first-moment shift:
+  N=4000 gives direct -22.9 cm⁻¹ vs interp -14.8 cm⁻¹ (64%) while D3-only
+  agrees to ~5 cm⁻¹, so the error is D4-specific. Two atomic-D4 candidates
+  have been implemented: legacy external-reference centering
+  (`d4_center="reference"`, now also selected by `d4_center=True`) and
+  pin-force-leg centering (`d4_center="leg"`) with four Julia D4
+  force-channel gates. Algebraic
+  checks are green (channel split and commensurate identity), but the clean
+  Fm-3m benchmark exposes unresolved physics: at T=280, p4x2, p3x1.6,
+  N=2000, shell-1 band 5, plain D4 captures only +5.93/+8.71 cm⁻¹ = 68% of
+  the direct spectral-moment shift; shell-1 band 0 slightly overshoots
+  (+1.48/+1.33 = 111%). The all-mode N=300 smoke shows `leg` has the wrong
+  sign for the D4 shift (+2.05 cm⁻¹ vs direct -7.25), worse than plain
+  (-1.65) and reference (-3.63). Conclusion: D4 centering is not solved by
+  the current leg split; next step is an operator-level channel diagnostic
+  against a true four-leg minimal-image target, not a longer production run.
+  LIVE DIAGNOSTIC: testing whether the root cause is the two-slot reuse of
+  the D4 estimator. Even with force-leg gates, one slot (`w` or `v`) serves
+  both an external leg and an internal leg at different momenta, so a single
+  atomic window may be centering two distinct legs relative to the pinned
+  force leg. The cheap target is a geometry-only four-leg kernel/channel
+  diagnostic before any further long SnTe spectra. First cheap operator
+  probe (Fm-3m T=280, p4x3, N=40, shell-1 band 5, one random alpha) shows
+  `atomic` and `atomic_delta` are nearly identical for plain/reference/leg
+  D4, so the q-space Delta ASR projector is not the sign problem. The raw
+  random-vector D4 block norm is not a stable metric (direct stochastic
+  block nearly cancels at N=40); continue with physical D4-shift/channel
+  diagnostics instead. SAFETY PATCH: `d4_center=True` no longer aliases to
+  the known-bad `leg` scheme; it now selects the legacy `reference` mode,
+  while `d4_center="leg"` remains explicitly available for diagnostics.
+  This is a guardrail, not the final D4-centering solution. Verification:
+  `micromamba run -n sscha pytest -q tests/test_interpolation/test_d4_center.py -q`
+  passes (3 tests: D4 channel split and commensurate identities for
+  reference/leg). ENV NOTE: bare `micromamba run -n sscha` imports the
+  installed site-package TDSCHA, not this branch. SnTe benchmark commands
+  must set `PYTHONPATH=/tmp/tdscha_pyshim` (symlink `tdscha -> Modules`) or
+  an equivalent pyshim; otherwise code patches in this checkout are not
+  exercised. GEOMETRY DIAGNOSTIC: a Far=1 all-class SnTe L=2 scan comparing
+  the current force-star D4 image assignment against a true four-leg
+  perimeter target gives total-variation mean 0.614, max 1.000, nonzero in
+  85.3% of 8192 atom/cell classes. This is topology-only (not tensor
+  weighted), but it explains why `leg` can pass identities and still move
+  spectra in the wrong direction: it is centering to the wrong four-leg
+  target. Added a runtime warning for explicit `d4_center="leg"`. Focused
+  branch-overlay verification:
+  `micromamba run -n sscha env PYTHONPATH=/tmp/tdscha_pyshim pytest -q tests/test_interpolation/test_d4_center.py -q`
+  passes (3 tests; warning emitted only for the explicit leg diagnostic).
+  REFERENCE-MODE BENCHMARK: branch-overlay Fm-3m SnTe smoke
+  (`PYTHONPATH=/tmp/tdscha_pyshim python fm3m_bench.py 300 25 3.0 reference`)
+  gives direct D4 first-moment shift -7.25 cm⁻¹; interp D3-only <ω>=33.55
+  vs direct 33.37; interp `d4_center="reference"` <ω>=29.92, shift
+  -3.63 cm⁻¹ = 50% capture, L1 vs direct D3+D4 = 0.391. So reference is a
+  safer negative-control/partial-centering mode, not a solution. It is not a
+  full-D4 reference tensor: it avoids storing Φ⁽⁴⁾ and instead reuses the
+  channel-0 atom/origin stochastic passes with all D4 legs windowed relative
+  to an external pinned atom. That pinned atom is not one of the four D4
+  vertex legs, which is why the mode is useful as a guardrail but cannot be
+  the final four-leg centering fix.
+- NEW D4 PLAN (2026-07-05): restart the D4 interpolation from the four
+  logical legs of the two-phonon-to-two-phonon operation: external `Ew, Ev`
+  and internal `Iw, Iv`. Build a geometry-only atom-resolved four-leg target
+  `T4(Ew,Ev,Iw,Iv)` by minimizing a symmetric four-leg cluster cost (default:
+  complete-graph sum of squared pair distances, ties split exactly). Project
+  this raw target onto the linear constraint subspace that enforces: (1) exact
+  24-way permutation symmetry, (2) exact partition/unit folded class sums, so
+  commensurate q reproduces the current plain D4 operator, and (3) exact
+  translational ASR on every leg. Then factor the projected target into a
+  small separable sum `sum_r c_r A_r(Ew) B_r(Ev) C_r(Iw) D_r(Iv)` with
+  constrained atom-resolved one-leg factors. Runtime should use a new explicit
+  mode such as `d4_center="factor4"` / `window_design="atomic4_asr"` and a
+  slot-lifted Julia D4 kernel that accepts four logical D4 field slots instead
+  of reusing only `w/v` for both external and internal legs. The cost is
+  `O(R4 * N_configs * N_syms * N_f * nb^2)` with factor rank `R4` independent
+  of the fine mesh, hence still linear in the interpolation mesh. Validation
+  gates: pure SnTe L=2 geometry target (old force-star must fail), exact
+  commensurate operator identity, Hermiticity, acoustic-leg ASR scaling,
+  toy-model rank convergence, then the Fm-3m SnTe first-off-grid-shell
+  benchmark with plain/reference/leg retained only as negative controls.
+  The LaTeX report now includes the q-space proof: the low-rank object is the
+  image kernel, not Φ⁽⁴⁾; multilinearity plus Gaussian integration by parts
+  gives the same stochastic D4 contraction, and the partition constraint
+  proves exact commensurate identity configuration by configuration. The fit
+  can be done matrix-free through force-like contractions of the four-leg
+  geometry target with three one-leg probe vectors, so neither Φ⁽⁴⁾ nor a
+  dense T4 needs to be stored.
+- REPORT REWRITE (2026-07-05): `report/interpolation/main.tex` was rewritten
+  for clarity. It now starts with a notation/problem-statement section,
+  separates assumptions from derivations, explains the stochastic kernel as
+  an image-assignment kernel before introducing window fits, rewrites the ASR
+  and atom-resolved SnTe sections pedagogically, and reframes the D4 chapter
+  as: controlled chain validation of stochastic D4, SnTe failure of two-slot
+  D4 centering, and the four-leg factorized-kernel proof/implementation plan.
 - TODO: LO-TO, off-mesh q_pert, IR/Raman sqrt(N_f) prefactor, distributed-mode
   support, KPM variant (M5, skipped by decision).
 
