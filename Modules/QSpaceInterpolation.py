@@ -66,6 +66,7 @@ from cellconstructor.Settings import ParallelPrint as print
 
 import tdscha.QSpaceLanczos as QL
 import tdscha.JuliaExt as JuliaExt
+import tdscha.QSpaceFactorKernel as FactorKernel
 
 
 __EPSILON__ = 1e-12
@@ -984,6 +985,12 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                  window_design="plain", window_K=3, window_origins=1,
                  asr_fields=True, window_decay=None, window_far=3,
                  d3_mode="stochastic", d3_tensor=None, d4_center=False,
+                 factor_rank=12, factor_far=1, factor_cost=1,
+                 factor_fit_mode="constrained", factor_target_mode="auto",
+                 factor_sample_classes=20000,
+                 factor_validation_classes=4000,
+                 factor_max_exact_classes=20000, factor_seed=1729,
+                 factor_cache_dir=None, factor_optimize_sweeps=0,
                  lo_to_split=None, **kwargs):
 
         if lo_to_split is not None:
@@ -997,6 +1004,13 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                         'window_design', 'window_K', 'window_origins', 'asr_fields',
                         'window_decay', 'window_far',
                         'd3_mode', '_d3_tensor', '_d3_blocks', 'd4_center',
+                        'factor_rank', 'factor_far', 'factor_cost',
+                        'factor_fit_mode', 'factor_target_mode',
+                        'factor_sample_classes', 'factor_validation_classes',
+                        'factor_max_exact_classes', 'factor_seed',
+                        'factor_cache_dir',
+                        'factor_optimize_sweeps',
+                        '_factor_passes', '_factor_plain',
                         '_field_sets', '_window_passes', '_channels']
         self.__total_attributes__.extend(interp_attrs)
 
@@ -1011,16 +1025,36 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         self.window_decay = window_decay
         self.window_far = int(window_far)
         self.d3_mode = d3_mode
-        # D4 centering mode (atomic window designs only):
+        self.factor_rank = int(factor_rank)
+        self.factor_far = int(factor_far)
+        self.factor_cost = factor_cost
+        self.factor_fit_mode = str(factor_fit_mode)
+        self.factor_target_mode = str(factor_target_mode)
+        self.factor_sample_classes = int(factor_sample_classes)
+        self.factor_validation_classes = int(factor_validation_classes)
+        self.factor_max_exact_classes = int(factor_max_exact_classes)
+        self.factor_seed = int(factor_seed)
+        self.factor_cache_dir = factor_cache_dir
+        self.factor_optimize_sweeps = int(factor_optimize_sweeps)
+        if self.factor_fit_mode not in ("individual", "constrained"):
+            raise ValueError("factor_fit_mode must be 'individual' or "
+                             "'constrained'")
+        self._factor_passes = None   # {order: [(c_xi, ifield), ...]}
+        self._factor_plain = None    # {order: plain-pass coefficient}
+        # D4 centering mode:
         #   False        -> single plain-window D4 pass (default)
         #   True         -> legacy external-reference centering (guardrail)
         #   "reference"  -> legacy external-reference centering
         #   "leg"        -> experimental pin-force-leg split; algebraically
         #                   consistent but wrong-sign on the SnTe/Fm-3m
         #                   smoke benchmark as of 2026-07-05.
-        if d4_center not in (False, True, "leg", "reference"):
-            raise ValueError("d4_center must be False, True, 'leg', or "
-                             "'reference'")
+        #   "factor"     -> symmetric-power factorized four-leg centering
+        #                   (new_plan.tex); combinable with the atomic
+        #                   window designs (D3 atomic + D4 factor) and
+        #                   implied by window_design="factor".
+        if d4_center not in (False, True, "leg", "reference", "factor"):
+            raise ValueError("d4_center must be False, True, 'leg', "
+                             "'reference', or 'factor'")
         if d4_center == "leg":
             import warnings
             warnings.warn(
@@ -1042,10 +1076,23 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         if fine_mesh is None:
             raise ValueError("QSpaceLanczosInterp requires fine_mesh=(m1, m2, m3)")
         if window_design not in ("plain", "minimal_image", "asr",
-                                 "atomic", "atomic_delta", "atomic_asr"):
+                                 "atomic", "atomic_delta", "atomic_asr",
+                                 "factor"):
             raise ValueError("window_design must be 'plain', 'minimal_image' "
-                             "'asr', 'atomic', 'atomic_delta', or "
-                             "'atomic_asr'")
+                             "'asr', 'atomic', 'atomic_delta', "
+                             "'atomic_asr', or 'factor'")
+        if window_design == "factor" and d4_center in (True, "leg",
+                                                       "reference"):
+            raise ValueError("window_design='factor' handles the D4 "
+                             "centering itself; use d4_center='factor' "
+                             "(implied) or False to disable")
+        if d4_center == "factor" and window_design not in (
+                "factor", "atomic", "atomic_delta"):
+            raise ValueError("d4_center='factor' requires window_design in "
+                             "('factor', 'atomic', 'atomic_delta')")
+        if window_design == "factor":
+            # the factorized mode centers both vertex orders
+            self.d4_center = "factor"
         if window_design == "atomic_asr":
             warnings.warn(
                 "window_design='atomic_asr' is an experimental diagnostic "
@@ -1138,6 +1185,9 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
         if window_design in ("minimal_image", "asr", "atomic",
                              "atomic_delta", "atomic_asr"):
             self._setup_window_passes()
+
+        if window_design == "factor" or d4_center == "factor":
+            self._setup_factor_passes()
 
         if prefilter or d3_mode == "tensor":
             # (also needed by the deterministic tensor-D3 f_pert contraction)
@@ -1588,6 +1638,79 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
                                                   len(self._field_sets)))
 
     # ---------------------------------------------------------------
+    def _setup_factor_passes(self):
+        """Symmetric-power factorized centering (new_plan.tex).
+
+        The image-assignment kernel of each vertex order n is represented
+        as  K = plain_coeff * K0 + sum_xi c_xi * corr_n(A_xi), where every
+        one-leg factor window A_xi has EXACTLY uniform folded class sums
+        (0 or 1).  On that manifold the partition of unity, the
+        per-configuration commensurate identity, the acoustic sum rule on
+        every leg, and the 4-leg permutation symmetry hold structurally
+        for every candidate, so the geometry fit is unconstrained (see
+        QSpaceFactorKernel).  At runtime one field set is built per
+        retained factor and passed to EVERY slot of the existing Julia
+        kernel with all force channels enabled: an equal-factor pass is
+        permutation symmetric term by term and needs no orientation
+        averaging and no new Julia interface.
+        """
+        coarse = np.asarray(self.dyn.GetSupercell(), dtype=int)
+        itau = self._channels['itau']
+        cell_idx = self._channels['cell_idx']
+
+        orders = []
+        if self.window_design == "factor":
+            orders.append(3)
+        if self.d4_center == "factor":
+            # always fit order 4 (cached, geometry-only): ignore_v4 may be
+            # toggled after construction
+            orders.append(4)
+
+        if self._field_sets is None:
+            self._field_sets = []
+        field_cache = {}
+
+        def get_set(win):
+            key = tuple(sorted((k, round(v, 12))
+                               for k, v in win.entries.items()))
+            if key not in field_cache:
+                weights = _window_map_to_qweights(
+                    win.entries, self.q_points, self.dyn.structure, itau,
+                    cell_idx, coarse)
+                field_cache[key] = len(self._field_sets)
+                self._field_sets.append(
+                    self._build_field_set(weights=weights))
+            return field_cache[key]
+
+        self._factor_passes = {}
+        self._factor_plain = {}
+        for order in orders:
+            fit = FactorKernel.get_factor_fit(
+                self.dyn.structure, coarse, order,
+                far=self.factor_far, cost_power=self.factor_cost,
+                max_rank=self.factor_rank, fit_mode=self.factor_fit_mode,
+                cache_dir=self.factor_cache_dir,
+                **({
+                    "target_mode": self.factor_target_mode,
+                    "sample_classes": self.factor_sample_classes,
+                    "validation_classes": self.factor_validation_classes,
+                    "max_exact_classes": self.factor_max_exact_classes,
+                    "seed": self.factor_seed + order,
+                    "optimize_sweeps": self.factor_optimize_sweeps,
+                } if self.factor_fit_mode == "constrained" else {}))
+            self._factor_passes[order] = [
+                (float(c), get_set(w))
+                for c, w in zip(fit.coeffs, fit.windows)]
+            self._factor_plain[order] = fit.plain_coeff
+            if Parallel.am_i_the_master():
+                d = fit.diagnostics
+                print("Factor centering order %d: rank %d, plain coeff "
+                      "%.4f, kernel rel residual %.4f (coverage %.3f, "
+                      "plain %.3f)" % (order, len(fit.windows),
+                                       fit.plain_coeff, d["rel_residual"],
+                                       d["coverage"], d["coverage_plain"]))
+
+    # ---------------------------------------------------------------
     # Hybrid tensor-D3 mode (plan section 5.8)
     # ---------------------------------------------------------------
     def _build_d3_blocks(self):
@@ -1722,6 +1845,21 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
 
         return Parallel.GoParallel(get_combined, indices, "+")
 
+    def _apply_factor_d4(self, plain, R1, alpha1_flat):
+        """D4-only contribution of the factorized centering.
+
+        One equal-factor pass per retained rank-4 window (all four D4
+        force-position channels enabled: the pass kernel A^(x)4 is
+        invariant under any leg permutation) plus the plain pass with the
+        residual coefficient."""
+        d4 = self._factor_plain[4] * self._call_slots(
+            plain, plain, plain, R1, alpha1_flat, False, True)
+        for c, ifld in self._factor_passes[4]:
+            f = self._field_sets[ifld]
+            d4 = d4 + c * self._call_slots(f, f, f, R1, alpha1_flat,
+                                           False, True)
+        return d4
+
     def _call_julia_qspace(self, R1, alpha1_flat):
         """Anharmonic averages: windowed multi-pass or single plain pass.
 
@@ -1754,6 +1892,25 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             alpha1_flat = self._fold_alpha1(alpha1_flat)
 
         plain = (self.X_q, self.Y_q)
+
+        # Symmetric-power factorized centering (new_plan.tex): the same
+        # factor field set feeds every slot; all D3/D4 force channels stay
+        # enabled because an equal-factor pass is permutation symmetric
+        # term by term.  The plain pass carries the residual coefficient
+        # 1 - sum(type-1 c_xi), so the assembled kernel is
+        # K0 + sum_xi c_xi (corr_n(A_xi) - corr_n(A0)) exactly.
+        if self.window_design == "factor":
+            combined = self._factor_plain[3] * self._call_slots(
+                plain, plain, plain, R1, alpha1_flat, True, False)
+            for c, ifld in self._factor_passes[3]:
+                f = self._field_sets[ifld]
+                combined = combined + c * self._call_slots(
+                    f, f, f, R1, alpha1_flat, True, False)
+            if not self.ignore_v4:
+                combined = combined + self._apply_factor_d4(
+                    plain, R1, alpha1_flat)
+            f_pert = combined[:self.n_bands]
+            return f_pert, self._unflatten_blocks(combined[self.n_bands:])
 
         if (self.window_design not in ("minimal_image", "asr", "atomic",
                                        "atomic_delta", "atomic_asr")
@@ -1809,7 +1966,12 @@ class QSpaceLanczosInterp(QL.QSpaceLanczos):
             # fixed.
             d4_mode = "reference"
         if not self.ignore_v4:
-            if (d4_mode == "leg" and self.window_design in
+            if d4_mode == "factor":
+                # four-leg symmetric-power centering; combinable with the
+                # atomic D3 channels (the two corrections are independent)
+                combined = combined + self._apply_factor_d4(
+                    plain, R1, alpha1_flat)
+            elif (d4_mode == "leg" and self.window_design in
                     ("atomic", "atomic_delta")):
                 # Pin-one-leg permutation-correct D4 centering (the exact D4
                 # analogue of the D3 force channels).  The force leg of the

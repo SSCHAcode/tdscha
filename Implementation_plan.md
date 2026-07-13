@@ -2,6 +2,322 @@
 
 Status: started after commit `a6abf0f0` on branch `qspace_interpolation`.
 
+## 2026-07-11: Symmetric-power factor centering (new_plan.tex) — IMPLEMENTATION
+
+This implements the strategy of `report/interpolation/new_plan.tex` (the
+equal-factor / symmetric-power factorization of the image-assignment
+kernel, fitted to a complete-graph geometry target under hard
+partition/ASR/permutation constraints).  New module
+`Modules/QSpaceFactorKernel.py`; runtime modes `window_design="factor"`
+(D3+D4) and `d4_center="factor"` (factor D4 on top of the validated
+atomic D3 channels).
+
+### Central simplification found during implementation (tex deviation #1)
+
+`new_plan.tex` prescribes a constrained fit: candidate corrections
+`u_xi`, constraint matrix `C_n U`, nullspace basis `Z`, coefficients
+`c = Z z` (eqs. homogeneous-constraint .. variable-projection).  This
+machinery is UNNECESSARY if every one-leg factor window is restricted to
+the **uniform-class-sum manifold**
+
+```text
+sum_p A(a, d + L p) = s_A   for every folded class (a, d),  s_A in {0, 1}
+```
+
+with corrections `u_xi = corr_n(A_xi) - s_xi * corr_n(A_plain)`.  On this
+manifold, candidate by candidate:
+
+1. **partition of unity** holds exactly (class sums of the correction are
+   `s^n - s^n = 0` for type-1, `0` for type-0);
+2. **stronger: the commensurate identity holds PER CONFIGURATION** — at a
+   commensurate q the windowed Bloch field collapses to the
+   class-sum-weighted transform, which for `s = 1` IS the plain field and
+   for `s = 0` vanishes, so every correction pass cancels configuration
+   by configuration (not only in expectation);
+3. **ASR on every leg**: the one-leg image sum `H_s = prod_{s'!=s} A * s`
+   is independent of the summed (atom, cell) — eq. asr-constant-image-sum
+   of the tex is satisfied structurally;
+4. **permutation symmetry** is automatic for equal-factor powers.
+
+Hence `C_n U = 0` identically, `Z = I`, and the constrained fit collapses
+to an ORDINARY (optionally greedy/OMP) least-squares problem over the
+coefficients, evaluated matrix-free with the symmetric-power Gram
+identity `<corr_n(A), corr_n(B)> = sum_v g_AB(v)^n` where
+`g_AB(v) = sum_{a,u} A(a,u) B(a,u+v)` (the orbit-summed generalization of
+eq. symmetric-power-gram).  No dense `T4`, no `C_4`, no KKT solve, no
+streamed constraint Gram.
+
+The restriction is a strict subset of the feasible set of the tex (joint
+cancellations between candidates with non-uniform class sums are
+excluded, for example the polarization expansion of the pinned-delta
+atomic channels). The kernel-space benchmark below shows that the chosen
+dictionary beats the validated atomic construction for this SnTe geometry,
+but this does not prove completeness. More rank within the restricted
+factor subspace cannot in general recover every jointly constrained
+kernel. The physical constraints are exact; the restriction is a modeling
+approximation only in the off-grid locality kernel. A residual plateau must
+therefore trigger larger support/dictionary tests and, if necessary, the
+general `C_n U Z = 0` fallback.
+
+### Kernel-space yardsticks (SnTe 2x2x2, far=1, perimeter cost rho=1)
+
+Distances to the complete-graph minimal-image target T (normalized:
+rel = ||K - T|| / ||T - K0||; coverage = <K, T>/<T, T>):
+
+```text
+order 3 (1019 target tuples):
+  plain tent K0                      rel 1.000   coverage 0.164
+  atomic perm-correct (VALIDATED)    rel 0.535   coverage 0.646
+  factor fit rank 8                  rel 0.497   coverage 0.747
+  factor fit rank 12                 rel 0.480   coverage 0.763
+  factor fit rank 76 (full dict)     rel 0.473   coverage 0.770
+
+order 4 (15827 target tuples):
+  plain tent K0                      rel 1.000   coverage 0.065
+  pin-one-leg "leg" (FAILED SnTe)    rel 0.691   coverage 0.387
+  factor fit rank 8                  rel 0.631   coverage 0.558
+  factor fit rank 12                 rel 0.619   coverage 0.574
+  factor fit rank 76 (full dict)     rel 0.609   coverage 0.588
+```
+
+Interpretation: (a) the equal-factor fit at rank 8-12 is BETTER in kernel
+space than the atomic D3 construction that reproduces the direct SnTe
+result, so rel ~ 0.5 is at/beyond the "physically validated" quality
+scale; (b) for D4 the fit dominates the failed leg mode especially in
+coverage of the true four-leg target (0.57 vs 0.39); (c) the greedy rank
+curve saturates at ~12 of 76 dictionary candidates — the runtime cost is
+12 field sets + 12 kernel passes per vertex order (vs 48 passes of the
+atomic D3 mode).
+
+### Dictionary (geometry-only, all windows uniform-class-sum)
+
+Type-1 (class sums = 1): per-atom minimal-image selectors (the validated
+L=2 tie breaker, `minimal_image_window`); Gaussian softmin windows
+centered on atoms AND on nearest-neighbor bond midpoints, per-class
+normalized, sigma in {0.25, 0.4, 0.6, 0.9, 1.35} x d_NN.  Type-0 (class
+sums = 0): differences of adjacent-width same-center Gaussians and
+(mimg - tightest Gaussian) — these contribute genuinely new
+symmetric-power directions through their cross terms.  Empty differences
+(tight Gaussians collapse onto mimg) are dropped.
+
+### Runtime data path
+
+For each retained factor: ONE field set (existing `_build_field_set`
+with per-q complex weights from `_window_map_to_qweights`; extended
+images folded back with Bloch phases), passed to EVERY slot of the
+existing Julia kernel with ALL D3/D4 force channels enabled (an
+equal-factor pass is permutation symmetric term by term — no orientation
+averaging, no four-slot Julia interface, exactly as new_plan.tex
+predicted for the primary representation).  The plain pass carries the
+residual coefficient `1 - sum(type-1 c_xi)`.  Runtime scaling:
+`O((R3 + R4 + 2) * Nconf * Nsym * Nf * nb^2)`, i.e. linear in the fine
+mesh with factor-rank prefactor.  Field prefiltering, fine-side f_psi
+folding into alpha1, and scale3/scale4 are unchanged and shared by all
+passes.  Hermiticity: forward and adjoint use identical factors within
+each fused call.
+
+Fit setup cost: ~90 s (n=3) / ~130 s (n=4) on SnTe L=2 for the 76-window
+dictionary (dominated by the pairwise window cross-correlations of the
+Gram); cached in-process by structure fingerprint
+(`QSpaceFactorKernel.get_factor_fit`).
+
+### Corrections/additions for new_plan.tex (to be folded into the tex)
+
+1. The constrained-fit pipeline of §"Constrained fitting strategy"
+   (projection, C_n U, nullspace Z) should present the uniform-class-sum
+   manifold as the PRIMARY design: all hard constraints become
+   structural, per candidate, and the commensurate identity is per
+   configuration (stronger than eq. partition, which only gives the
+   expectation statement for type-1-style windows; the per-configuration
+   claim in §"Identity at commensurate q points" holds on the manifold).
+2. The Gram identity (eq. symmetric-power-gram) must be stated for the
+   TRANSLATION-ORBIT-SUMMED kernels: <corr_n(A), corr_n(B)> =
+   sum_v g_AB(v)^n with the one-leg cross-correlation g_AB(v); the plain
+   inner-product form <A,B>^n holds only in the non-covariant tuple
+   space.
+3. The geometry target normalization must match the plain kernel's class
+   sums (N_c per folded class), not 1 — eq. partition normalizes to 1
+   per class, but K0 (the tent autocorrelation of the fundamental-domain
+   window) has class sums N_c; the fit compares K and T on that scale.
+4. Practical finding: a fixed geometry-informed dictionary + greedy OMP
+   already beats the validated atomic kernel at L=2. This is evidence for
+   using the restricted path first, not evidence that the general feasible
+   space is redundant. Keep the alternating factor optimization of §"Fit
+   the assembled kernel" (rebuild U, recompute Z, solve z) as the escalation
+   path for residual plateaus, larger cells, and tighter targets.
+5. The current code evaluates the factor Gram without a dense rank-n
+   kernel, but `build_target_tuples` still enumerates and stores the sparse
+   minimizing target tuples. This is suitable for the SnTe L=2 validation;
+   the streamed/sampled target oracle and allocation limits remain required
+   before large primitive cells or supports are production-safe.
+
+### Status / next steps
+
+- [x] `QSpaceFactorKernel.py`: targets, dictionary, matrix-free Gram fit,
+      greedy rank selection, coverage diagnostics, dense validation
+      helpers, in-process cache.
+- [x] Runtime wiring: `window_design="factor"`, `d4_center="factor"`,
+      `factor_rank/far/cost` options; plain pass carries the residual
+      coefficient; D3-only runs skip the D4 passes via `ignore_v4`.
+- [x] Toy-chain smoke: per-configuration commensurate identity and
+      off-grid Hermiticity.
+- [x] Unit tests `tests/test_interpolation/test_factor_kernel.py`: 11 pass,
+      including target covariance/ties, class sums, partition, ASR, orbit
+      Gram, commensurate D3/D4 identity, and Hermiticity.
+- [x] Regression with existing interpolation modes: 27 pass across D4,
+      window, atomic-window, and ASR-window suites.
+- [x] Added slow real-data regression
+      `tests/test_interpolation/test_factor_kernel_snte.py` for the SnTe
+      2x2x2 rank-12 geometry fits and 2x2x2 -> 4x4x4 factor-mode smoke.
+- [x] Slow SnTe regression passes. With the current regularization and
+      variance guard, the retained fits are D3 rank 12, rel 0.4881,
+      coverage 0.748 and D4 rank 11, rel 0.6304, coverage 0.544. The
+      off-grid 2x2x2 -> 4x4x4 D3+D4 Lanczos smoke is finite and Hermitian.
+      These numbers differ slightly from the unguarded kernel-space scan
+      above because the production fit limits correction variance.
+- [ ] SnTe Fm-3m production benchmark (T=280, p4x2, p3x1.6, shell-1
+      band 5 + band 0) vs the N=2000 baselines: direct D4 shift +8.71
+      (b5) / +1.33 (b0); plain captures 68%/111%, reference 65%.
+      Modes to run: `window_design="atomic_delta", d4_center="factor"`
+      (minimal-risk: validated D3 + factor D4) and pure
+      `window_design="factor"`.
+
+### 2026-07-11 locality audit of individual class-sum factors
+
+The exact constraints do not make the individual factors local. They
+prove the opposite asymptotically:
+
+- a type-1 factor must contain at least one representative of every
+  `(atom, folded cell)` class, hence at least `nat * Nc` entries and a
+  support radius at least the covering radius of the supercell quotient;
+- a nonzero type-0 factor must contain two cancelling representatives of
+  some folded class, separated by a nonzero supercell translation;
+- per-class Gaussian normalization selects an image within every class; a
+  small sigma does not suppress distant folded classes.
+
+Only the assembled orbit kernel can be local. Broad factor correlations
+and signed coefficients can cancel nonminimal image assignments, but this
+can require growing rank and can amplify stochastic noise. The new
+diagnostic `report/interpolation/scripts/factor_locality_probe.py` reports
+factor support/RMS radii and the scale-invariant cancellation condition
+
+```text
+kappa_corr = sum_xi |c_xi| ||u_xi|| / ||sum_xi c_xi u_xi||.
+```
+
+Results saved in
+`report/interpolation/data/factor_locality_summary.json`:
+
+```text
+SnTe 2x2x2 guarded fit
+             rank   rel     coverage   kappa_corr   max RMS radius
+  D3           12   0.488     0.748       2.94          12.41
+  D4           11   0.630     0.544       3.57          12.41
+
+Toy chain, D3 fixed rank 12
+  L=2               0.654     0.844       4.21           6.55
+  L=4               0.805     0.823       5.84           9.03
+  L=6               0.848     0.757       5.43          12.73
+```
+
+The raw maximum coefficient is 24.5 for SnTe D3 and 129.0 for SnTe D4 in
+the current factor normalization. `kappa_corr` is the more meaningful
+normalization-invariant warning. The toy scan does not isolate the class-sum
+restriction from the fixed dictionary, but it proves that the present
+rank-12 dictionary is not size-stable.
+
+New acceptance gates before production:
+
+1. compute absolute nonminimal-image leakage and its maximum over folded
+   classes, not only global L2 residual/coverage;
+2. converge leakage, `kappa_corr`, and physical response with rank and
+   supercell size;
+3. measure the empirical configuration/bootstrap variance of the assembled
+   factor action, because exact mean cancellation does not guarantee noise
+   cancellation between separate passes;
+4. check smoothness between commensurate q points to detect ringing from
+   sharp nearest-image selectors;
+5. if these fail, use small jointly constrained groups of genuinely local
+   factors, with nonuniform individual class sums cancelling through
+   `C_n U Z = 0`.
+
+### 2026-07-11 full matrix-free constrained fitter — IMPLEMENTED
+
+New production path: `factor_fit_mode="constrained"` in
+`QSpaceLanczosInterp`, implemented by
+`QSpaceFactorKernel.fit_constrained_factors`.
+It is now the default whenever `window_design="factor"`; the materializing
+small-cell comparison requires explicit `factor_fit_mode="individual"`.
+
+The fitter never materializes `T_n`, `K_n`, `U`, `C_n`, or the plain
+fundamental-domain window:
+
+1. `GeometryTargetStream` either streams all folded classes or draws a
+   fixed-seed uniform class sample with a separate validation seed. Each
+   class is minimized independently with bounded tuple storage and a
+   branch-and-bound fallback.
+2. `U^T U` is built from translation-orbit one-leg correlations.
+3. `<T,U>` is accumulated batch by batch. The target is never retained.
+4. `(C_n U)^T(C_n U)` is the sum of analytic partition and ASR Grams.
+   Partition uses sparse folded-class correlations. ASR uses the
+   nonconstant folded image sum times the remaining orbit correlations.
+   Small-cell brute image sums agree with the analytic ASR Gram.
+5. A rank-revealing eigensolve obtains `Z=null(C_n U)`, followed by the
+   reduced regularized solve in `z`. General local dictionaries are
+   accepted; an empty or zero-kernel nullspace is reported rather than
+   relaxed.
+6. The plain kernel value on requested tuples and its norm are analytic.
+   Sparse/plain cross terms use exact shift enumeration below a limit and
+   bounded fixed-seed sampling above it, with a standard-error diagnostic.
+7. Factor fits serialize to compressed NPZ and are keyed by a structure +
+   option hash through `factor_cache_dir`.
+8. `factor_optimize_sweeps` runs an outer width search. Every trial rebuilds
+   the factors, Grams, nullspace, and coefficient solve.
+
+#### Large-supercell feasible basis
+
+A stricter result emerged during implementation: if a correction is
+compact enough that its image support projects injectively onto folded
+classes, the strong ASR condition forces it to zero. Therefore genuinely
+compact factors cannot produce a nonzero exact correction in a very large
+supercell.
+
+The production basis uses sparse supercell differences
+
+```text
+A(u) = b(u) - b(u - L e)
+```
+
+where `b` is compact. Each factor has exactly zero folded class sum and an
+entry count independent of `Nc`; its diameter grows with the supercell, as
+the theorem requires. Default candidates use atom-centered local Gaussians,
+five widths, and the three axial supercell translations. Users can supply a
+general dictionary, in which case the full `C_n U Z = 0` machinery applies.
+
+#### Validation status
+
+- 21 focused tests pass, including exact stream/dense target agreement,
+  implicit/materialized plain agreement, analytic/brute ASR Gram agreement,
+  joint nullspace solve, disk roundtrip, outer factor optimization, a
+  complete sampled fit at supercell length 100000, commensurate runtime
+  identity, and off-grid Hermiticity.
+- The length-100000 rank-four stream represents `1.6e16` folded classes
+  while holding fewer than 100 target tuples; sparse factor entry counts are
+  identical to those at length 10.
+- SnTe sampled constrained fit (`256` train / `128` validation classes,
+  rank 12): D3 train/validation rel `0.998/0.998` (no useful improvement);
+  D4 `0.902/0.914`, validation coverage `0.295` vs plain near `0.065`.
+- The constrained SnTe 2x2x2 -> 4x4x4 D3+D4 runtime smoke is finite and
+  Hermitian. Fit plus two Lanczos steps completes in about 17 s in the test
+  environment.
+
+Conclusion: the requested full bounded-memory fitting machinery is working,
+but the first sparse equal-factor dictionary is not accurate enough for
+SnTe D3 and is not a production physics default. The next model step is a
+richer exactly feasible representation (likely implicit `A0+B` mixed-power
+factors or jointly constrained distinct-factor groups), followed by the
+N=2000 spectral gate.
+
 ## D4 follow-up note (2026-07-05)
 
 The D3 atomic permutation/ASR construction below is working, but the D4

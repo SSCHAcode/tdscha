@@ -158,8 +158,61 @@
   and atom-resolved SnTe sections pedagogically, and reframes the D4 chapter
   as: controlled chain validation of stochastic D4, SnTe failure of two-slot
   D4 centering, and the four-leg factorized-kernel proof/implementation plan.
+- IN PROGRESS (2026-07-11): **symmetric-power factor centering**
+  (`window_design="factor"`, `d4_center="factor"`) implementing
+  `report/interpolation/new_plan.tex` — the restart of the D4 (and D3)
+  centering from the four-leg complete-graph target. New module
+  `Modules/QSpaceFactorKernel.py`: the image-assignment kernel is
+  represented as `K0 + sum_xi c_xi (corr_n(A_xi) - corr_n(A_plain))`
+  with ONE one-leg factor window per term used on EVERY leg.
+  KEY SIMPLIFICATION vs the tex: constraining every window to exactly
+  uniform folded class sums (0 or 1) makes partition, per-CONFIGURATION
+  commensurate identity, per-leg ASR, and permutation symmetry structural
+  per candidate — the C_nU/nullspace machinery collapses to an
+  unconstrained (greedy/OMP) LSQ, evaluated matrix-free via
+  `<corr_n(A),corr_n(B)> = sum_v g_AB(v)^n`. Kernel-space yardsticks on
+  SnTe L=2 (rel = ||K-T||/||T-K0||, coverage = <K,T>/<T,T>):
+  D3 rank-12 fit rel 0.480/cov 0.763 BEATS the validated atomic kernel
+  (0.535/0.646); D4 rank-12 fit rel 0.619/cov 0.574 vs the failed
+  pin-one-leg mode 0.691/0.387 and plain 1.0/0.065. Runtime: one field
+  set + one all-channel slot-kernel pass per retained factor (12+12
+  passes vs 48 atomic D3 passes), plain pass carries coefficient
+  1 - sum(c). The restriction makes the physical constraints exact but is
+  a strict approximation to the general feasible kernel space: additional
+  restricted rank cannot necessarily reproduce cancellations between
+  nonuniform factors. The current target enumeration is also only suitable
+  for validation-size cells; large cells need streamed/sampled target
+  contractions. Unit/runtime tests now pass (11 focused + 27 related). The
+  slow real-data SnTe regression also passes: the guarded fits retain D3
+  rank 12 (rel 0.488/cov 0.748) and D4 rank 11 (rel 0.630/cov 0.544), and
+  the 2x2x2 -> 4x4x4 factor-mode Lanczos smoke is finite and Hermitian.
+  LOCALITY AUDIT: individual class-sum factors are necessarily extended
+  over the quotient (type 1) or across a supercell translation (type 0);
+  only their signed orbit sum can be local. SnTe cancellation conditions
+  are 2.94 (D3) and 3.57 (D4), and a fixed-rank toy scan degrades from rel
+  0.654 at L=2 to 0.848 at L=6. Add per-class nonlocal leakage,
+  cancellation, q-smoothness, and bootstrap-variance gates before the
+  physical benchmark; use jointly constrained local factor groups if these
+  fail. Full
+  details + tex corrections are in Implementation_plan.md (2026-07-11
+  section). NEXT: SnTe Fm-3m N=2000 benchmark (baselines: plain
+  captures 68% of the +8.71 cm-1 direct D4 shift on shell-1 band 5).
 - TODO: LO-TO, off-mesh q_pert, IR/Raman sqrt(N_f) prefactor, distributed-mode
   support, KPM variant (M5, skipped by decision).
+- IMPLEMENTED (2026-07-11): full bounded-memory constrained geometry fit,
+  now the default for `window_design="factor"` and selected explicitly with
+  `factor_fit_mode="constrained"`. Target classes are streamed
+  or reproducibly sampled; target, kernel, candidate, constraint, and plain
+  arrays are never materialized. Partition/ASR constraint Grams are analytic,
+  `Z=null(C_nU)` is rank-revealed, factor widths can be rebuilt/refitted, and
+  fits persist through `factor_cache_dir`. Sparse factors use
+  `b(u)-b(u-Le)`, so entries are independent of `Nc` while exact zero class
+  sums preserve ASR and coarse identity. A length-100000 synthetic fit and
+  SnTe 2x2x2 -> 4x4x4 runtime pass. QUALITY WARNING: rank-12 sampled SnTe D3
+  remains plain-like (rel 0.998); D4 reaches validation rel 0.914/coverage
+  0.295. Keep the old broad factors as a small-cell benchmark and do not
+  promote the scalable mode before a richer feasible basis and N=2000
+  spectrum pass.
 
 **Goal.** Run the full q-space TDSCHA Lanczos (`Modules/QSpaceLanczos.py` +
 `Modules/tdscha_qspace.jl`) on a **fine** q-mesh not commensurate with the supercell of
