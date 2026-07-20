@@ -11,7 +11,7 @@ build-backend = "mesonpy"
 [project]
 # Project metadata, which was previously in the `setup()` call of setup.py.
 name = "tdscha"
-version = "1.6.2" # Make sure this version matches meson.build
+version = "1.7.0" # Make sure this version matches meson.build
 description = "Time Dependent Self Consistent Harmonic Approximation"
 authors = [{name = "Lorenzo Monacelli"}]
 readme = "README.md"
@@ -38,6 +38,11 @@ dependencies = [
     # other than numpy, ase, or scipy (and not a system library like BLAS/LAPACK),
     # it would go here.
 ]
+
+[project.optional-dependencies]
+# Fast Julia mode (MODE_FAST_JULIA / QSpaceLanczos). juliacall installs the
+# Julia runtime automatically at first use, no further setup is required.
+julia = ["juliacall"]
 
 [project.scripts]
 tdscha-convergence-analysis="tdscha.cli:tdscha_convergence_analysis"
