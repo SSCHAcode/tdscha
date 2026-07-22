@@ -59,6 +59,12 @@ new four-leg, ASR-projected, factorized D4 kernel.  The proposed D4
 factorization is a low-rank representation of the \emph{geometry kernel},
 not of $\Phi^{(4)}$; the report proves its commensurate identity and its
 equivalence to the stochastic q-space D4 contraction.
+For the separate q-space fold/unfold formulation, a new atom-centred
+trigonometric cardinal kernel resolves the aliased Fourier images directly
+from the intracell coordinates.  On SnTe it reconstructs the centred FC3
+vertex norm to $1.2\times10^{-5}$ relative accuracy and changes the
+stochastic $2^3\to4^3$ peak from the erroneous $46.11$ to
+$38.04$~cm$^{-1}$ (centred oracle $37.65$~cm$^{-1}$).
 \end{abstract}
 
 \tableofcontents
@@ -113,7 +119,10 @@ The report is organized as follows.  Sections~\ref{sec:background}--
 \ref{sec:asr}--\ref{sec:atomic} add ASR and atom-resolved centering.
 Section~\ref{sec:implementation} describes the implementation and cost.
 Sections~\ref{sec:benchmarks}--\ref{sec:d4} give the tests, including the
-current state of the fourth-order problem.  The appendices repeat the two
+current state of the fourth-order problem.  Section~\ref{sec:codes}
+compares the resulting strategies with the interpolation schemes of the
+established anharmonic codes (phono3py, ShengBTE, D3Q/thermal2, and
+others) and states which one we recommend.  The appendices repeat the two
 core derivations in a compact form.
 
 %======================================================================
@@ -819,14 +828,14 @@ Table~\ref{tab:snte_peaks}.
 \includegraphics[width=0.95\textwidth]{figs/snte_spectral.pdf}
 \caption{SnTe $\Gamma$ TO spectral function, $2^3\to4^3$ interpolation
 at $T=280$~K with $1.5$~cm$^{-1}$ smearing, D3-only (no D4).
-The \texttt{atomic\_delta} curve (red) uses the same 48-pass
-permutation-correct atom-resolved windows as the raw \texttt{atomic} mode
-(violet) plus a conservative $q$-space acoustic projector on the windowed
-Bloch fields. The tensor-D3 oracle (green dashed) and the direct $4^3$
-$q$-space Lanczos (blue shaded) are reference calculations; the old $d_3$
-dynamic bubble (grey, $k=20^3$, $F_{\rm far}=3$) is also shown. The
-\texttt{plain} window curve (yellow dotted) illustrates the broken $L=2$
-interpolation without atom-resolved centering.}
+The converged $4^3$ SSCHA reference (black shaded) is a native $4^3$
+q-Lanczos calculation from an independently converged $4^3$ auxiliary
+dynamical matrix. The matched $4^3$ control (blue dashed) used the same
+$2^3\to4^3$ interpolated auxiliary matrix as the window-valued methods and
+is retained only for algorithmic comparison.  The
+\texttt{atomic\_delta} curve (red) and tensor-D3 oracle (green) match the
+control; the \texttt{plain} window curve (yellow dotted) illustrates the
+broken $L=2$ interpolation without atom-resolved centering.}
 \label{fig:snte_spectral}
 \end{figure}
 
@@ -835,7 +844,7 @@ interpolation without atom-resolved centering.}
 \caption{SnTe $\Gamma$ TO peak positions and ASR quality at near-$\Gamma$
 wavevectors ($|\qv|=0.066$~\AA$^{-1}$ on the $4^3$ mesh).
 All Lanczos runs use $2^3\to4^3$ interpolation with
-$\sigma=1.5$~cm$^{-1}$; the tensor-D3 oracle and the direct $4^3$ reference
+$\sigma=1.5$~cm$^{-1}$; the tensor-D3 oracle and the converged $4^3$ reference
 employ the deterministic $d_3$ tensor (centered, $F_{\rm far}=3$, ASR).
 $N_I$ is the number of stochastic configurations; \textit{n. s.} is the number
 of Lanczos steps. The acoustic $D_3$ row norm $||D_3^{\rm ac}||$ is the
@@ -843,27 +852,33 @@ Frobenius norm of the acoustic-band row of the $d_2v$ blocks at $q_{\rm
 pert}=\Gamma$; the ASR projector reduces this leakage by a factor of
 $\sim 14000$ without shifting the TO peak.}
 \label{tab:snte_peaks}
-\begin{tabular}{lcccccr}
+\begin{tabular}{lccccc}
 \toprule
-mode & peak (\si{cm^{-1}}) & static $G$ & $N_I$ & n. s. & passes
-& $||D_3^{\rm ac}||$ \\
+mode & peak (\si{cm^{-1}}) & $\Delta$ vs conv.\ $4^3$ & $N_I$ & n.\ s. & $||D_3^{\rm ac}||$ \\
 \midrule
-direct $4^3$ q-Lanczos & 37.56 & $+$ (unstable) & 4000 & --- & --- & --- \\
-tensor-D3 oracle & 37.65 & $+5.42\times10^{6}$ & 4000 & 250 & --- & --- \\
-\texttt{atomic\_delta} (this work) & 37.52 & $+5.02\times10^{6}$ & 1000 & 30 & 48 & $3.4\times10^{-17}$ \\
-\texttt{atomic} raw (same windows) & 37.52 & $+5.14\times10^{6}$ & 1000 & 30 & 48 & $5.0\times10^{-13}$ \\
-\texttt{plain} window (broken) & 51.83 & $-4.91\times10^{6}$ & 500 & 30 & 0 & --- \\
-old $d_3$ bubble ($k\!=\!20^3$) & 38.46 & --- & --- & --- & --- & --- \\
+converged $4^3$ q-Lanczos & 34.79 & --- & 4000 & 250 & --- \\
+matched $4^3$ control (interp.\ aux.) & 37.56 & +2.77 & 4000 & --- & --- \\
+tensor-D3 oracle & 37.65 & +2.86 & 4000 & 250 & --- \\
+\midrule
+\texttt{atomic\_delta} (this work) & 37.52 & +2.73 & 1000 & 30 & $3.4\times10^{-17}$ \\
+\texttt{atomic} raw (same windows) & 37.52 & +2.73 & 1000 & 30 & $5.0\times10^{-13}$ \\
+\texttt{plain} window (broken) & 51.83 & +17.04 & 500 & 30 & --- \\
+old $d_3$ bubble ($k\!=\!20^3$) & 38.46 & +3.67 & --- & --- & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-The key result is that \texttt{atomic\_delta} keeps the correct TO peak
-(37.52~vs~37.56~cm$^{-1}$ for the direct $4^3$ reference) while the
-q-space acoustic projector dramatically improves the near-$\Gamma$ acoustic
-sum rule.  The acoustic-mode $D_3$ vertex norm at the smallest non-zero $q$
-on the $4^3$ mesh ($|\qv|\approx 0.066$~\AA$^{-1}$) is reduced from
-$5\times10^{-13}$ (raw atomic) to $3.4\times10^{-17}$ under
+The key result is that \texttt{atomic\_delta} matches the matched $4^3$
+control (37.52~vs~37.56~cm$^{-1}$) and the tensor oracle (37.65~cm$^{-1}$),
+confirming that its atom-resolved window solves the cell-basis centering
+problem.  The converged $4^3$ SSCHA reference (34.79~cm$^{-1}$) is
+2.73~cm$^{-1}$ lower: this residual is not a centering error but the mesh
+convergence of the $2^3$ auxiliary dynamical matrix, common to all methods
+that start from the same $2^3$ SSCHA reference.
+The $q$-space acoustic projector dramatically improves the near-$\Gamma$
+acoustic sum rule.  The acoustic-mode $D_3$ vertex norm at the smallest
+non-zero $q$ on the $4^3$ mesh ($|\qv|\approx 0.066$~\AA$^{-1}$) is reduced
+from $5\times10^{-13}$ (raw atomic) to $3.4\times10^{-17}$ under
 \texttt{atomic\_delta} -- a factor of $\sim 14\,000$ improvement
 (Fig.~\ref{fig:snte_asr}). At exact $\Gamma$ both variants give machine zero
 because the folded-class-sum property of the permutation-correct atomic
@@ -883,8 +898,8 @@ position (37.52~cm$^{-1}$).}
 \end{figure}
 
 The static response has $g>0$ (unstable) for \texttt{atomic\_delta},
-\texttt{atomic}, and the tensor-D3 oracle, matching the direct $4^3$
-calculation; the broken \texttt{plain} interpolation instead produces a
+\texttt{atomic}, and the tensor-D3 oracle, matching the matched $4^3$
+control; the broken \texttt{plain} interpolation instead produces a
 spurious stable response ($g<0$, $w_{\rm eff}=49.5$~cm$^{-1}$).  The
 atom-resolved mode therefore fixes both the peak position and the static
 instability of the real-material test without constructing or storing
@@ -894,6 +909,790 @@ force-channel/pinned-atom/origin passes (SnTe: $3\times2\times8=48$ D3 pass
 calls).  This makes \texttt{atomic\_delta} the recommended tensor-free D3
 mode for underresolved small supercells where cell-index windows cannot
 resolve atomic-basis ties.
+
+%----------------------------------------------------------------------
+\subsection{Trilinear q-space interpolation and mesh convergence}
+\label{sec:trilinear}
+
+A separate $2^3\!\to\!4^3$ interpolation strategy uses trilinear
+corner-summing of the coarse $q$-point vertex samples
+(\texttt{QSpaceTrilinearLanczos}). The independent test in
+Fig.~\ref{fig:snte_trilinear4} compares this approach against a converged
+$4^3$ SSCHA reference (peak 34.79~cm$^{-1}$, independently relaxed auxiliary
+matrix). Standard atom-resolved centering brings the $2^3$ spectrum from
+44.03 down to 37.65~cm$^{-1}$ ($+2.86$~cm$^{-1}$ residual).  Trilinear
+interpolation instead moves the peak \emph{upward} to 46.11~cm$^{-1}$
+($+11.32$~cm$^{-1}$ error). The hardening is structural: trilinear
+corner-averaging cancels short-wavelength vertex components before the
+response squares them, attenuating the off-grid vertex to $\sim$29\% of its
+weighted norm. A decisive oracle test confirms this is the trilinear map
+itself, not a code bug: applying the same trilinear evaluation to the exact
+noise-free centered FC3 tensor reproduces the stochastic trilinear spectrum
+to within 0.13~cm$^{-1}$. Full details are documented in the benchmark
+accompanying this report.
+
+\begin{figure}[tb]
+\centering
+\includegraphics[width=\linewidth]{figs/snte_trilinear4_converged_reference.pdf}
+\caption{SnTe $\Gamma$-TO: corrected $4^3$ SSCHA-reference audit.
+The converged $4^3$ SSCHA reference (black) is a native $4^3$ TDSCHA
+q-Lanczos calculation from an independently converged $4^3$ auxiliary
+dynamical matrix (peak 34.79~cm$^{-1}$). Left panel (a): the standard
+atom-resolved centering oracle $(2^3\!\to\!4^3)$ recovers the reference
+shape with a residual $+2.86$~cm$^{-1}$ hardening. Right panel (b):
+trilinear q-space interpolation of the same coarse $2^3$ data hardens the
+mode farther, to 46.11~cm$^{-1}$. Both methods start from the original
+$2^3$ spectrum (grey dotted) at 44.03~cm$^{-1}$. T = 280~K, D3 only,
+1.5~cm$^{-1}$ broadening.}
+\label{fig:snte_trilinear4}
+\end{figure}
+
+%----------------------------------------------------------------------
+\subsection{Phase-cancellation audit at a cube centre}
+\label{sec:phaseaudit}
+
+To isolate the cause of the trilinear amplitude loss, the vertex is evaluated
+at a single uncommensurate $q$ point: the centre of a coarse-mesh cube,
+$q=(1/4,1/4,1/4)$ in fine-mesh fractional coordinates.
+The perturbation is at $\Gamma$ and the response mode is the $\Gamma$ TO
+(band 5). The same raw FC3 tensor (stored in the $2^3$ supercell,
+\textit{without} atom-triplet centering) is evaluated at each of the 8 coarse
+corners and at the fine centre via Fourier interpolation. The trilinear
+vertex is then the equal-weight ($1/8$) corner average of the coarse-corner
+samples; the centred reference comes from applying the tensor's
+\texttt{Tensor3.Interpolate} directly at the fine $q$ pair.
+
+Table~\ref{tab:phasecorners} lists the 8 corners and their contributions.
+The Frobenius norm of the projected $D_3$ vertex (TO-mode slice) is
+$\|\Phi_3\|_F = 1.47\times10^{-9}$ for the centred reference and
+$3.83\times10^{-10}$ for the trilinear sum --- a factor **0.26** survival,
+consistent with the $\sim29\%$ weighted $|V|^2$ ratio found in the full
+$2^3\!\to\!4^3$ benchmark.
+
+\begin{table}[tb]
+\centering
+\caption{Eight coarse-cube corners contributing to the trilinear vertex at
+$q=(1/4,1/4,1/4)$ ($q_{\rm pert}\!=\!\Gamma$, $\Gamma$ TO band~5).
+The corner $q$ indices are integers $\{0,1\}$ on the $2^3$ mesh; centred
+BZ fractions $q_{\rm cent}$ wrap $\pm1/2$; weights are $1/8$.
+$\tilde V_{\rm TO}$ is the TO diagonal element of the projected vertex;
+$\|\tilde V\|_F$ is the Frobenius norm of the full $6\times6$ $D_3$ block
+for the TO perturbation mode.}
+\label{tab:phasecorners}
+\small
+\begin{tabular}{cccrcrr}
+\toprule
+corner $(k_1,k_2,k_3)$ & $q_{\rm cent}$ (frac) & weight &
+$|\tilde V_{\rm TO}|$ & $\angle\tilde V_{\rm TO}$ &
+$\|\tilde V\|_F$ & $|w\,\tilde V_{\rm TO}|$ \\
+\midrule
+$(0,0,0)$ & $(0,0,0)$      & $1/8$ & $6.8\times10^{-19}$ &     $0.0^\circ$ & $1.5\times10^{-9}$ & $8.5\times10^{-20}$ \\
+$(0,0,1)$ & $(0,0,-1/2)$   & $1/8$ & $6.2\times10^{-14}$ &  $-62.8^\circ$ & $5.6\times10^{-13}$ & $7.8\times10^{-15}$ \\
+$(0,1,0)$ & $(0,-1/2,0)$   & $1/8$ & $2.1\times10^{-10}$ & $+135.3^\circ$ & $2.0\times10^{-9}$  & $2.6\times10^{-11}$ \\
+$(0,1,1)$ & $(0,-1/2,-1/2)$& $1/8$ & $1.7\times10^{-10}$ & $-134.0^\circ$ & $2.3\times10^{-9}$  & $2.1\times10^{-11}$ \\
+$(1,0,0)$ & $(-1/2,0,0)$   & $1/8$ & $2.0\times10^{-10}$ & $-135.8^\circ$ & $2.1\times10^{-9}$  & $2.5\times10^{-11}$ \\
+$(1,0,1)$ & $(-1/2,0,-1/2)$& $1/8$ & $1.5\times10^{-10}$ &  $+90.0^\circ$ & $2.2\times10^{-9}$  & $1.9\times10^{-11}$ \\
+$(1,1,0)$ & $(-1/2,-1/2,0)$& $1/8$ & $1.3\times10^{-12}$ &  $+89.4^\circ$ & $1.7\times10^{-11}$ & $1.6\times10^{-13}$ \\
+$(1,1,1)$ & $(-1/2,-1/2,-1/2)$&$1/8$ & $2.4\times10^{-12}$&  $+85.0^\circ$ & $3.3\times10^{-11}$ & $3.0\times10^{-13}$ \\
+\bottomrule
+\multicolumn{4}{l}{trilinear sum} & $5.2\times10^{-11}$ & \\
+\multicolumn{4}{l}{centred ref.\ (Fourier)} & $1.9\times10^{-14}$ & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The phases alternate because the Bloch factor $\exp(-2\pi
+i\,\mathbf q\cdot\boldsymbol\tau)$ takes different values at each corner.
+In SnTe's rocksalt cell, Sn sits at $(0,0,0)$ (phase $+1$ always), while
+Te at $(1/2,1/2,1/2)$ acquires the phases $+1$, $+i$, $-1$, $-i$ as the
+corner fractional coordinates toggle between $0$ and $\pm1/2$.
+The four corners with one non-zero index ($e.g.$ $(0,0,1)$) have the
+largest individual $|\tilde V_{\rm TO}| \sim 2\times10^{-10}$ but carry
+opposing phases ($\sim\pm135^\circ$, $\sim\pm90^\circ$); the equal-weight
+sum of their real parts nearly cancels, leaving a net amplitude two
+orders of magnitude smaller than the corner maxima.
+
+\smallskip
+\noindent\textbf{Gauge transformations.}
+Two candidate gauge transformations were tested at this $q$-point:
+\begin{itemize}
+\item \textit{Optimal scalar phase} per corner: align each corner's
+  $\tilde V_{\rm TO}$ phase to the centred reference before summing.
+  This recovers only a factor $1.8\times$ more amplitude, far from the
+  $1/0.26\approx3.8$ needed to match the centred norm.  This is a hard
+  ceiling for \emph{any} phase-only correction: with positive weights,
+  $|\sum_k w_k\,e^{i\varphi_k} V_k| \le \sum_k w_k |V_k|$, and half of
+  the corner samples here are essentially zero.
+\item \textit{Atom-position Bloch gauge} $\exp(-2\pi i\,\mathbf
+  q\cdot\boldsymbol\tau_a)$ as originally implemented: the Frobenius
+  norm ratio drops from $0.26$ to $0.17$.  This early test was
+  \emph{not conclusive}: the implementation evaluated the corner
+  phases at BZ-wrapped representatives, which for half-integer
+  $\boldsymbol\tau$ differences flips the sign of some corner phases
+  (a branch inconsistency).  Section~\ref{sec:topo-gauge} repeats the
+  test with the branch-consistent transport and finds that the atomic
+  gauge then aligns the phases essentially perfectly --- but, per the
+  previous bullet, still cannot restore the lost amplitude, and the
+  $D_3$-only $\Gamma$ response turns out to be insensitive to vertex
+  phases altogether.
+\end{itemize}
+
+The information a phase cannot supply is the missing \emph{amplitude}
+between the samples: the centred FC3 selects the minimal-distance
+triplet image, while the uncentred tensor uses a fixed cell-periodic
+image that couples Sn and Te images for $L=2$, and the coarse samples
+sit at or near the nodes of the centred envelope.  The route to
+precision-preserving interpolation therefore remains supplying the
+image assignment explicitly, either as atom-resolved FC3 centering
+(the tensor-oracle pipeline) or as the equivalent tensor-free
+centering windows of Sec.~\ref{sec:atomic}.
+Section~\ref{sec:topology} shows that this phase pattern is not an
+accident of the corner set but a quantized, inversion-protected
+property of the SnTe vertex, and Sec.~\ref{sec:topo-gauge} quantifies
+exactly how much of it a per-atom phase can and cannot repair.
+Section~\ref{sec:atom-fourier} then shows that the image assignment can
+also be supplied directly in q space by an atom-dependent trigonometric
+cardinal kernel, without constructing the tensor.
+
+%======================================================================
+\section{Why the phase of $\Phi^{(3)}$ rotates in $q$ space: a topological
+view of the trilinear failure}
+\label{sec:topology}
+
+This section steps back from the technical machinery and asks a simple
+question in simple language: \emph{why} does the three-phonon vertex of
+SnTe acquire a complex phase that rotates as $\qv$ moves through the
+Brillouin zone, why does the trilinear corner average consequently
+collapse to zero at the cube centres, and is there anything
+\emph{quantized} --- topological --- behind this behaviour?  The short
+answers, established numerically below
+(script \texttt{scripts/snte\_phase\_topology.py}, data
+\texttt{data/snte\_phase\_topology.\{json,npz\}}), are:
+
+\begin{enumerate}
+\item The phase rotation is real and remarkably clean: the dominant
+  Te--Sn element of the vertex rotates \emph{exactly linearly} by $\pi$
+  (half a turn) every time $\qv$ crosses the Brillouin zone once
+  (Fig.~\ref{fig:phasewinding}c; the deviation from a straight line is
+  $6\times10^{-7}$ degrees).
+\item The rotation happens because the anharmonic coupling is physically
+  \emph{centred on the Te--Sn bond}, i.e.\ at half a lattice vector from
+  the points the interpolation grid can address.  A half step in real
+  space is a half turn of phase across the zone --- the same shift
+  theorem that says a delayed signal gets a linearly growing phase.
+\item There is no divergence anywhere in the zone.  The only points
+  where the \emph{true} vertex vanishes (and where its phase is
+  therefore undefined) are symmetry zeros such as $\Gamma$.  The
+  extended ``zeroing'' happens only in the \emph{interpolated}
+  representation: the trilinear vertex is exactly real, and a real
+  function connecting samples of opposite sign has no choice but to
+  pass through zero.
+\item The half-turn is quantized and protected by inversion symmetry:
+  it is a $\mathbb{Z}_2$ invariant of the vertex, mathematically the
+  same object as the Zak phase of the Su--Schrieffer--Heeger (SSH)
+  chain.  SnTe sits in the nontrivial class, and no small deformation
+  of the force constants can move it out of that class.
+\item The rotation itself \emph{can} be stripped by a per-atom Bloch
+  phase --- provided the phase transport is branch-consistent
+  (Sec.~\ref{sec:topo-gauge}; an earlier implementation was not, which
+  had hidden this).  For SnTe the corrected atomic gauge is even the
+  \emph{optimal} phase, and it cuts the vertex reconstruction error
+  from $112\%$ to $18\%$.  What no phase can restore is the
+  \emph{amplitude} lost between samples, and the $D_3$-only $\Gamma$
+  spectrum depends only on $|V|^2$: the corrected gauge moves the
+  trilinear peak just $45.78\to45.59$~cm$^{-1}$, out of an
+  $8.1$~cm$^{-1}$ gap to the centred oracle.
+\end{enumerate}
+
+\subsection{What exactly is rotating}
+\label{sec:topo-what}
+
+Fix the perturbation leg at $\Gamma$, project it on the TO mode, and
+look at the remaining object as a function of the internal wavevector,
+\begin{equation}
+  V_{bc}(\qv) \;=\; \sum_a e^{\mathrm{TO}}_a\,
+  \Phi^{(3)}_{abc}(\Gamma;\, \qv,\, -\qv),
+  \label{eq:Vdef}
+\end{equation}
+a $6\times6$ matrix over the (atom, Cartesian) legs $b$ and $c$.  Split
+it into $3\times3$ atomic blocks.  Two numerical facts organize
+everything:
+
+\begin{itemize}
+\item \textbf{The vertex lives on the Te--Sn bond.}  The mixed Te--Sn
+  blocks have norm $\sim0.28$ (arbitrary units along the path), while
+  the Te--Te and Sn--Sn blocks are three orders of magnitude smaller
+  ($\sim10^{-4}$).  Whatever the interpolation does to the mixed blocks,
+  it does to the whole self-energy.
+\item \textbf{The dominant element is a two-source interference.}
+  Fourier-analysing the dominant Te--Sn element along the path
+  $\qv=(t,0,0)$ (reduced coordinates, $t:0\to1$) gives exactly two
+  lattice harmonics with \emph{equal magnitude and opposite sign},
+  $c_{\mathbf R_1}=+0.2208$ at $\mathbf R_1=(0,-2,1)$ and
+  $c_{\mathbf R_2}=-0.2208$ at $\mathbf R_2=(1,-1,0)$ (three-dimensional
+  fit on an $8^3$ $q$ grid); everything else is below $10^{-3}$ of
+  that.  Hence, to an accuracy of $0.1\%$,
+  \begin{equation}
+    V(\qv) \;=\; c\left(e^{2\pi i\,\qv\cdot\mathbf R_1}
+    - e^{2\pi i\,\qv\cdot\mathbf R_2}\right)
+    \;=\; \underbrace{2c\,\sin\!\big(\pi\,\qv\cdot(\mathbf R_1-\mathbf
+    R_2)\big)}_{\text{real envelope}}\;
+    \underbrace{i\,e^{2\pi i\,\qv\cdot\mathbf x_c}}_{\text{rotating
+    phase}},
+    \label{eq:sshform}
+  \end{equation}
+  with $\mathbf x_c=\tfrac12(\mathbf R_1+\mathbf R_2)
+  = (\tfrac12,-\tfrac32,\tfrac12)$: the \emph{midpoint between the two
+  sources sits at a half-integer lattice position} --- in fact exactly
+  at the stored Te--Sn separation
+  $\boldsymbol\tau_{\rm Te}-\boldsymbol\tau_{\rm Sn}$, i.e.\ on the
+  Te--Sn bond.
+\end{itemize}
+
+Equation~\eqref{eq:sshform} is the whole story of
+Fig.~\ref{fig:phasewinding}.  The modulus is a smooth sine arch that
+vanishes only where symmetry demands it (three $\Gamma$-point phonons of
+odd parity cannot couple in a centrosymmetric crystal, so
+$V(\Gamma)=0$); the phase is the factor $e^{2\pi i \qv\cdot\mathbf
+x_c}$, which advances by $2\pi\,\mathbf G\cdot\mathbf x_c = \pi$
+(mod $2\pi$) --- half a turn --- across every zone crossing.  In the
+complex plane the trajectory of $V(\qv)$ is a circle through the origin
+(Fig.~\ref{fig:phasewinding}a).  The ``rotation of the phase on the Te
+atoms'' observed in the corner audit of Sec.~\ref{sec:phaseaudit} is
+exactly this factor: with Sn taken as the origin of the cell, the
+half-lattice-vector offset $\mathbf x_c$ is the position of the Te
+sublattice, so the rotation appears attached to the Te legs of the
+tensor.
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\linewidth]{figs/snte_phase_winding.pdf}
+\caption{Measured phase winding of the SnTe three-phonon vertex
+(dominant Te--Sn element of Eq.~\eqref{eq:Vdef}, $2^3$ force constants,
+centred Fourier continuation vs.\ trilinear corner reconstruction).
+(a)~Complex-plane trajectory along $\qv=(t,0,0)$, $t:0\to1$: the true
+vertex (blue) travels on a circle through the origin --- constant
+rotation of the phase --- while the trilinear reconstruction (orange) is
+confined to the real axis, because all the coarse samples it can use
+(green circles) are real.  At the off-grid point $q=\frac14$ the true
+vertex is rotated by $45^\circ$ and has full length; the trilinear one
+is real and shorter by $1/\sqrt2$.
+(b)~Moduli along the same path: sine arch vs.\ tent.
+(c)~Phases: the true phase advances linearly by exactly $\pi$ per zone
+crossing (deviation from linearity $6\times10^{-7}$ degrees); the
+trilinear phase cannot rotate at all.
+(d)~Full TO-projected vertex norm along the cube diagonal
+$\qv=(t,t,t)$: at the cube centre $(\frac14,\frac14,\frac14)$ the
+corner average cancels almost exactly ($\Vert V\Vert$ drops from
+$0.442$ to $0.0007$, a factor $1.6\times10^{-3}$), while the true norm
+is at $71\%$ of its maximum there.  Dashed curves: trilinear with the
+branch-consistent per-atom Bloch phase of Sec.~\ref{sec:topo-gauge} ---
+the phase is now exact (panels a, c) and the cube-centre cancellation
+is lifted (panel d), but the amplitude stays damped between samples.}
+\label{fig:phasewinding}
+\end{figure}
+
+\subsection{Why it rotates: the coupling sits between the sampling
+points}
+\label{sec:topo-why}
+
+The rule behind Eq.~\eqref{eq:sshform} is elementary Fourier analysis:
+\emph{a function whose weight sits at position $\mathbf x$ in real space
+acquires the phase $e^{2\pi i\, \qv \cdot \mathbf x}$ in $q$ space}.
+The interpolation grid addresses whole unit cells --- integer lattice
+vectors.  But in rocksalt SnTe the third-order coupling is not centred
+on a lattice site: it is centred on the Te--Sn nearest-neighbour bond,
+whose midpoint sits at half a lattice vector
+(Fig.~\ref{fig:windscheme}a).  Half a step in real space means half a
+turn of phase per Brillouin-zone crossing.  The coarse $2\times2\times2$
+$q$ points are exactly the time-reversal-invariant points where this
+phase is $0$ or $\pi$ --- so every coarse sample is \emph{real} (largest
+imaginary part $10^{-12}$ of the real part, measured over all eight
+corners), with the sign pattern $(0, -, +, 0, +, 0, 0, -)$ over the
+eight corners.  The samples are blind to the rotation; they only see its
+footprints, the alternating signs.
+
+What the trilinear map then does is average real numbers with positive
+weights.  Averaging two unit arrows $90^\circ$ apart gives an arrow of
+length $1/\sqrt2$ (the chord of the circle instead of the arc,
+Fig.~\ref{fig:windscheme}b) --- this is precisely the measured
+$|V_{\rm tri}|/|V_{\rm true}|=0.706$ at $\qv=(\frac14,0,0)$.  Averaging
+two \emph{opposite} arrows gives zero (Fig.~\ref{fig:windscheme}c) ---
+this is the cube-centre cancellation of Sec.~\ref{sec:phaseaudit} and
+Fig.~\ref{fig:phasewinding}d.  Squaring these survival factors and
+multiplying over the three axes reproduces the order of magnitude of
+the $29$--$35\%$ weighted $|V|^2$ survival measured in the full
+benchmark.  The true vertex escapes through the complex plane; the
+interpolated one cannot, because no real convex combination of real
+samples ever leaves the real axis.
+
+\begin{figure}[tbp]
+\centering
+\includegraphics[width=\linewidth]{figs/snte_winding_scheme.pdf}
+\caption{The topological picture in cartoons.
+(a)~The three-phonon coupling of SnTe is centred on the Te--Sn bond,
+half a lattice step away from the cell origins that any cell-indexed
+interpolation can address; by the Fourier shift theorem its $q$-space
+phase therefore makes half a turn, $e^{i\pi q}$, across each Brillouin
+zone.  (b)~An interpolation with real positive weights replaces the arc
+of the rotating vertex by its chord: at a quarter zone the amplitude
+shrinks by $1/\sqrt2$.  (c)~Where the enclosed samples have opposite
+sign (cube centres), the chord passes through zero: the interpolated
+vertex vanishes although the true one is large.  (d)~Inversion symmetry
+allows only two classes for the centre of the coupling: on a lattice
+site ($\nu=0$, Fourier coefficients mirror-symmetric about an integer)
+or exactly mid-bond ($\nu=1$, coefficients antisymmetric about a
+half-integer, $c_R=-c_{1-R}$, Zak phase $\pi$).  No continuous,
+symmetry-preserving change of the force constants connects the two
+classes.  SnTe is in the $\nu=1$ class along all three axes.}
+\label{fig:windscheme}
+\end{figure}
+
+\subsection{Is there a singularity in the Brillouin zone?}
+\label{sec:topo-singularity}
+
+Not in the sense of a divergence --- the vertex is a finite, smooth
+function everywhere.  The singular object is the \emph{phase}: it is
+undefined wherever $V(\qv)=0$, and a scan of the $(q_1,q_2,0)$ plane
+shows that the only exact zeros of the true (centred) continuation are
+the parity-protected ones at $\Gamma$ and its images; no interior
+phase vortices were found (every $2\pi$ plaquette winding on a
+$41\times41$ grid is zero).  Around the $\Gamma$ zero the trajectory of
+Fig.~\ref{fig:phasewinding}a passes through the origin, which is what
+lets a closed zone-crossing path accumulate a net phase without
+contradiction.
+
+The zeros the user actually observes --- the collapse ``in the centre''
+--- live in the \emph{reconstruction}, not in the physics.  The
+trilinear vertex is identically real (largest imaginary part
+$8\times10^{-17}$ over the whole scanned plane, versus $0.44$ for the
+true vertex), so its zero set is not a few isolated points but
+codimension-one surfaces separating regions of opposite sign, passing
+through the cube centres.  In other words: the interpolation does not
+\emph{find} a singularity of SnTe, it \emph{manufactures} nodal
+surfaces because it lives on the real axis.  One can also say it in
+gauge language: the phase factor $e^{2\pi i\qv\cdot\mathbf x_c}$ with
+half-integer $\mathbf x_c$ is not periodic over the Brillouin zone, so
+there is no smooth \emph{periodic} gauge in which the vertex becomes
+real everywhere.  Removing the rotation requires importing the
+half-integer offset from outside the $q$ samples --- which is exactly
+what a branch-consistent per-atom Bloch phase does
+(Sec.~\ref{sec:topo-gauge}).  Any scheme that represents the vertex by
+real periodic data must pay with spurious zeros somewhere.
+
+\subsection{The quantized invariant: a Zak phase of the anharmonic
+vertex}
+\label{sec:topo-invariant}
+
+The half turn is not an accident of this particular force field; it is
+pinned by symmetry.  Write the dominant coupling channel as a set of
+lattice harmonics $c_{\mathbf R}$ as in Eq.~\eqref{eq:sshform}.
+Because the crystal has inversion symmetry and $\Phi^{(3)}$ is odd
+under inversion (it is a third derivative), the coefficients must be
+\emph{antisymmetric under reflection about the centre} $\mathbf x_c$ of
+the coupling:
+\begin{equation}
+  c_{\mathbf R} \;=\; -\,c_{\,2\mathbf x_c-\mathbf R},
+  \qquad 2\mathbf x_c \in \mathbb{Z}^3 .
+  \label{eq:mirror}
+\end{equation}
+Consistency requires $2\mathbf x_c$ to be a lattice vector: the centre
+can sit \emph{on a site} or \emph{exactly half-way between sites},
+nothing in between.  This defines a $\mathbb{Z}_2$-valued label per
+lattice direction,
+\begin{equation}
+  \boldsymbol\nu \;=\; 2\mathbf x_c \bmod 2 ,
+  \qquad
+  \text{SnTe: } \boldsymbol\nu = (1,1,1),
+  \label{eq:nu}
+\end{equation}
+measured here from the fitted centre $\mathbf x_c =
+(\tfrac12,-\tfrac32,\tfrac12) =
+\boldsymbol\tau_{\rm Te}-\boldsymbol\tau_{\rm Sn}$, i.e.\ from
+$c_{(0,-2,1)}=-c_{(1,-1,0)}$ satisfying Eq.~\eqref{eq:mirror} to one
+part in $10^{3}$ (the same centre is found independently for all nine
+Cartesian elements of the Te--Sn block, see
+Sec.~\ref{sec:topo-gauge}).  The label $\boldsymbol\nu$ is the direct analogue of
+the quantized Wannier-centre position (equivalently the Zak phase
+$\varphi_{\rm Zak}=\pi\nu$) of the SSH chain: an inversion-symmetric
+1D system can hold its charge centre either on the site or on the bond,
+the two classes are separated, and moving between them requires either
+breaking inversion symmetry or passing through a closing of the
+relevant amplitude.  Fig.~\ref{fig:windscheme}d sketches the two
+classes.
+
+Three consequences follow for free, and all three are verified by the
+data:
+\begin{itemize}
+\item \textbf{Forced zero at $\Gamma$.}  Summing
+  Eq.~\eqref{eq:mirror} over $\mathbf R$ gives $\sum_{\mathbf R}
+  c_{\mathbf R}=0$ whenever $\boldsymbol\nu\neq0$: the dominant channel
+  must vanish at $\Gamma$.  (In SnTe this reinforces the independent
+  parity selection rule for three zone-centre odd phonons.)
+\item \textbf{Real samples with alternating signs.}  At
+  time-reversal-invariant $\qv$ the phase factor is $\pm1$, so all
+  coarse samples are real, and the sign alternates between the $q=0$
+  and $q=\frac12$ planes of each nontrivial direction --- the pattern
+  that makes the corner sums cancel.
+\item \textbf{Protection.}  Because $\boldsymbol\nu$ cannot change
+  continuously, the rotation is invisible \emph{inside} the coarse
+  data: all samples are real, so nothing computed from the samples
+  alone can recover the winding direction.  The half-lattice-vector
+  offset must be supplied from outside.  The cheapest way to supply it
+  is a branch-consistent per-atom Bloch phase, which repairs the phase
+  of the reconstruction (Sec.~\ref{sec:topo-gauge}) but cannot repair
+  its amplitude; the complete cure remains the explicit image
+  assignment (atom ``centering'', i.e.\ the minimal-image windows of
+  Sec.~\ref{sec:atomic}, or the centred-tensor evaluation), which
+  restores the smooth real envelope as well.
+\end{itemize}
+
+For a general material the label is read off without any fit: compute
+$V(\qv)$ along one crossing of the zone per axis and record either the
+accumulated phase (an odd multiple of $\pi$ in the nontrivial class) or
+simply the relative sign of the vertex at the time-reversal-invariant
+planes.  Vertices with $\boldsymbol\nu=0$ (couplings centred on the
+sites of the interpolation lattice) are exactly the ones a corner-based
+scheme can interpolate accurately; every nontrivial direction
+contributes one factor of phase cancellation.
+
+\subsection{Can a per-atom phase cure it?  Partly --- here is exactly
+how much}
+\label{sec:topo-gauge}
+
+A natural objection to the previous subsections runs as follows: if
+the whole problem is a phase $e^{2\pi i\qv\cdot\mathbf x_c}$ that the
+interpolation cannot represent, why not \emph{give} it that phase?
+Attach $e^{-2\pi i\qv\cdot\boldsymbol\tau_a}$ to every atom, strip the
+phases before corner-averaging, and put them back afterwards.  This
+objection is correct in an important way, and an earlier version of
+this report dismissed it with a wrong argument (``a unitary gauge does
+not change the singular values of the corner map''), which only
+constrains norms, not the alignment between the interpolated function
+and the truth.  So we tested it properly
+(\texttt{scripts/snte\_phase\_gauge\_test.py},
+\texttt{scripts/oracle\_gauge\_spectrum.py}).
+
+Two facts must be respected to make the test meaningful.  First, the
+gauge transport must be \emph{branch-consistent}: the phase carried
+from a fine point to its corners must be built from the local
+displacement $\boldsymbol\delta = \mathbf x_{\rm corner}-\qv$ (with
+the corner taken as the actual neighbour of $\qv$, not wrapped back
+into the Brillouin zone).  For half-integer $\boldsymbol\tau$
+differences, independent BZ wrapping of corner and fine point shifts
+$\boldsymbol\delta$ by lattice vectors and flips signs --- and this
+is precisely the bug in the previously implemented
+\texttt{atomic\_phase} option, now fixed in
+\texttt{QSpaceTrilinear}.  Second, for SnTe the per-atom phase turns
+out to be not merely helpful but \emph{optimal}: fitting the
+antisymmetry centre of every Te--Sn coupling channel independently
+(all nine Cartesian elements) gives $\mathbf x_c =
+\boldsymbol\tau_{\rm Te}-\boldsymbol\tau_{\rm Sn}$ in every case, so
+the factorized atomic gauge coincides with the best possible
+per-channel phase to machine precision.
+
+The measured outcome, over all $4^3$ fine pairs ($\Gamma$ TO row,
+relative errors in $\sum\Vert\cdot\Vert_F^2$):
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+reconstruction & rel.\ error$^2$ & $|V|^2$ survival &
+$\Vert V\Vert$ at cube centre \\
+\midrule
+plain trilinear & $1.12$ & $0.375$ & $0.0007$ \\
+atomic phase, wrapped (old, buggy) & $0.78$ & $0.422$ & $0.156$ \\
+atomic phase, branch-consistent & $\mathbf{0.178}$ & $0.422$ & $0.156$ \\
+best integer branch of the gauge & $0.178$ & $0.422$ & $0.156$ \\
+per-channel oracle phase strip & $0.178$ & $0.422$ & $0.156$ \\
+\midrule
+truth & $0$ & $1$ & $0.442$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+So the user-style objection is vindicated at the vertex level: the
+corrected per-atom phase eliminates the phase error almost completely
+(the residual $0.178$ is pure amplitude damping), and the dashed
+curves in Fig.~\ref{fig:phasewinding} show the reconstruction now
+rotating in step with the truth.  But two ceilings remain, and they
+explain why the spectral benchmark barely moves:
+
+\begin{itemize}
+\item \textbf{Amplitude is phase-inaccessible.}  With positive
+  weights, $|\sum_k w_k e^{i\varphi_k}V_k|\le\sum_k w_k|V_k|$ for any
+  phases: a gauge can stop the cancellation but can never exceed the
+  average of the sampled magnitudes.  Half of the coarse samples sit
+  at the nodes of the sine envelope (the parity zeros forced by
+  $\boldsymbol\nu\neq0$), so at the cube centre even perfectly aligned
+  samples recover at most half of the true amplitude; the measured
+  survival saturates at $0.42$.
+\item \textbf{The $D_3$-only $\Gamma$ response is phase-blind.}  The
+  two-phonon sector enters this observable as $|V(\qv)|^2\chi(\qv)$
+  summed over pairs; vertex phases cancel identically.  The
+  deterministic oracle spectra confirm it: Fourier oracle
+  $37.65$~cm$^{-1}$, plain trilinear $45.78$, phase-corrected
+  trilinear $\mathbf{45.59}$ --- the optimal phase recovers only
+  $0.19$ of the $8.13$~cm$^{-1}$ gap, exactly the small $|V|^2$ gain
+  in the table.  This also retroactively explains the puzzling
+  $-0.13$~cm$^{-1}$ of the original (buggy) atomic-phase run: the bug
+  corrupted phases, but this observable never looked at them.
+\end{itemize}
+
+The corrected gauge is still worth keeping (it is now the fixed
+behaviour of \texttt{atomic\_phase=True}): it makes the interpolated
+\emph{operator} right in phase, which matters for any quantity with
+vertex interference --- $D_3\times D_4$ cross terms, off-diagonal
+responses, perturbations away from $\Gamma$.  The amplitude ceiling above
+is rigorous for \emph{positive piecewise-linear weights}.  It does not,
+however, prove that the missing envelope must be reconstructed by first
+building a real-space tensor.  The next subsection tests the stronger
+version of the atom-centred Fourier proposal and changes that broader
+conclusion.
+
+\subsection{Atom-centred Fourier continuation: the centred result is
+recoverable in q space}
+\label{sec:atom-fourier}
+
+The useful part of the proposed Fourier convention is not only a phase
+rotation.  Define the Bloch displacement of atom $a$ by
+\begin{equation}
+ u_a^{\rm at}(\qv)=\frac{1}{\sqrt{\Nc}}
+ \sum_{\Rv}u_a(\Rv)
+ e^{-2\pi i\qv\cdot(\Rv+\boldsymbol\tau_a)} .
+ \label{eq:atomic-ft}
+\end{equation}
+For the $\Gamma,\qv,-\qv$ vertex, a Cartesian element on atoms $b,c$
+then carries the relative offset
+$\mathbf d_{bc}=\boldsymbol\tau_b-\boldsymbol\tau_c$.  Multiplying the
+cell-gauge vertex by $e^{-2\pi i\qv\cdot\mathbf d_{bc}}$ removes the bond
+phase.  Section~\ref{sec:topo-gauge} did exactly this, but then joined the
+two coarse values by a straight line.  That last step throws away a second
+piece of information contained in Eq.~\eqref{eq:atomic-ft}: after the
+transformation the allowed Fourier harmonics are shifted by
+$\mathbf d_{bc}$ and the function need not be periodic at the boundary of
+the chosen cell.
+
+A one-dimensional example makes the distinction concrete.  The dominant
+SnTe element is, to excellent accuracy,
+\begin{equation}
+ V(q)=A\bigl(e^{2\pi i q}-1\bigr)
+     =2iA e^{i\pi q}\sin(\pi q).
+ \label{eq:snte-two-image}
+\end{equation}
+The atom phase $e^{-i\pi q}$ makes it purely imaginary, but its amplitude
+is still the curved function $2|A|\sin(\pi q)$.  From the two coarse
+samples $q=0,1/2$, linear interpolation gives only $|A|$ at $q=1/4$,
+whereas the correct value is $\sqrt{2}|A|$.  Thus the failure of
+phase-corrected trilinear interpolation is real.  On the other hand, the
+atom-centred Fourier basis knows that the two shortest shifted harmonics
+are $-1/2$ and $+1/2$; their two-point cardinal interpolation reconstructs
+$\sin(\pi q)$ exactly.  Restoring the atomic phase gives
+Eq.~\eqref{eq:snte-two-image}, including both its phase and amplitude.
+
+We implemented this continuation without constructing $\Phi^{(3)}$.  For
+each coarse Fourier alias $\mathbf k$ and atom pair $b,c$, choose the
+lattice image $\mathbf R\equiv\mathbf k$ (modulo the coarse mesh) that
+minimizes $|\mathbf R-\mathbf d_{bc}|$; exact distance ties are split.  The
+Cartesian interpolation kernel is
+\begin{equation}
+ P_{bc}(\qv,\mathbf n)=
+ \prod_{\alpha=1}^{3}\frac{1}{N_\alpha}
+ \sum_{k_\alpha=0}^{N_\alpha-1}
+ \sum_{\substack{R_\alpha\equiv k_\alpha\ ({\rm mod}\ N_\alpha)\\
+                  R_\alpha\ {\mathrm{nearest}}\ d_{bc,\alpha}}}
+ w_{R_\alpha}
+ e^{2\pi i(q_\alpha-n_\alpha/N_\alpha)R_\alpha}.
+ \label{eq:atom-fourier-kernel}
+\end{equation}
+At every coarse q point this is exactly the identity.  Away from the
+coarse mesh it is a complex, atom-pair-dependent cardinal function.  The
+forward stochastic map uses $P^\dagger$ and the return map uses $P$, so the
+Lanczos operator remains Hermitian.  Tests also verify
+$A(Q-k)=A(k)^T$ at both time-reversal-invariant and generic coarse $Q$.
+The implementation is selected by
+\texttt{QSpaceTrilinearLanczos(..., atom\_fourier=True)}.  The class name is
+historical: this option uses the same coarse-cost fold/unfold architecture,
+but Eq.~\eqref{eq:atom-fourier-kernel} is trigonometric interpolation, not
+ordinary trilinear interpolation.
+
+\paragraph{Correctness of the tie rule on non-orthogonal cells (audit,
+2026-07-21).}
+Equation~\eqref{eq:atom-fourier-kernel} as written --- and the original
+implementation --- select the minimal image and split its ties
+\emph{separably per Cartesian axis and in fractional coordinates}, i.e.\
+metric-free: the product $\prod_\alpha$ chooses $R_\alpha$ nearest
+$d_{bc,\alpha}$ one axis at a time.  This is exact only when the
+coarse-mesh Wigner--Seitz cell is an axis-aligned box, that is for
+\emph{orthorhombic} coarse lattices with a diagonal metric.  For any
+non-orthogonal cell the true minimal image minimizes the Cartesian length
+$|(\mathbf R-\mathbf d_{bc})\,\mathbf A|$, which couples the three axes
+through the metric $\mathbf A\mathbf A^{\mathsf T}$, and its degeneracies
+live on the non-axis-aligned faces of the Wigner--Seitz cell.  The correct
+kernel is therefore the \emph{non-separable} form
+\begin{equation}
+ P_{bc}(\qv,\mathbf n)=
+ \frac{1}{N_1N_2N_3}
+ \sum_{\mathbf k}
+ \sum_{\substack{\mathbf R\equiv\mathbf k\ ({\rm mod}\ \mathbf N)\\
+   \mathbf R\in\arg\min|(\mathbf R-\mathbf d_{bc})\mathbf A|}}
+ \frac{1}{\mu_{bc}(\mathbf k)}\,
+ e^{2\pi i(\qv-\mathbf n/\mathbf N)\cdot\mathbf R},
+ \label{eq:atom-fourier-metric}
+\end{equation}
+where the inner sum runs over the full set of metric-degenerate images of
+the aliasing class $\mathbf k$ and $\mu_{bc}(\mathbf k)$ is its
+multiplicity.  Equation~\eqref{eq:atom-fourier-kernel} is the special case
+in which every such set factorizes into a Cartesian product of per-axis
+choices.
+
+A direct geometry audit
+(\texttt{report/interpolation/scripts/audit\_nyquist\_ties.py},
+\texttt{data/audit\_nyquist\_ties.json}) makes the discrepancy concrete.
+On a cubic cell the two rules agree for every separation and every mesh
+tested, including the eight-fold Wigner--Seitz-corner tie, which the
+separable product reproduces correctly with weight $1/8$.  On the
+\emph{primitive fcc cell of SnTe} the two \emph{kernels} disagree in the
+relative Frobenius norm by $23\%$ (Te--Sn bond centre) to $36\%$; the
+separable rule can assign a class to a single image where the metric has a
+genuine four- or six-fold tie (the latter of weight $1/6$, a multiplicity
+no product of one-dimensional halves can represent), and it can also
+\emph{manufacture} a spurious tie where the metric has a unique winner
+(e.g.\ fcc $\mathbf d=(\tfrac12,0,0)$, class $(0,0,1)$: it splits
+$(0,0,\pm1)$ at $1/2$ while the metric selects $(0,0,1)$ alone).
+
+Crucially, however, this kernel-norm discrepancy is \emph{not} the error on
+a physical observable.  The interpolation of a given coupling only ever
+excites the aliasing classes on which that coupling has non-zero coarse
+weight, and a short-ranged coupling excites only classes whose physically
+shortest image is \emph{unique} --- and on those classes the separable and
+metric rules agree.  This is exactly the SnTe case: the dominant
+$\Gamma$-TO vertex lives on the two nearest-neighbour Te--Sn harmonics
+$\mathbf R_1=(0,-2,1)$ and $\mathbf R_2=(1,-1,0)$, each the \emph{unique}
+shortest image of its class ($3.28$~\AA, the next image at $7.34$~\AA), so
+both rules place them identically.  Reconstructing the actual two-image
+SnTe coupling from its $2^3$ samples to the $4^3$ mesh gives relative
+error$^2=2.0\times10^{-32}$ with the separable kernel and
+$2.2\times10^{-32}$ with the metric kernel: \emph{both machine-exact}.  The
+$2.9\times10^{-5}$ $\Gamma$-TO reconstruction reported above is therefore
+correct and is not compromised by the tie rule.  The $23$--$36\%$
+kernel-norm figure lives entirely in classes the SnTe vertex does not
+excite (e.g.\ the $(0,0,0)$ class, whose coarse coefficient vanishes), and
+is multiplied by zero.
+
+The defect bites only a coupling that carries weight in an aliasing class
+whose physically shortest image the separable rule mis-assigns --- that is,
+a coupling sitting on a genuine metric degeneracy (a Wigner--Seitz face,
+edge or corner of a non-orthogonal cell) or on a separably-manufactured
+spurious tie.  A minimal demonstration: on the primitive bcc cell with
+$\mathbf d=(\tfrac12,\tfrac12,0)$, a coupling placed on the metric-shortest
+image of class $(0,0,1)$ --- where the separable rule splits $(0,0,\pm1)$
+at $1/2$ while the metric selects $(0,0,-1)$ alone --- is reconstructed
+with relative error$^2=0.5$ by the separable kernel and $1.1\times10^{-32}$
+by the metric kernel.  Interestingly the user's canonical bcc example, the
+central atom equidistant from its eight nearest neighbours
+($\mathbf d=(\tfrac12,\tfrac12,\tfrac12)$), is \emph{not} among the failing
+cases: its excited classes each reduce to a unique or separably-tied image,
+so the separable rule already handles it.  The failure is thus not
+``every non-orthogonal cell always'', but specifically ``couplings pinned
+to a non-axis-aligned Wigner--Seitz degeneracy''.
+
+The scope is therefore: the one-dimensional chain benchmarks of
+Secs.~\ref{sec:d4} and \ref{sec:d4-atom-fourier} are unaffected (their
+$(1,1,L)$ mesh has a single aliasing class along each transverse axis, a
+trivial factor of one, so the tie rule is never exercised), and the SnTe
+$\Gamma$-TO results are correct as reported; but for robustness on
+arbitrary non-orthogonal cells and couplings the metric-correct assignment
+of Eq.~\eqref{eq:atom-fourier-metric} is the implemented default from
+2026-07-21 (\texttt{tie\_metric=True}), with the separable form retained as
+an explicit orthorhombic fast path and as the control that exposes the
+discrepancy.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/snte_atom_centered_fourier.pdf}
+\caption{Why the atom position must change the interpolation basis, not
+only rotate phases.  (a)~The ordinary and phase-corrected trilinear maps
+join the two coarse amplitudes by straight segments.  The atom-centred
+Fourier cardinal reconstructs the sine envelope and lies on top of the
+centred-FC3 target.  Open circles are the only coarse samples used.
+(b)~The corresponding deterministic tensor-D3 oracle spectra.  The
+atom-centred q-space continuation recovers the centred spectrum, whereas
+ordinary trilinear interpolation hardens it by about
+$8.1$~cm$^{-1}$.}
+\label{fig:atom-fourier}
+\end{figure}
+
+The numerical result is decisive.  The first three rows below reconstruct
+the same centred $\Gamma$-TO FC3 row from the same $2^3$ coarse samples;
+the spectra use the deterministic tensor only as a noise-free oracle for
+the interpolation map.
+\begin{center}
+\small
+\begin{tabular}{lcccc}
+\toprule
+continuation & rel.\ error$^2$ & $|V|^2$ ratio &
+$\Vert V\Vert$ at $(1/4)^3$ & peak (cm$^{-1}$)\\
+\midrule
+ordinary trilinear & $1.125$ & $0.3750$ & $0.00072$ & $45.78$\\
+trilinear + branch-consistent atom phase & $0.178$ & $0.4219$ & $0.1560$ & $45.59$\\
+atom-centred Fourier, Eq.~\eqref{eq:atom-fourier-kernel} &
+$2.90\times10^{-5}$ & $0.999988$ & $0.44131$ & $37.72$\\
+centred Tensor3 Fourier oracle & $0$ & $1$ & $0.44213$ & $37.65$\\
+\bottomrule
+\end{tabular}
+\end{center}
+The production stochastic path gives $38.04$~cm$^{-1}$ with only 1000
+configurations and 30 Lanczos steps, consistent with the $37.65$--$37.72$
+noise-free controls.  In other words, the unacceptable motion
+$44.03\to46.11$~cm$^{-1}$ of the original $2^3\to4^3$ trilinear calculation
+is removed; the new q-space result instead agrees with atom-resolved
+centering to within the stochastic resolution.
+
+This finding resolves the apparent contradiction.  It is indeed possible
+to recover the centred SnTe result using only q-space samples and atomic
+positions.  What is impossible is to do so with the unique
+\emph{piecewise-trilinear} function through those samples, even after a
+phase rotation.  Equation~\eqref{eq:atom-fourier-kernel} succeeds because
+it uses the atomic positions to resolve the aliased real-space image of
+each atom pair; it is the q-space form of pairwise atom centering.  For the
+$\Gamma,\qv,-\qv$ SnTe slice this nearly equals full triplet centering.
+It is not yet a proof of equivalence for arbitrary external $Q$, for D4,
+or for a geometry where the best image depends essentially on all three
+atoms rather than on the two moving legs.  Those cases remain tests of the
+more general atom-triplet kernel, not of the result established here.
+
+\subsection{What this says about SnTe --- and what it does not}
+\label{sec:topo-honest}
+
+The invariant has a transparent physical reading: \emph{the strong
+third-order anharmonicity of (this model of) SnTe is bond-centred},
+living on the resonant Te--Sn nearest-neighbour bond rather than on
+either atom --- consistent with the resonant-bonding picture commonly
+invoked for the giant anharmonicity of the IV--VI rocksalt compounds.
+Since the rocksalt structure puts that bond midpoint at half a lattice
+vector of the fcc cell, the nontrivial class
+$\boldsymbol\nu=(1,1,1)$ is a robust structural fingerprint: any
+IV--VI material with dominant nearest-neighbour anharmonic coupling
+will fail cell-cornered vertex interpolation in exactly the same way,
+while a material whose anharmonicity is site-centred (e.g.\ a rattler
+mode in a cage compound) would be in the trivial class and interpolate
+cleanly.
+
+Two honest caveats.  First, $\mathbf x_c$ is defined relative to the
+chosen cell origin; what is origin-independent is the \emph{relative}
+statement that the coupling centre sits on the Te--Sn bond midpoint
+rather than on either sublattice --- exactly like the Zak phase, which
+is origin-dependent while differences of Zak phases are physical.
+Second, this vertex invariant is \emph{not} the electronic invariant
+that makes real SnTe a topological crystalline insulator; the two share
+the protecting symmetry (inversion/mirror on the rocksalt lattice) and
+the mathematical language, but they live on different objects (a
+three-phonon coupling function versus electronic Bloch bands).  What
+they have in common is the lesson of this section: quantities pinned to
+half-integer positions by symmetry cannot be represented by smooth
+periodic data on the integer lattice, and any algorithm that pretends
+otherwise pays at the mid-points.
 
 %======================================================================
 \section{Implementation and cost}
@@ -905,6 +1704,18 @@ The Python class \texttt{QSpaceLanczosInterp} performs the fine-mesh setup:
 it builds the fine q list, hashes q points for $O(1)$ lookup, constructs the
 $O(\Nf)$ pair map, interpolates the SSCHA dynamical matrix, builds the
 windowed Bloch fields, and dispatches the Lanczos action.
+
+The alternative fold/unfold class
+\texttt{QSpaceTrilinearLanczos} is in
+\texttt{Modules/QSpaceTrilinear.py}.  Its default path uses local
+piecewise-trilinear weights.  The
+\texttt{atomic\_phase=True} diagnostic keeps those weights and transports
+the full-Bloch phase, while \texttt{atom\_fourier=True} selects the
+atom-pair cardinal kernel of Eq.~\eqref{eq:atom-fourier-kernel}.  The latter
+is cached at setup as $P(q,k,a,b)$; applying $P$ or $P^\dagger$ costs
+$O(\Nf\Nc\nat^2)$ Cartesian scalar weights.  Since $\Nc$ and $\nat$ are
+fixed by the coarse calculation, the cost remains linear in the fine-mesh
+size.
 
 The Julia side has two equivalent slot kernels.  The scalar kernel is useful
 for readability and tests.  The batched kernel groups configurations at a
@@ -1487,6 +2298,547 @@ optical branch has a stable static response and a sizeable D4
 $w_{\mathrm{eff}}$ shift, about $35.2\to53.1\,\si{cm^{-1}}$ in the direct
 fine calculation.
 
+\subsection{Fourth order in the atom-centred Fourier gauge: the four-leg
+problem that factorizes}
+\label{sec:d4-atom-fourier}
+
+The real-space centering attempts above (\texttt{leg}, \texttt{reference},
+and the factor-4 program) all struggle with the same obstruction: the
+minimal-image assignment of a four-atom cluster is a genuine four-body
+geometry problem that does not split into pairs.  There is, however, one
+regime in which it \emph{does} split exactly, and it is the same
+observation that fixed the third order in Sec.~\ref{sec:atom-fourier}:
+move the atom phase into the Fourier transform (the
+\texttt{atom\_fourier=True} kernel $P_{ab}(\qv,\kv)$ of
+Eq.~\eqref{eq:atom-fourier-kernel}) and interpolate the resulting
+non-periodic Bloch field.
+
+The reason is a momentum count.  The $D_4$ term maps the incoming
+two-phonon block at the internal pair $(\qv',Q-\qv')$ onto the outgoing
+block at $(\qv,Q-\qv)$.  Because the estimator contracts the incoming
+block with \emph{conjugated} Bloch fields, the four vertex legs carry the
+momenta $(+\qv,-\qv,-\qv',+\qv')$.  Pinning the first leg to the home cell
+and using translational invariance,
+\begin{equation}
+V(\qv,\qv')_{abcd}
+= \sum_{\Rv_2\Rv_3\Rv_4}
+\Phi^{(4)}(a\mathbf 0,b\Rv_2,c\Rv_3,d\Rv_4)\,
+e^{2\pi i[\qv\cdot\Rv_2+\qv'\cdot(\Rv_3-\Rv_4)]} .
+\label{eq:d4-two-momenta}
+\end{equation}
+The two \emph{independent} internal momenta $\qv$ and $\qv'$ each couple to
+exactly one pair offset: $\qv$ to $\Rv_2$ (minimal image near
+$\boldsymbol\tau_a-\boldsymbol\tau_b$) and $\qv'$ to $\Rv_3-\Rv_4$
+(minimal image near
+$-(\boldsymbol\tau_c-\boldsymbol\tau_d)$).  These are precisely the harmonics continued by
+$P_{ab}(\qv,\kv)$ on the outgoing leg pair and by
+$\overline{P_{cd}(\qv',\kv')}$ on the incoming pair.  The correct four-leg
+continuation is therefore the \emph{tensor product of the pairwise
+atom-centred kernel with itself} --- which is exactly what the existing
+fold/unfold applies, with $P_{ab}$ on the unfold and its conjugate on the
+fold.  No new geometry, no four-body image search, and no new code path are
+needed: the class already routes $D_4$ through the correct map whenever
+\texttt{atom\_fourier=True}.
+
+This is not in contradiction with the four-body difficulty of
+Sec.~\ref{sec:d4center}.  What factorizes is the \emph{q-space}
+interpolation of the two-phonon-to-two-phonon vertex, whose two internal
+momenta are independent by construction.  The residual real-space content
+--- which lattice image each pair harmonic belongs to --- is the same
+pairwise minimal-image question already solved for $D_3$, applied once per
+momentum.
+
+\paragraph{Noise-free vertex verification.}
+The quartic vertex of the anharmonic diatomic chain is known in closed
+form ($6g_4(\boldsymbol\delta_i-\boldsymbol\delta_j)^{\otimes4}$ per bond and Cartesian
+component), so the interpolation map is testable with zero stochastic
+noise.  Sampling the exact vertex at the coarse pairs, applying the
+production kernel, and comparing against the exact fine vertex over all
+$(\qv,\qv')$ pairs gives
+(\texttt{report/interpolation/scripts/d4\_atom\_fourier\_oracle.py}):
+\begin{center}
+\small
+\begin{tabular}{lcc}
+\toprule
+coarse $\to$ fine & atom-centred Fourier & trilinear (off-grid) \\
+\midrule
+$3\to9$ & $1.4\times10^{-31}$ & $5.6\times10^{-2}$ \\
+$2\to4$ & $8.7\times10^{-33}$ & $1.8\times10^{-1}$ \\
+$2\to6$ & $3.1\times10^{-32}$ & $1.8\times10^{-1}$ \\
+$4\to8$ & $4.3\times10^{-32}$ & $1.9\times10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The atom-centred Fourier continuation reconstructs the exact four-leg
+vertex to machine zero, including the $L=2$ case in which every off-grid
+pair is a Nyquist tie split $50/50$; that the $L=2$ result is exact also
+independently confirms the sign/branch convention of
+Eq.~\eqref{eq:d4-two-momenta}, since a single wrong sign would destroy the
+cancellation.  Adding a second-neighbour quartic bond (harmonics at
+$|\Rv|=2$) makes the map exact on the meshes that resolve it
+($4\to8$, $5\to10$: rel.\ error$^2<10^{-31}$) and honestly aliased on the
+one that does not ($2\to4$: rel.\ error$^2=0.25$).  The limit is
+therefore the coarse mesh's real-space range, exactly as for $D_3$ one
+order down --- not a defect of the continuation.
+
+\paragraph{Operator-level tests.}
+The shipped code path is covered by
+\texttt{tests/test\_trilinear/test\_d4\_atom\_fourier.py}: exact
+reconstruction of the closed-form vertex; the three independent leg
+exchanges of $\Phi^{(4)}$ (via the kernel mirror identity
+$P_{ab}(\qv,\kv)=P_{ba}(-\qv,-\kv)$ and at the vertex level); preservation
+of the acoustic sum rule on all four legs, with deliberately broken
+non-cardinal and atom-pinned control maps confirming the test has teeth;
+Hermiticity of the isolated $D_4$ two-phonon block at time-reversal
+invariant and generic coarse $Q$; the unfold mirror
+$D(Q-\qv)=D(\qv)^T$; and the commensurate identity to the parent
+\texttt{QSpaceLanczos} with $D_4$ shown to be non-vacuously active.  The
+ASR test rests on two facts the kernel supplies and a pinned-window map
+does not: $P_{ab}$ is independent of the atoms of the other pair (so the
+sum rule on the non-interpolated legs survives), and it is exactly cardinal
+at $\Gamma$ (where the moving-pair sum rule lives).
+
+\paragraph{Spectral benchmark.}
+Figure~\ref{fig:d4atomfourier} and the table below compare the two q-space
+schemes against a direct fine-mesh reference from an independent $(1,1,9)$
+ensemble of the same chain, in the $D_4$-dominated regime of
+Sec.~\ref{sec:d4} ($g_3=0.15$, $g_4=2.0$, $N_I=6000$, $110$ Lanczos
+steps).  Because this class refines the internal loop $\qv'$ and keeps the
+external $Q$ on the coarse mesh, the probes are coarse $Q$ and the
+interpolation gain is a better-resolved two-phonon continuum --- exactly
+the SnTe $\Gamma$-TO setup.  The metric is the $D_4$-induced peak shift,
+i.e.\ the renormalization, not the absolute frequency.
+\begin{center}
+\small
+\begin{tabular}{lccccc}
+\toprule
+probe & direct $D_4$ shift & \multicolumn{2}{c}{atom Fourier} &
+\multicolumn{2}{c}{trilinear} \\
+\cmidrule(lr){3-4}\cmidrule(lr){5-6}
+& (\si{cm^{-1}}) & capture & $L_1$ & capture & $L_1$ \\
+\midrule
+$\Gamma$, band 5 & $+52.9\pm1.9$ & $109\%$ & $0.38$ & $72\%$ & $0.67$ \\
+$\Gamma$, band 4 & $+14.7\pm3.7$ & $139\%$ & $0.80$ & $-16\%$ & $0.51$ \\
+$q{=}3/9$, band 5 & $+22.6\pm1.8$ & $112\%$ & $0.37$ & $90\%$ & $0.35$ \\
+$q{=}3/9$, band 4 & $+21.0\pm4.7$ & $89\%$ & $0.21$ & $61\%$ & $0.41$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The error bars are the seed-to-seed spread of the direct $D_4$ shift over
+three independent fine ensembles
+(\texttt{d4\_seed\_noise\_control.py}).  The atom-centred Fourier scheme
+captures the fourth-order renormalization to within the stochastic noise
+floor at every probe, whereas piecewise-trilinear corners systematically
+under-capture and, for the weak-signal $\Gamma$ band-4 line, even return
+the wrong sign --- the four-leg analogue of the $D_3$ hardening of
+Sec.~\ref{sec:atomic}.  The remaining atom-Fourier deviations
+($\lesssim1\times$ the noise) are consistent with sampling, not with a
+systematic interpolation bias.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/d4_atom_fourier.pdf}
+\caption{Fourth-order fitting quality in q space.  (a)~A representative
+Cartesian element of the exact four-leg quartic vertex of the chain along a
+Brillouin-zone crossing (blue), reconstructed from the coarse samples
+(open circles) by the atom-centred Fourier kernel (green, on top of the
+exact curve) and by piecewise-trilinear corners (orange, chords).
+(b)~Spectral function at $\Gamma$ (band~5) in the $D_4$-dominated regime;
+the dotted grey line is the $D_3$-only continuum before the quartic shift.
+(c)~Fraction of the direct fourth-order peak shift recovered by each
+scheme at four probes; grey bands are the stochastic noise floor from
+three-seed direct references.  The atom-centred Fourier continuation lands
+inside the noise band everywhere; trilinear corners under-capture and flip
+sign for the weakest line.}
+\label{fig:d4atomfourier}
+\end{figure}
+
+The practical conclusion is that the fourth order needs no separate
+solution on SnTe-like cells: the atom-centred Fourier gauge that repairs
+$D_3$ repairs $D_4$ by the same mechanism, because in q space the two
+internal momenta of the two-phonon vertex are independent and the
+minimal-image assignment factorizes into two pairwise problems.  The
+real-space four-leg centering program of Sec.~\ref{sec:d4center} remains
+the route for observables that genuinely couple all four legs at once
+(for instance an external $Q$ that is itself interpolated), but it is not
+required for the interpolated spectral functions studied here.
+
+\subsection{Production case: CsSnI$_3$ Raman, $4^3\to8^3$}
+\label{sec:cssni3}
+
+The largest test is a full anharmonic Raman spectrum of the hybrid
+perovskite CsSnI$_3$ in its P4/mbm phase at $T=\SI{500}{K}$: a ten-atom cell
+(30 bands), a $4\times4\times4$ supercell (640 atoms), and a converged SSCHA
+ensemble subsampled to $N=1500$ configurations.  The unpolarized spectrum
+($45I_0+7\sum_{i=1}^{6}I_i$, continued-fraction Green function, 100 Lanczos
+steps, $D_3{+}D_4$) is computed natively on the $4^3$ mesh and by
+interpolating the internal two-phonon loop to $8^3$ with
+\texttt{atom\_fourier}.  Since the Raman perturbation sits at $\Gamma$, on
+the coarse mesh, the interpolation refines the two-phonon continuum while
+reusing the coarse stochastic kernel.
+
+\paragraph{A calibration lesson.}  A first attempt produced a large apparent
+mesh effect --- a single native band near $\SI{90}{cm^{-1}}$ moving to
+$125$--$\SI{155}{cm^{-1}}$ at $8^3$.  That was an artifact of an
+\emph{ensemble-initialization bug} in the driver script, not of the method:
+after subsampling the ensemble with \texttt{Ensemble.split} one must call
+\texttt{ensemble.init()} to refresh the q-space forces (otherwise
+\texttt{QSpaceLanczos} reuses stale \texttt{forces\_qspace}, because it only
+recomputes them when \texttt{u\_disps\_qspace} is absent), and the ensemble
+must be built around the generation dynamical matrix and reweighted to the
+converged one with \texttt{update\_weights}, exactly as
+\texttt{load\_distributed\_tdscha} does.  With the uninitialized ensemble the
+tridiagonal coefficients were $\sim\!100\times$ too large and the line shape
+became sensitive to the step count.  Once the ensemble is initialized
+correctly the spectrum is stable: the unpolarized peak is
+$\SI{33.1}{cm^{-1}}$ at $40$, $60$, $80$ and $100$ Lanczos steps
+identically.  (For this soft, strongly anharmonic system the raw
+coefficients still grow geometrically, $b_nc_n\!\sim\!10^{24}$ by step 100,
+but the terminated continued fraction is numerically insensitive to this ---
+the spectrum does not move --- so the growth is benign.)
+
+\paragraph{Result.}  Figure~\ref{fig:cssni3} shows the corrected spectrum.
+It is \emph{soft-mode dominated}, peaking near $\SI{33}{cm^{-1}}$ with a weak
+optical band near $\SI{93}{cm^{-1}}$, consistent with the octahedral-tilt
+central peak expected for this material near its transition, and consistent
+with the user's independent production run.  The native $4^3$ and
+interpolated $8^3$ spectra \emph{agree}: their normalized $L_1$ distance is
+$0.0012$ and the optical band sits at $\SI{93}{cm^{-1}}$ in both.  Physically
+this is expected --- the dominant signal is the one-phonon soft mode, whose
+$\Gamma$ frequency is pinned identically on both meshes and which is
+insensitive to the internal two-phonon mesh --- and it is the correct
+outcome: the interpolation faithfully reproduces the native calculation
+rather than distorting it.
+
+\paragraph{What was learned.}  Two things.  First, the incommensurate points
+carry their full anharmonic weight: a direct probe of the interpolated
+two-phonon coupling magnitude gives an off-grid/commensurate ratio of
+$1.00$, so there is no loss of anharmonic strength at the interpolated
+wavevectors (the concern that motivated this test).  Second, the cost of the
+refinement is almost nothing: the native $4^3$ run took \SI{3884}{s} and the
+interpolated $8^3$ run \SI{4085}{s} plus a one-time \SI{45}{s} construction
+--- only $5\%$ more wall time for eight times as many internal momenta,
+because the expensive stochastic kernel runs on the 64 coarse pairs in both
+and the interpolation adds only the fold/unfold ($\sim\!\SI{0.3}{s}$ per step
+against $\sim\!\SI{5.5}{s}$ for the kernel).  A native $8^3$ calculation would
+instead need an independent $8^3$ ensemble and about eight times more kernel
+pairs per step.  The fold/unfold were optimised to \texttt{einsum}
+contractions on the atom-block kernel, and the kernel build to a per-pair
+matrix product using the phase factorisation
+$e^{2\pi i(\qv-\mathbf x)\cdot\mathbf R}
+=e^{2\pi i\qv\cdot\mathbf R}\,\overline{e^{2\pi i\mathbf x\cdot\mathbf R}}$.
+The saved Lanczos coefficients (\texttt{save\_abc}) let the spectra be
+replotted at any smearing or grid without repeating the multi-hour run.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figs/cssni3_raman_interp.pdf}
+\caption{CsSnI$_3$ P4/mbm unpolarized Raman at $T=\SI{500}{K}$
+($D_3{+}D_4$, $N=1500$, 100 Lanczos steps).  Blue: native $4^3$ q-space
+TDSCHA Lanczos.  Green: the same observable with the internal two-phonon
+loop interpolated to $8^3$ (\texttt{atom\_fourier}).  (a)~absolute;
+(b)~area-normalized.  The spectrum is soft-mode dominated
+($\sim\SI{33}{cm^{-1}}$) and the two meshes agree to a normalized $L_1$ of
+$0.0012$: the interpolation faithfully reproduces the native result at $5\%$
+extra wall time.  (The large shift seen before correcting an
+ensemble-initialization bug in the driver was an artifact, not physics.)}
+\label{fig:cssni3}
+\end{figure}
+
+%======================================================================
+\section{Comparison with other anharmonic codes and a recommendation}
+\label{sec:codes}
+
+Every method in this report was validated against the centered-tensor
+oracle, i.e.\ the standard \texttt{cellconstructor} pipeline.  This
+section places that choice in context: how the established anharmonic
+codes interpolate three- and four-phonon interactions, which of their
+design decisions reappear here in tensor-free form, and which of the
+three interpolation strategies implemented on this branch we recommend.
+A short verification note first.  The fold/unfold implementation
+(\texttt{QSpaceTrilinearLanczos}, including the atom-centred cardinal
+kernel of Eq.~\eqref{eq:atom-fourier-kernel}) passes its sixteen unit
+tests: exact commensurate identity against \texttt{QSpaceLanczos},
+Hermiticity (unfold $=$ adjoint of fold), pair-transpose symmetry
+$A(Q-k)=A(k)^{T}$, corner geometry, and the cardinal-kernel identities
+(\texttt{tests/test\_trilinear/}).  Independently of that suite we
+re-derived the one-dimensional atom-centred cardinal kernel on the SnTe
+example $V(q)=A(e^{2\pi i q}-1)$ of Sec.~\ref{sec:atom-fourier}: with
+$N=2$ coarse samples and $d=\tau_{\mathrm{Te}}-\tau_{\mathrm{Sn}}=1/2$ the
+kernel is the identity at commensurate $q$ to machine precision and
+reconstructs the sine envelope exactly at $q=1/4$ ($|V|=\sqrt2\,|A|$,
+phase error $0$), while the trilinear tent gives $|A|$.  The code
+implements the equation.
+
+\subsection{Two families, one principle: a compact real-space
+representation}
+\label{sec:codes-families}
+
+All production codes that need three-phonon vertices on a dense $q$ mesh
+evaluate them as the \emph{exact Fourier transform of a localized
+real-space object}.  They differ only in how that object is built.
+
+\paragraph{(a) Real-space supercell codes.}  In this family the
+third-order force constants are built directly in the supercell.  In
+phono3py \cite{phono3py,phono3py2015} they are constructed from finite
+displacement pairs (or fitted with
+\texttt{symfc}/ALM), stored compactly with the first atom pinned in the
+home primitive cell, and truncated with a pair cutoff
+(\texttt{--cutoff-pair}): any triplet whose interatomic distances exceed
+the cutoff is exactly zero.  ShengBTE's \texttt{thirdorder.py}
+\cite{shengbte} does the same with a cutoff expressed as an $n$-th
+nearest-neighbour shell; ALAMODE \cite{alamode} and TDEP \cite{tdep} fit
+the same kind of compact real-space tensor from molecular-dynamics data
+by (constrained) least squares.  The image assignment is therefore made
+\emph{by construction}: only short-range, minimal-distance triplets
+exist, and the vertex at any $\qv$ is the exact transform
+$V\propto\sum\Phi^{(3)}_{abc}\,e^{i\qv_1\cdot\mathbf r_a+
+i\qv_2\cdot\mathbf r_b+i\qv_3\cdot\mathbf r_c}$ evaluated on the target
+mesh.  No $q$-space interpolation of vertex samples is ever performed.
+Acoustic sum rules are imposed on the stored tensor, either by drift
+removal plus index-exchange averaging (phono3py's
+\texttt{--fc-symmetry}), by an iterative least-squares compensation
+(ShengBTE), or exactly inside the fitted basis (\texttt{symfc}, ALAMODE).
+One detail is worth singling out: since v3, phono3py averages the
+real-to-reciprocal transform over the three equivalent choices of the
+pinned atom (\texttt{make\_r0\_average}), keeping only shortest-vector
+triplets through a multiplicity mask (\texttt{all\_shortest}).  This is
+an atom-resolved pinning with tie handling --- conceptually the closest
+relative of the pinned windows of Sec.~\ref{sec:atomic}, performed on a
+stored tensor rather than on the stochastic estimator.
+
+\paragraph{(b) Coarse-$q$-grid codes: D3Q/thermal2 (and
+q2r/matdyn at second order).}  The D3Q code \cite{d3q} computes the
+third-order dynamical matrices on a coarse regular $q$ grid by DFPT
+($2n{+}1$ theorem), without any supercell.  Crucially, the thermal2 suite
+\cite{thermal2} then still goes \emph{through} real space:
+\texttt{d3\_qq2rr.x} inverse-transforms to a real-space tensor with
+Wigner--Seitz re-centering (\texttt{NFAR}), applies the ASR iteratively
+(\texttt{d3\_asr3.x}), and the r$\to$q transform evaluates the vertex at
+arbitrary $\qv$.  The manual is explicit that the uncentered
+(\texttt{NFAR=0}) tensor is ``unsuitable for doing any further
+calculation, due to aliasing in the Fourier interpolation'', and thermal2
+re-centers imported \texttt{thirdorder.py}/phono3py tensors in exactly
+the same way before interpolating them.  The
+\texttt{cellconstructor.Spectral} pipeline used as the oracle in this
+report (\texttt{Tensor3.Center(Far)} + \texttt{Apply\_ASR} +
+\texttt{Interpolate}) is the SSCHA member of this family.  At second
+order, the principle is universal and uncontroversial:
+\texttt{q2r.x}/\texttt{matdyn.x}, phonopy, and every band-structure code
+interpolate $D(\qv)$ through centered real-space force constants, never
+by linear interpolation of dynamical matrices between coarse $q$ points.
+
+\subsection{What no production code does: piecewise-linear interpolation
+of the vertex}
+\label{sec:codes-trilinear}
+
+To our knowledge, no anharmonic code interpolates the \emph{vertex
+samples} by piecewise-polynomial (trilinear, tetrahedron, or spline)
+corner averaging.  Linear schemes are used only for the
+\emph{integration} of real, non-negative quantities --- the tetrahedron
+method for the three-phonon phase space in phono3py and ShengBTE
+\cite{phono3py,shengbte} --- where no phase can cancel.  The vertex
+itself is always evaluated by the Fourier transform of the real-space
+object on the target grid.  The electron--phonon community made the same
+choice for the same reason: EPW \cite{epw} interpolates $g_{mn\nu}$ from
+a localized (Wannier) real-space representation, because the $q$-space
+vertex carries a gauge-dependent complex phase that piecewise-linear
+maps cannot transport.
+
+The present report quantifies what goes wrong otherwise.  The trilinear
+corner sum of Sec.~\ref{sec:trilinear} is a convex combination of complex
+samples; by the triangle inequality
+$|\sum_k w_k V_k|\le\sum_k w_k|V_k|$, with equality only if all sampled
+phases agree.  Whenever the coupling is centred between lattice sites
+--- the inversion-protected $\mathbb Z_2$ class of
+Sec.~\ref{sec:topology}, which includes the Te--Sn bond-centred
+anharmonicity of SnTe --- the coarse samples alternate in sign and sit
+half at the parity nodes, so the corner average cancels: amplitude
+survival $0.26$ at the cube centre, $|V|^2$ survival $0.375$, and the
+$\Gamma$ TO peak hardened from $44.03$ to $46.11$~\si{cm^{-1}} instead of
+softened toward $37.65$~\si{cm^{-1}}.  A per-atom phase transport removes
+the phase error but not the amplitude ceiling (survival $0.42$; peak
+$45.59$~\si{cm^{-1}}).  The atom-centred cardinal kernel escapes the
+ceiling precisely because it is \emph{not} a positive-weight average: it
+is the trigonometric interpolation through the samples selected by the
+atom-resolved image assignment, i.e.\ the $q$-space form of centering.
+
+\subsection{Mapping this repository onto the taxonomy}
+\label{sec:codes-mapping}
+
+Table~\ref{tab:codes} summarizes the landscape.  Each mode implemented on
+this branch is the tensor-free or $q$-space counterpart of one tensor
+operation:
+\begin{itemize}
+\item \texttt{plain} off-grid Bloch transform $\equiv$ the uncentered,
+  periodic tensor (\texttt{NFAR=0} in \texttt{d3\_qq2rr.x}): exact
+  on-grid, aliased off-grid (tent bias, Sec.~\ref{sec:offgrid}).
+\item \texttt{minimal\_image} windows $\equiv$ \texttt{Center()} without
+  \texttt{Apply\_ASR()}: correct image assignment, structurally violated
+  sum rule (Sec.~\ref{sec:asrleak}).
+\item doubled-support ASR windows $\equiv$ \texttt{Center()} $+$
+  \texttt{Apply\_ASR()} $+$ symmetrization, but fused into a single
+  linear constraint system on the kernel (Sec.~\ref{sec:asrdesign}),
+  philosophically closest to \texttt{symfc}'s constrained basis ---
+  except that the constrained object is the geometry kernel, not
+  $\Phi^{(3)}$.
+\item \texttt{atomic}/\texttt{atomic\_delta} pinned windows $\equiv$
+  phono3py's pinned-home-atom transform (with its three-leg average and
+  shortest-triplet mask), plus a conservative $q$-space $\Delta$
+  projector for the near-$\Gamma$ ASR (Sec.~\ref{sec:atomic}).
+\item \texttt{atom\_fourier} cardinal kernel $\equiv$ the fold/unfold,
+  single-pass form of the same pairwise image resolution: the aliased
+  lattice harmonics of each atom pair are assigned to the image nearest
+  to $\boldsymbol\tau_a-\boldsymbol\tau_b$
+  (Eq.~\eqref{eq:atom-fourier-kernel}).
+\item \texttt{trilinear} (default \texttt{QSpaceTrilinearLanczos})
+  $\equiv$ the method nobody implements, retained as a negative control.
+\item \texttt{d3\_mode="tensor"} $\equiv$ the D3Q/thermal2/cellconstructor
+  pipeline verbatim, used here as oracle.
+\end{itemize}
+
+\begin{table}[tb]
+\centering
+\caption{Interpolation strategies for three-phonon vertices in the
+established anharmonic codes and on this branch.  ``r2q'' denotes the
+exact Fourier transform of the real-space object on the target mesh.}
+\label{tab:codes}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{p{2.8cm}p{2.5cm}p{3.3cm}p{2.6cm}p{2.9cm}}
+\toprule
+code / mode & stored object & image assignment (centering) & sum rules &
+dense-mesh evaluation \\
+\midrule
+phono3py \cite{phono3py,phono3py2015} &
+real-space fc3 (compact, cutoff) &
+by construction; pinned home atom, 3-leg r0 average, shortest-triplet
+mask &
+drift removal or exact in \texttt{symfc} basis &
+exact r2q \\
+ShengBTE + \texttt{thirdorder.py} \cite{shengbte} &
+real-space fc3 (cutoff $=n$-th shell) &
+by construction & iterative least-squares & exact r2q \\
+D3Q/thermal2 \cite{d3q,thermal2} &
+coarse-grid $D_3 \to$ real tensor &
+Wigner--Seitz re-centering (\texttt{NFAR}) & iterative
+(\texttt{d3\_asr3}) & exact r2q \\
+ALAMODE \cite{alamode}, TDEP \cite{tdep} &
+fitted real-space tensor &
+cutoff in the fit basis & constrained fit & exact r2q \\
+\texttt{cellconstructor} (oracle here) &
+SSCHA $\Phi^{(3)}$ tensor &
+atom-resolved \texttt{Center(Far)} & \texttt{Apply\_ASR()} &
+exact r2q (\texttt{Tensor3}) \\
+\midrule
+this work: \texttt{atomic\_delta} &
+none (stochastic fields) &
+atom-resolved pinned windows & hard at $\Gamma$ by unit class sums;
+$\Delta$ projector near $\Gamma$ & windowed NUDFT \\
+this work: \texttt{atom\_fourier} &
+coarse vertex blocks only &
+atom-pair cardinal kernel (non-positive weights) & inherited from coarse
+blocks & adjoint fold/unfold \\
+this work: \texttt{trilinear} &
+coarse vertex blocks only &
+none (tent weights) & inherited & adjoint fold/unfold \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The differences that matter}
+\label{sec:codes-differences}
+
+\paragraph{Deterministic reuse vs.\ stochastic re-sampling.}  All tensor
+codes pay a one-time construction cost and then reuse the tensor on any
+mesh, at any temperature, for any observable; the memory scales as
+$O(\nat\,n_{\mathrm{sc}}^2)$ (compact) and becomes the bottleneck for
+fourth order (FourPhonon \cite{fourphonon} stores real-space
+$\Phi^{(4)}$ with a cutoff).  The stochastic kernel never stores the
+tensor but re-derives the contraction at every Lanczos application, with
+statistical noise correlated between nearby fine wavevectors.  The price
+and the payoff are the two sides of the same coin: this is the only
+route that survives when $\Phi^{(n)}$ cannot be materialized at all ---
+the design restriction of this report.
+
+\paragraph{Where the cutoff enters.}  Supercell codes control the range
+by construction (the cutoff \emph{is} the support); coarse-$q$ codes
+control it by re-centering, and aliasing is the failure mode of skipping
+that step.  The tensor-free estimator inherits the second failure mode:
+the plain window is exactly the uncentered transform.  One genuine
+novelty here is the pre-filter of Sec.~\ref{sec:prefilter}: the
+stochastic correlations are dressed with mode-diagonal propagators
+$\fpsi$, so the object being interpolated only acquires the range of
+$\Phi^{(3)}$ \emph{after} the $\fY$ filter is moved onto the coarse-grid
+fields.  Tensor codes never face this problem because they interpolate
+the bare tensor.
+
+\paragraph{Sum rules: sequential projections vs.\ one-shot constraints.}
+Tensor codes apply centering, ASR, and symmetrization as separate,
+non-commuting projections (hence \texttt{Center()} \emph{then}
+\texttt{Apply\_ASR()}); \texttt{symfc}/ALAMODE build the constraints
+into the fitted basis.  The window design of Sec.~\ref{sec:asrdesign}
+imposes the centering target, the three kernel ASRs, the partition of
+unity, and the pair symmetry simultaneously as linear constraints ---
+the same philosophy as \texttt{symfc}, applied to the image-assignment
+kernel rather than to the force constants.  The price is the projection
+distance of Sec.~\ref{sec:asrdesign}; the gain is that the commensurate
+limit and the $\Gamma$-point ASR hold to machine precision
+\emph{configuration by configuration}, with zero statistical noise.
+
+\paragraph{What is genuinely new here.}  The interpolated object is not a
+bare force-constant tensor but the resummed TDSCHA estimator built from
+the SSCHA ensemble --- which is why the scaling laws
+$s_3=\sqrt{\Nc/\Nf}$, $s_4=\Nc/\Nf$ of Sec.~\ref{sec:rescaling} and the
+pre-filter exist at all.  None of the external codes has an analogue,
+because none of them interpolates a stochastic, resummed quantity.
+Conversely, none of them --- and none of the modes here --- treats the
+long-range polar part of $\Phi^{(3)}$ analytically; that limitation is
+shared across the whole landscape (Sec.~\ref{sec:outlook}).
+
+\subsection{Recommendation}
+\label{sec:codes-opinion}
+
+Our opinion, ordered by regime:
+\begin{enumerate}
+\item \textbf{If the tensor can be materialized, use the tensor.}  Build
+  (or extract from the SSCHA ensemble) the real-space $\Phi^{(3)}$,
+  center it with atom-resolved minimal-image geometry, project the ASR,
+  and Fourier-evaluate on the target mesh.  This is the method
+  phono3py, ShengBTE, D3Q/thermal2, and \texttt{cellconstructor} all
+  converged on; it is deterministic, exactly on-grid, reusable, and its
+  error control is transparent (range/cutoff convergence).  On this
+  branch it is the \texttt{d3\_mode="tensor"} oracle, and it is what we
+  benchmark everything against.
+\item \textbf{If the tensor cannot be stored, reproduce its Fourier sum
+  on the estimator.}  The best tensor-free method is the one whose
+  effective kernel equals the centered, ASR-projected image assignment:
+  for D3 today, \texttt{atomic\_delta} (SnTe $2^3\to4^3$:
+  $37.52$~\si{cm^{-1}} vs.\ oracle $37.65$); in the fold/unfold
+  formulation, the atom-centred cardinal kernel
+  ($38.04$~\si{cm^{-1}} stochastic, $37.72$~\si{cm^{-1}} noise-free,
+  vertex reconstruction $2.9\times10^{-5}$) is the single-pass,
+  coarse-cost realization of the same principle and the most promising
+  direction, pending its extension beyond the D3 $\Gamma$ slice.  For
+  D4, the four-leg factorized kernel of Sec.~\ref{sec:d4center} is the
+  designed candidate; it remains unimplemented.
+\item \textbf{Never interpolate vertex samples piecewise-linearly.}
+  Trilinear corner averaging has a rigorous amplitude ceiling for any
+  coupling centred between lattice points (the $\mathbb Z_2$ class of
+  Sec.~\ref{sec:topology}), fails on a real material in the wrong
+  direction ($46.11$~\si{cm^{-1}}), and is used by no production code.
+  Piecewise-linear maps are safe only for real, non-negative integrands
+  (tetrahedron integration), never for complex vertices.
+\end{enumerate}
+The unifying rule is simple: \emph{treat the vertex like the dynamical
+matrix.}  Nobody interpolates $D(\qv)$ linearly between coarse $q$
+points, because the real-space force constants are the compact object;
+the anharmonic vertex obeys the same logic at rank three and four.
+Centered Fourier interpolation --- through a stored tensor when
+possible, through a tensor-free kernel when necessary --- is the best
+method; everything else this report tested is either an approximation of
+it (windows, cardinal kernels) or a failure mode (plain, trilinear).
+
 %======================================================================
 \section{Limitations and outlook}
 \label{sec:outlook}
@@ -1642,6 +2994,11 @@ Sec.~\ref{sec:atomic} are tracked in
 scripts/data are \texttt{kernel\_study.py},
 \texttt{atomic\_d3\_N300\_s20.dat} and
 \texttt{atomic\_d3\_N1000\_s30.dat}.
+The atom-centred Fourier audit of Sec.~\ref{sec:atom-fourier} is reproduced
+by \texttt{scripts/snte\_atom\_centered\_fourier.py} and
+\texttt{scripts/bench\_snte\_atom\_fourier.py}; its structural cardinal,
+transpose-symmetry, and Hermiticity checks are in
+\texttt{tests/test\_trilinear/test\_trilinear\_structural.py}.
 
 \begin{thebibliography}{9}
 \bibitem{tdscha} L.~Monacelli and F.~Mauri,
@@ -1652,6 +3009,36 @@ Phys.\ Rev.\ B \textbf{103}, 104305 (2021).
 \bibitem{bianco} R.~Bianco et al., Phys.\ Rev.\ B \textbf{97}, 214101
 (2018) (dynamic bubble conventions used by
 \texttt{cellconstructor.Spectral}).
+\bibitem{phono3py} A.~Togo, L.~Chaput, T.~Tadano, and I.~Tanaka,
+\emph{Implementation strategies in phonopy and phono3py},
+J.\ Phys.: Condens.\ Matter \textbf{35}, 353001 (2023).
+\bibitem{phono3py2015} A.~Togo, L.~Chaput, and I.~Tanaka,
+\emph{Distributions of phonon lifetimes in Brillouin zones},
+Phys.\ Rev.\ B \textbf{91}, 094306 (2015).
+\bibitem{shengbte} W.~Li, J.~Carrete, N.~A.~Katcho, and N.~Mingo,
+\emph{ShengBTE: A solver of the Boltzmann transport equation for
+phonons}, Comput.\ Phys.\ Commun.\ \textbf{185}, 1747 (2014).
+\bibitem{d3q} L.~Paulatto, F.~Mauri, and M.~Lazzeri,
+\emph{Anharmonic properties from a generalized third-order ab initio
+approach: theory and applications to graphite and graphene},
+Phys.\ Rev.\ B \textbf{87}, 214303 (2013).
+\bibitem{thermal2} G.~Fugallo, M.~Lazzeri, L.~Paulatto, and F.~Mauri,
+\emph{Ab initio variational approach for evaluating lattice thermal
+conductivity}, Phys.\ Rev.\ B \textbf{88}, 045430 (2013).
+\bibitem{alamode} T.~Tadano, Y.~Gohda, and S.~Tsuneyuki,
+\emph{Anharmonic force constants extracted from first-principles
+molecular dynamics: applications to heat transfer simulations},
+J.\ Phys.: Condens.\ Matter \textbf{26}, 225402 (2014).
+\bibitem{tdep} O.~Hellman, I.~A.~Abrikosov, and S.~I.~Simak,
+\emph{Lattice dynamics of anharmonic solids from first principles},
+Phys.\ Rev.\ B \textbf{84}, 180301(R) (2011).
+\bibitem{fourphonon} Z.~Han, X.~Yang, W.~Li, T.~Feng, and X.~Ruan,
+\emph{FourPhonon: an extension module to ShengBTE for computing
+four-phonon scattering rates}, Comput.\ Phys.\ Commun.\ \textbf{270},
+108179 (2022).
+\bibitem{epw} F.~Giustino, M.~L.~Cohen, and S.~G.~Louie,
+\emph{Electron-phonon interaction from Wannier interpolation},
+Phys.\ Rev.\ B \textbf{76}, 165108 (2007).
 \end{thebibliography}
 
 \end{document}
