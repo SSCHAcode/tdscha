@@ -66,6 +66,52 @@ __RyToK__ = 157887.32400374097
 TYPE_DP = np.double
 
 
+def check_numpy_version():
+    """Refuse to run the q-space Lanczos under a NumPy that corrupts it.
+
+    NumPy 1.26.4 on Python 3.14 lets a masked product alias its input and
+    silently mutates the Krylov vectors (see
+    ``numpy1_python314_qspace_issue.md``).  The corruption is NOT detectable
+    from the Hermiticity invariant: on a full 12288-configuration CsSnI3
+    ensemble the failing environment returns ``b - c == 0`` exactly and
+    still gives ``b[0] = 4.53e-4`` instead of the correct ``1.13e-7`` --
+    two orders of magnitude above the largest possible two-phonon
+    eigenvalue.  The run completes, the coefficients are finite, and the
+    spectrum is wrong.
+
+    Raised at the start of every Lanczos recursion rather than at import, so
+    that analysis code which only reads stored coefficients keeps working
+    under any NumPy.
+
+    Raises
+    ------
+    RuntimeError
+        If the NumPy major version is below 2.
+    """
+    major = int(np.__version__.split(".")[0])
+    if major < 2:
+        raise RuntimeError(
+            "The q-space Lanczos cannot be run with NumPy %s.\n\n"
+            "NumPy 1.x on this interpreter aliases the masked metric "
+            "products and silently corrupts the Krylov vectors: the "
+            "recursion completes with finite coefficients and with b == c "
+            "to machine precision, but the coefficients -- and therefore "
+            "the spectrum -- are wrong (see "
+            "numpy1_python314_qspace_issue.md).\n\n"
+            "Install NumPy >= 2 in this environment, or prepend one to "
+            "PYTHONPATH (and pass '-x PYTHONPATH' to mpirun so that every "
+            "rank inherits it)." % np.__version__)
+
+
+# Number of Krylov vectors retained by run_FT(optimized=True).  The
+# non-reorthogonalized three-term recurrence only ever reads basis_Q[-1],
+# basis_Q[-2] (and the matching P/s_norm entries), so three is already one
+# more than it needs; the extra slot keeps the restart path -- which resumes
+# from [-1]/[-2] after load_status -- comfortably inside the window.  Same
+# convention as DynamicalLanczos.run_FT(optimized=True).
+_KEEP_BASIS_OPTIMIZED = 3
+
+
 def find_q_index(q_target, q_points, bg, tol=1e-6):
     """Find the index of q_target in q_points up to a reciprocal lattice vector.
 
@@ -100,6 +146,14 @@ class QSpaceLanczos(DL.Lanczos):
 
     Only Wigner formalism is supported. Requires Julia extension.
     """
+
+    # Attributes that ``load_distributed_tdscha`` must carry from the master
+    # to the worker ranks on top of the common q-space state.  Subclasses that
+    # add their own structure (see QSpaceTrilinearLanczos) list it here so the
+    # distributed loader stays a single code path: the master builds these
+    # once and broadcasts them, rather than every rank rebuilding them and
+    # risking a degenerate-subspace gauge mismatch between ranks.
+    _DISTRIBUTED_EXTRA_ATTRS = ()
 
     def __init__(self, ensemble, lo_to_split=None, **kwargs):
         """Initialize the Q-Space Lanczos.
@@ -958,7 +1012,7 @@ class QSpaceLanczos(DL.Lanczos):
     def run_FT(self, n_iter, save_dir=None, save_each=5, verbose=True,
                n_rep_orth=0, n_ortho=10, flush_output=True, debug=False,
                prefix="LANCZOS", run_simm=None, optimized=False,
-               reorthogonalize=True):
+               reorthogonalize=False):
         """Run the Hermitian Lanczos algorithm for q-space.
 
         This is the same structure as the parent run_FT but with:
@@ -967,6 +1021,10 @@ class QSpaceLanczos(DL.Lanczos):
         3. Complex128 psi
         4. Real coefficients (guaranteed by Hermitian L)
         """
+        # Before anything else: a NumPy that corrupts the recursion must stop
+        # the run here, not after symmetrization has already been done.
+        check_numpy_version()
+
         self.verbose = verbose
 
         if not self.initialized:
@@ -982,7 +1040,14 @@ Use prepare_mode_q or prepare_perturbation_q before calling run_FT.
             raise ValueError(ERROR_MSG)
 
         mask_dot = self.mask_dot_wigner(debug)
-        psi_norm = np.real(np.conj(self.psi).dot(self.psi * mask_dot))
+
+        def metric_dot(left, right):
+            """Hermitian product without allowing ufunc buffer reuse."""
+            weighted_right = np.empty_like(right)
+            np.multiply(right, mask_dot, out=weighted_right)
+            return np.vdot(left, weighted_right)
+
+        psi_norm = np.real(metric_dot(self.psi, self.psi))
         if np.isnan(psi_norm) or psi_norm == 0:
             raise ValueError(ERROR_MSG)
 
@@ -1000,6 +1065,35 @@ Use prepare_mode_q or prepare_perturbation_q before calling run_FT.
 
         # Get current step
         i_step = len(self.a_coeffs)
+
+        # `optimized` keeps only the tail of the Krylov basis.  That is exact
+        # for the bare three-term recurrence, but silently wrong for anything
+        # that re-reads older vectors, so refuse those combinations rather
+        # than quietly changing the result.
+        if optimized:
+            if reorthogonalize:
+                raise ValueError(
+                    "optimized=True keeps only the last %d Krylov vectors, "
+                    "while reorthogonalize=True re-orthogonalizes against the "
+                    "whole basis. Use one or the other."
+                    % _KEEP_BASIS_OPTIMIZED)
+            if n_rep_orth > 0 and (not n_ortho
+                                   or n_ortho > _KEEP_BASIS_OPTIMIZED):
+                raise ValueError(
+                    "optimized=True keeps only the last %d Krylov vectors, "
+                    "but n_rep_orth=%d requests re-orthogonalization against "
+                    "%s of them."
+                    % (_KEEP_BASIS_OPTIMIZED, n_rep_orth,
+                       "all" if not n_ortho else str(n_ortho)))
+
+        # A basis that was truncated by a previous optimized run cannot be
+        # reorthogonalized against: len(basis) < i_step + 1 is the signature.
+        if reorthogonalize and i_step > 0 and len(self.basis_Q) < i_step + 1:
+            raise ValueError(
+                "Cannot continue with reorthogonalize=True: the stored Krylov "
+                "basis holds %d vectors but %d steps were run, so it was "
+                "truncated by an earlier optimized=True run and the older "
+                "vectors are gone." % (len(self.basis_Q), i_step))
 
         if verbose:
             header = """
@@ -1019,7 +1113,7 @@ Starting from step %d
             self.basis_Q = []
             self.basis_P = []
             self.s_norm = []
-            norm = np.sqrt(np.real(np.conj(self.psi).dot(self.psi * mask_dot)))
+            norm = np.sqrt(np.real(metric_dot(self.psi, self.psi)))
             first_vector = self.psi / norm
             self.basis_Q.append(first_vector)
             self.basis_P.append(first_vector)
@@ -1059,7 +1153,7 @@ Starting from step %d
             p_norm = self.s_norm[-1] / c_old
 
             # a coefficient (real for Hermitian L)
-            a_coeff = np.real(np.conj(psi_p).dot(L_q * mask_dot)) * p_norm
+            a_coeff = np.real(metric_dot(psi_p, L_q)) * p_norm
 
             if np.isnan(a_coeff):
                 raise ValueError("Invalid value in Lanczos. Check frequencies/initialization.")
@@ -1077,13 +1171,14 @@ Starting from step %d
                 sk -= self.b_coeffs[-1] * self.basis_P[-2] * (old_p_norm / p_norm)
 
             # s_norm
-            s_norm = np.sqrt(np.real(np.conj(sk).dot(sk * mask_dot)))
+            s_norm = np.sqrt(np.real(metric_dot(sk, sk)))
             sk_tilde = sk / s_norm
             s_norm *= p_norm
 
             # b and c coefficients (real, should be equal for Hermitian L)
-            b_coeff = np.sqrt(np.real(np.conj(rk).dot(rk * mask_dot)))
-            c_coeff = np.real(np.conj(sk_tilde).dot((rk / b_coeff) * mask_dot)) * s_norm
+            b_coeff = np.sqrt(np.real(metric_dot(rk, rk)))
+            c_coeff = np.real(metric_dot(
+                sk_tilde, rk / b_coeff)) * s_norm
 
             self.a_coeffs.append(a_coeff)
 
@@ -1103,15 +1198,13 @@ Starting from step %d
 
             # Gram-Schmidt reorthogonalization
             if reorthogonalize:
-                # Correct Hermitian MGS: orthogonalize against all Q vectors
-                # (which are unit-normalized in the mask inner product)
                 new_q = psi_q.copy()
 
                 for j in range(len(self.basis_Q)):
-                    coeff = np.real(np.conj(self.basis_Q[j]).dot(new_q * mask_dot))
+                    coeff = np.real(metric_dot(self.basis_Q[j], new_q))
                     new_q -= coeff * self.basis_Q[j]
 
-                normq = np.sqrt(np.real(np.conj(new_q).dot(new_q * mask_dot)))
+                normq = np.sqrt(np.real(metric_dot(new_q, new_q)))
                 if normq < __EPSILON__:
                     next_converged = True
                 new_q /= normq
@@ -1128,22 +1221,22 @@ Starting from step %d
                     start = max(0, len(self.basis_P) - (n_ortho or len(self.basis_P)))
 
                     for j in range(start, len(self.basis_P)):
-                        coeff1 = np.real(np.conj(self.basis_P[j]).dot(new_q * mask_dot))
-                        coeff2 = np.real(np.conj(self.basis_Q[j]).dot(new_p * mask_dot))
+                        coeff1 = np.real(metric_dot(self.basis_P[j], new_q))
+                        coeff2 = np.real(metric_dot(self.basis_Q[j], new_p))
                         new_q -= coeff1 * self.basis_P[j]
                         new_p -= coeff2 * self.basis_Q[j]
 
-                    normq = np.sqrt(np.real(np.conj(new_q).dot(new_q * mask_dot)))
+                    normq = np.sqrt(np.real(metric_dot(new_q, new_q)))
                     if normq < __EPSILON__:
                         next_converged = True
                     new_q /= normq
 
-                    normp = np.real(np.conj(new_p).dot(new_p * mask_dot))
+                    normp = np.real(metric_dot(new_p, new_p))
                     if np.abs(normp) < __EPSILON__:
                         next_converged = True
                     new_p /= normp
 
-                    s_norm = c_coeff / np.real(np.conj(new_p).dot(new_q * mask_dot))
+                    s_norm = c_coeff / np.real(metric_dot(new_p, new_q))
 
             if not converged:
                 self.basis_Q.append(new_q)
@@ -1154,6 +1247,22 @@ Starting from step %d
                 self.b_coeffs.append(b_coeff)
                 self.c_coeffs.append(c_coeff)
                 self.s_norm.append(s_norm)
+
+                # Drop the Krylov vectors that will never be read again.
+                # Without reorthogonalization the recurrence only touches
+                # [-1] and [-2], so retaining _KEEP_BASIS_OPTIMIZED vectors
+                # leaves the coefficients bit-identical while the memory
+                # stops growing with the step count -- the difference between
+                # 25 MB and 10 GB per rank on a 12^3 fine mesh.  The
+                # compatibility of `optimized` with the reorthogonalization
+                # options was checked once before the loop.
+                if optimized:
+                    while len(self.basis_Q) > _KEEP_BASIS_OPTIMIZED:
+                        self.basis_Q.pop(0)
+                    while len(self.basis_P) > _KEEP_BASIS_OPTIMIZED:
+                        self.basis_P.pop(0)
+                    while len(self.s_norm) > _KEEP_BASIS_OPTIMIZED:
+                        self.s_norm.pop(0)
 
             if verbose:
                 print("Time for L application: %d s" % (t2 - t1))
@@ -1657,9 +1766,89 @@ Starting from step %d
 # Distributed Configuration Loading
 # =============================================================================
 
+def _distributed_slice(rank, n_procs, N_global):
+    """Contiguous [start, end) block of configurations owned by ``rank``."""
+    per_proc = N_global // n_procs
+    remainder = N_global % n_procs
+    if rank < remainder:
+        start = rank * (per_proc + 1)
+        end = start + per_proc + 1
+    else:
+        start = rank * per_proc + remainder
+        end = start + per_proc
+    return start, end
+
+
+def _load_distributed_build_everywhere(cls, data_dir, population_id, dyn, T,
+                                       lo_to_split=None, use_symmetries=True,
+                                       n_configs=None, final_dyn=None,
+                                       final_T=None, **kwargs):
+    """Distribute the configurations by building on every rank, then slicing.
+
+    The alternative strategy to the master-builds-and-scatters path, and the
+    only one that works when the constructor itself performs MPI collectives.
+    ``QSpaceTrilinearLanczos`` is such a case: it calls ``interpolate_dyn_fine``
+    -> ``ForceTensor.Apply_ASR`` -> ``CC.Settings.broadcast``.  If only the
+    master ran that, it would block inside the ASR broadcast while every other
+    rank sat in the metadata ``bcast`` -- two different collectives, i.e. a
+    deadlock (confirmed by stack dump before this path existed).
+
+    Here every rank performs the identical construction, so all collectives are
+    matched, and only afterwards does each rank drop the configurations it does
+    not own.  Building redundantly also removes the gauge question entirely:
+    the ranks are not compared, they run the same deterministic code on the
+    same input.
+
+    The ensemble is replicated only *during* construction; what matters for a
+    long run is the steady state, where each rank keeps N/n_procs columns of
+    X_q/Y_q -- the arrays that dominate the footprint.
+    """
+    rank = Parallel.get_rank() if hasattr(Parallel, "get_rank") else \
+        mpi4py.MPI.COMM_WORLD.Get_rank()
+    n_procs = Parallel.GetNProc()
+
+    ensemble = sscha.Ensemble.Ensemble(dyn, T)
+    if n_configs is not None:
+        ensemble.load_bin(data_dir, population_id, n_configs=n_configs)
+    else:
+        ensemble.load_bin(data_dir, population_id)
+    if final_dyn is not None:
+        ensemble.update_weights(final_dyn,
+                                final_T if final_T is not None else T)
+
+    qlanc = cls(ensemble, lo_to_split=lo_to_split, **kwargs)
+    qlanc.init(use_symmetries=use_symmetries)
+    del ensemble
+
+    N_global = qlanc.N
+    N_eff_global = float(np.sum(qlanc.rho))
+
+    start, end = _distributed_slice(rank, n_procs, N_global)
+    qlanc.X_q = qlanc.X_q[:, start:end, :].copy()
+    qlanc.Y_q = qlanc.Y_q[:, start:end, :].copy()
+    qlanc.rho = qlanc.rho[start:end].copy()
+
+    qlanc._distributed = True
+    qlanc._N_global = N_global
+    qlanc._N_eff_global = N_eff_global
+    qlanc._N_local = end - start
+    qlanc.N = end - start
+    # float, not int: Julia normalizes by the exact sum(rho) of this slice.
+    qlanc.N_eff = float(np.sum(qlanc.rho))
+
+    if getattr(qlanc, "X", None) is not None:
+        qlanc.X = None
+    if getattr(qlanc, "Y", None) is not None:
+        qlanc.Y = None
+
+    return qlanc
+
+
 def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
                            use_symmetries=True, n_configs=None,
-                           final_dyn=None, final_T=None, **kwargs):
+                           final_dyn=None, final_T=None,
+                           lanczos_class=None, build_on_all_ranks=False,
+                           **kwargs):
     """Load QSpaceLanczos with distributed configurations across MPI ranks.
 
     Loads the ensemble on master rank only, then distributes configuration data
@@ -1690,8 +1879,16 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     final_T : float, optional
         Temperature for weight updates. Defaults to T if not specified.
         Use this if the final temperature differs from the ensemble temperature.
+    lanczos_class : type, optional
+        The QSpaceLanczos subclass to build. Defaults to QSpaceLanczos. Pass
+        ``QSpaceTrilinearLanczos`` (or use the
+        ``QSpaceTrilinear.load_distributed_trilinear_tdscha`` wrapper) to
+        distribute an *interpolated* calculation; the subclass declares the
+        extra state to broadcast through ``_DISTRIBUTED_EXTRA_ATTRS``.
     **kwargs
-        Additional arguments passed to QSpaceLanczos.
+        Additional arguments passed to the Lanczos class (e.g. ``fine_mesh``,
+        ``atom_fourier`` and ``ignore_effective_charges`` for the trilinear
+        interpolation).
 
     Returns
     -------
@@ -1713,6 +1910,14 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     rank = comm.Get_rank()
     n_procs = Parallel.GetNProc()
 
+    cls = QSpaceLanczos if lanczos_class is None else lanczos_class
+
+    if build_on_all_ranks:
+        return _load_distributed_build_everywhere(
+            cls, data_dir, population_id, dyn, T, lo_to_split=lo_to_split,
+            use_symmetries=use_symmetries, n_configs=n_configs,
+            final_dyn=final_dyn, final_T=final_T, **kwargs)
+
     if Parallel.am_i_the_master():
         # ========== MASTER (RANK 0) ==========
         ensemble = sscha.Ensemble.Ensemble(dyn, T)
@@ -1726,7 +1931,7 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
             T_for_update = final_T if final_T is not None else T
             ensemble.update_weights(final_dyn, T_for_update)
 
-        qlanc = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
+        qlanc = cls(ensemble, lo_to_split=lo_to_split, **kwargs)
         qlanc.init(use_symmetries=use_symmetries)
 
         # Free ensemble - we only need QSpaceLanczos arrays
@@ -1750,7 +1955,15 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
             'n_syms_qspace': qlanc.n_syms_qspace,
             '_qspace_sym_data': qlanc._qspace_sym_data,
             '_qspace_sym_q_map': qlanc._qspace_sym_q_map,
+            # The ensemble Bloch fields are NOT necessarily indexed by n_q:
+            # the interpolated subclass keeps X_q/Y_q on the coarse mesh while
+            # n_q counts the fine one. Send the real leading dimension so the
+            # workers allocate receive buffers that match what is sent.
+            'xq_nq': qlanc.X_q.shape[0],
         }
+        # Whatever extra structure the subclass needs to be functional.
+        for attr in cls._DISTRIBUTED_EXTRA_ATTRS:
+            metadata[attr] = getattr(qlanc, attr, None)
         comm.bcast(metadata, root=0)
 
         # Barrier to ensure all ranks have received metadata before we start sending slices
@@ -1791,7 +2004,10 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         qlanc._N_eff_global = N_eff_global
         qlanc._N_local = N_local
         qlanc.N = N_local
-        qlanc.N_eff = int(np.sum(qlanc.rho))
+        # float, not int: Julia normalizes by the exact sum(rho) of this
+        # rank's slice, so truncating here would leave a systematic
+        # mis-normalization on any reweighted ensemble (rho != 1).
+        qlanc.N_eff = float(np.sum(qlanc.rho))
 
         # Free unused arrays
         if hasattr(qlanc, 'X') and qlanc.X is not None:
@@ -1808,8 +2024,8 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         # Barrier to ensure all ranks have received metadata before slices are sent
         comm.barrier()
 
-        # Create bare QSpaceLanczos and populate from metadata
-        qlanc = QSpaceLanczos(ensemble=None, lo_to_split=lo_to_split, **kwargs)
+        # Create bare Lanczos object and populate from metadata
+        qlanc = cls(ensemble=None, lo_to_split=lo_to_split, **kwargs)
         qlanc.T = metadata['T']
         qlanc.dyn = metadata['dyn']
         qlanc.uci_structure = metadata['uci_structure']
@@ -1826,14 +2042,17 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         qlanc.n_syms_qspace = metadata['n_syms_qspace']
         qlanc._qspace_sym_data = metadata['_qspace_sym_data']
         qlanc._qspace_sym_q_map = metadata['_qspace_sym_q_map']
+        for attr in cls._DISTRIBUTED_EXTRA_ATTRS:
+            setattr(qlanc, attr, metadata[attr])
 
         # Receive local config slice
         N_local_arr = np.array([0], dtype=np.int64)
         comm.Recv(N_local_arr, source=0, tag=0)
         N_local = int(N_local_arr[0])
 
-        qlanc.X_q = np.zeros((qlanc.n_q, N_local, qlanc.n_bands), dtype=np.complex128)
-        qlanc.Y_q = np.zeros((qlanc.n_q, N_local, qlanc.n_bands), dtype=np.complex128)
+        xq_nq = metadata['xq_nq']
+        qlanc.X_q = np.zeros((xq_nq, N_local, qlanc.n_bands), dtype=np.complex128)
+        qlanc.Y_q = np.zeros((xq_nq, N_local, qlanc.n_bands), dtype=np.complex128)
         qlanc.rho = np.zeros(N_local, dtype=np.float64)
 
         comm.Recv(qlanc.X_q, source=0, tag=1)
@@ -1846,7 +2065,10 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         qlanc._N_eff_global = metadata['N_eff_global']
         qlanc._N_local = N_local
         qlanc.N = N_local
-        qlanc.N_eff = int(np.sum(qlanc.rho))
+        # float, not int: Julia normalizes by the exact sum(rho) of this
+        # rank's slice, so truncating here would leave a systematic
+        # mis-normalization on any reweighted ensemble (rho != 1).
+        qlanc.N_eff = float(np.sum(qlanc.rho))
 
         # Build Julia symmetry cache
         qlanc.prepare_symmetrization(no_sym=not use_symmetries)
