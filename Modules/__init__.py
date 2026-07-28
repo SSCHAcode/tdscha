@@ -9,10 +9,8 @@ from tdscha import QSpaceLanczos
 from tdscha import QSpaceKPM
 from tdscha import QSpaceHessian
 from tdscha import QSpaceInterpolation
-from tdscha import QSpaceTrilinear
-from tdscha import SpectralFunctions
+from tdscha import QSpaceAtomFourier
 from tdscha import cli
 
 __all__ = ["DynamicalLanczos", "QSpaceLanczos", "QSpaceKPM", "QSpaceHessian",
-           "QSpaceInterpolation", "QSpaceTrilinear", "SpectralFunctions",
-           "cli"]
+           "QSpaceInterpolation", "QSpaceAtomFourier", "cli"]

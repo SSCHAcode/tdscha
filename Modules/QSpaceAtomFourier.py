@@ -1,84 +1,27 @@
-"""
-Trilinear Q-Space Interpolated Lanczos
-======================================
+"""Atom-centred Fourier interpolation for the q-space TD-SCHA Lanczos.
 
-Implementation of the trilinear q-space interpolation of the TDSCHA
-anharmonic operator (Overleaf: "Interpolation of high-rank phonon
-interactions within the TD-SCHA", with the sign/normalization corrections
-listed in Trilinear_interpolation_plan.md section 1).
+The stochastic ensemble and expensive Julia contractions remain on the
+coarse, commensurate q mesh.  Fine two-phonon blocks are folded to that mesh
+with an atom-pair-resolved trigonometric cardinal kernel, contracted there,
+and reconstructed with the exact adjoint kernel.
 
-Scheme
-------
-The perturbation momentum Q is constrained to the coarse mesh; the
-two-phonon sector of psi runs over FINE pairs (q', Q - q') with q' on a
-fine mesh that is an integer multiple of the coarse one. Every
-per-configuration Bloch field of a fine pair is evaluated at the 8
-trilinear corners of q' on the coarse mesh (the partner leg Q - k_eps is
-then also coarse, so momentum conservation holds term by term), with the
-corner mixing performed in primitive-cell CARTESIAN coordinates -- never
-across q in the polarization basis.
+For atoms ``a`` and ``b``, every aliased lattice harmonic is represented by
+the image nearest to ``tau_a - tau_b`` in the true Cartesian cell metric.
+Exact minimum-image (Nyquist) ties are split equally.  This is the same
+centering rule used for real-space force constants and works for arbitrary,
+including non-orthogonal, cells.
 
-Key algorithmic property (exact "folding"): the per-configuration weights
-do not depend on q', so the whole fine-pair kernel folds exactly onto the
-coarse mesh,
+The same fold/kernel/adjoint-unfold path interpolates both contributions to
+the anharmonic operator:
 
-    A_cart(k) = sum_{q' in fine BZ} I_{eps: k_eps(q') = k}(q')
-                    * alpha_cart(q', Q - q'),
+* d3 couples the one- and two-phonon sectors and scales as
+  ``sqrt(N_coarse / N_fine)``;
+* d4 acts within the two-phonon sector and scales as
+  ``N_coarse / N_fine``.
 
-and the fine d2v outputs are the trilinear interpolation (the exact
-adjoint of the fold) of the coarse Cartesian d2v blocks. The config x
-symmetry loop therefore runs on the UNMODIFIED coarse Julia kernel
-(get_perturb_averages_qspace) at coarse cost; the O(N_f) fold/unfold is
-cheap numpy work. Hermiticity of L is preserved because unfold = adjoint
-of fold and the mesh measure is split symmetrically through the existing
-scale3 = sqrt(N_c/N_f), scale4 = N_c/N_f vertex factors.
-
-Permutation symmetry: for coarse Q the corner set of Q - q' is the mirror
-of the corner set of q' with identical weights, so folding both
-orientations of each stored pair block (reverse orientation = transpose,
-bilinear convention) yields A(Q - k) = A(k)^T exactly -- the transpose
-symmetry the Julia kernel assumes. The permutations that move the Q leg
-are handled by the kernel's force-channel symmetrization, unchanged from
-the commensurate calculation.
-
-Storage: the psi two-phonon blocks stay in the per-fine-pair Wigner mode
-basis (harmonic propagator and chi factors are diagonal there); the
-per-pair mode <-> Cartesian rotations are exact unitaries using each q's
-own eigenvectors, so no eigenvector-phase/degeneracy ambiguity can enter
-the interpolation.
-
-Note on the estimator: the coarse kernel's f_Y filter puts the coarse
-Upsilon on the interpolated legs (r1 = f_Y x = mode representation of
-Upsilon u), so the interpolated object is the correct rank-3 combination
-<(Upsilon u)(Upsilon u) f> of the paper -- the fine Psi enters only the
-per-fine-pair chi factors. This is NOT the raw-correlation interpolation
-that showed the 2x bias in the windowed scheme.
-
-The optional ``atomic_phase`` applies the full-Bloch
-exp(-2 pi i q.tau_a) gauge on both legs of the piecewise-linear fold and its
-inverse adjoint on unfold.  This is a gauge-transport diagnostic; it does not
-perform an atom-dependent real-space image assignment.
-
-The optional ``atom_fourier`` replaces the local tent weights by an
-atom-pair-resolved trigonometric cardinal kernel.  For pair (a,b), every
-aliased lattice harmonic R is represented by the image for which
-|R-(tau_a-tau_b)| is shortest (exact ties are split).  It is the Fourier
-continuation naturally selected by the atom-centred Bloch convention.  It
-still uses only coarse q-space blocks and its adjoint, but it is not a
-piecewise-trilinear map.
-
-The shortest-image assignment and its Nyquist ties are resolved with the
-true 3D cell metric (``tie_metric=True``, default): on a non-orthogonal
-cell the minimal image minimizes the Cartesian length |(R-d).A| and its
-degeneracies can be genuine >2-fold and non-separable (e.g. a coupling on a
-Wigner-Seitz face of an fcc/bcc/hexagonal cell).  The legacy separable
-per-Cartesian-axis rule (``tie_metric=False``) is metric-free, exact only
-for orthorhombic coarse lattices, and kept as a fast path / control.  The
-distinction only changes an observable when a coupling carries weight in an
-aliasing class the separable rule mis-assigns; short-ranged couplings whose
-excited classes have a unique shortest image (e.g. the SnTe Gamma-TO
-vertex) are reconstructed identically by both.  See
-report/interpolation/scripts/audit_nyquist_ties.py.
+The perturbation momentum must belong to the coarse mesh.  The internal
+two-phonon momentum is evaluated on a fine mesh whose dimensions are integer
+multiples of the coarse dimensions.
 """
 from __future__ import print_function
 from __future__ import division
@@ -97,12 +40,12 @@ from cellconstructor.Settings import ParallelPrint as print
 import tdscha.QSpaceLanczos as QL
 import tdscha.JuliaExt as JuliaExt
 from tdscha.QSpaceInterpolation import (
-    generate_fine_mesh, build_q_index_lookup, _mesh_key,
+    generate_fine_mesh, build_q_index_lookup, mesh_key, validate_mesh,
     interpolate_dyn_fine)
 
 
-class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
-    """Q-space Lanczos with trilinear interpolation of the anharmonic vertex.
+class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
+    """Q-space Lanczos with atom-centred Fourier interpolation.
 
     Parameters
     ----------
@@ -144,78 +87,49 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         frequencies are excluded from the one- and two-phonon Hilbert space
         with a warning instead of raising.  The resulting spectrum is
         incomplete and must not be treated as a physical interpolation.
-    atomic_phase : bool
-        Use the full-Bloch exp(-2 pi i q.tau_a) gauge for the rank-2
-        fold/unfold interpolation. The inverse phase is used on the adjoint
-        return path.
-    atom_fourier : bool
-        Use the atom-centred trigonometric cardinal continuation instead of
-        piecewise trilinear weights. Mutually exclusive with
-        ``atomic_phase``.
-    tie_metric : bool
-        Only relevant with ``atom_fourier=True``. If True (default), the
-        minimal image of each aliasing class and its Nyquist ties are
-        resolved with the true 3D cell metric ``A A^T`` (the assignment
-        used by tensor centering), which is correct on any cell. If False,
-        the legacy separable per-Cartesian-axis, metric-free rule is used;
-        this is exact only for orthorhombic coarse lattices and is retained
-        as a fast path and as the control that exposes the discrepancy on
-        non-orthogonal cells (see ``audit_nyquist_ties.py``).
     """
 
-    # The interpolation state layered on top of the coarse QSpaceLanczos.
-    _TRI_ATTRS = (
+    _INTERPOLATION_ATTRS = (
         'fine_mesh', 'coarse_mesh', '_fine_idx',
         '_q_lookup', '_coarse_lookup', '_coarse_idx',
-        '_corners', '_fine_pair_of',
+        '_fine_pair_of',
         '_fine_of_coarse', '_coarse_of_fine',
         'cq_points', 'cn_q', 'cw_q', 'cpols_q',
         'cvalid_modes_q',
         'c_iq_pert', 'c_q_pair_map', 'c_unique_pairs',
-        'atomic_phase', 'atom_fourier', 'tie_metric',
         'ignore_effective_charges',
         '_interp_used_effective_charges',
         '_atom_fourier_kernel')
 
     # What the distributed loader must carry to the worker ranks: the
-    # interpolation state above, plus the mesh-measure scale factors that
-    # __init__ sets on the parent (section 2.3 of the plan).  These are
+    # interpolation state above, plus the mesh-measure scale factors set on
+    # the parent. These are
     # broadcast rather than recomputed per rank: interpolate_dyn_fine
     # diagonalises the fine dynamical matrix, and two diagonalisations of a
     # degenerate block need not agree on a gauge -- ranks disagreeing on the
     # polarization vectors would silently corrupt every reduced dot product.
-    _DISTRIBUTED_EXTRA_ATTRS = _TRI_ATTRS + (
+    _DISTRIBUTED_EXTRA_ATTRS = _INTERPOLATION_ATTRS + (
         'qspace_scale3', 'qspace_scale4', 'qspace_prefiltered')
 
     def __init__(self, ensemble, fine_mesh=None, use_asr_dyn=True,
                  ignore_effective_charges=False,
                  w_min_guard=1e-8, allow_unstable=False,
-                 atomic_phase=False,
-                 atom_fourier=False, tie_metric=True,
                  lo_to_split=None, **kwargs):
 
         if lo_to_split is not None:
             raise NotImplementedError(
-                "LO-TO splitting is not supported by the trilinear "
-                "interpolated q-space Lanczos (phase 1).")
+                "LO-TO splitting is not supported by atom-Fourier "
+                "interpolation.")
 
         super().__init__(ensemble, lo_to_split=None, **kwargs)
 
-        self.__total_attributes__.extend(self._TRI_ATTRS)
-
-        self.atomic_phase = bool(atomic_phase)
-        self.atom_fourier = bool(atom_fourier)
-        self.tie_metric = bool(tie_metric)
-        if self.atomic_phase and self.atom_fourier:
-            raise ValueError("atomic_phase and atom_fourier are mutually "
-                             "exclusive interpolation choices")
+        self.__total_attributes__.extend(self._INTERPOLATION_ATTRS)
 
         self.fine_mesh = None
         self._fine_idx = None
         self._q_lookup = None
         self._coarse_lookup = None
         self._coarse_idx = None
-        self._corners = None
         self._fine_pair_of = None
         self._atom_fourier_kernel = None
         self.c_iq_pert = None
@@ -228,10 +142,20 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
 
         if fine_mesh is None:
             raise ValueError(
-                "QSpaceTrilinearLanczos requires fine_mesh=(m1, m2, m3)")
+                "QSpaceAtomFourierLanczos requires "
+                "fine_mesh=(m1, m2, m3)")
 
-        self.fine_mesh = np.asarray(fine_mesh, dtype=int)
-        self.coarse_mesh = np.asarray(self.dyn.GetSupercell(), dtype=int)
+        self.fine_mesh = validate_mesh(fine_mesh, "fine_mesh")
+        self.coarse_mesh = validate_mesh(
+            self.dyn.GetSupercell(), "coarse mesh")
+        try:
+            w_min_guard = float(w_min_guard)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "w_min_guard must be a positive finite number") from error
+        if not np.isfinite(w_min_guard) or w_min_guard <= 0:
+            raise ValueError(
+                "w_min_guard must be a positive finite number")
         if np.any(self.fine_mesh % self.coarse_mesh != 0):
             raise ValueError(
                 "fine_mesh {} must be an integer multiple of the coarse "
@@ -245,12 +169,18 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         self.cw_q = np.array(self.w_q)
         self.cpols_q = np.array(self.pols_q)
         self.cvalid_modes_q = np.array(self.valid_modes_q)
+        expected_coarse = int(np.prod(self.coarse_mesh))
+        if self.cn_q != expected_coarse:
+            raise ValueError(
+                "the dynamical matrix contains {} q-points, but coarse "
+                "mesh {} requires {}".format(
+                    self.cn_q, tuple(self.coarse_mesh), expected_coarse))
         # X_q, Y_q remain the coarse ensemble Bloch fields (untouched).
 
         self._coarse_lookup = build_q_index_lookup(
             self.cq_points, self.uci_structure, self.coarse_mesh)
         self._coarse_idx = [
-            _mesh_key(q, self.uci_structure, self.coarse_mesh)
+            mesh_key(q, self.uci_structure, self.coarse_mesh)
             for q in self.cq_points]
 
         # == 2. Fine mesh and interpolated dynamical matrix ==
@@ -276,8 +206,8 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         self._fine_of_coarse = np.full(self.cn_q, -1, dtype=int)
         self._coarse_of_fine = np.full(len(q_fine), -1, dtype=int)
         for jq in range(self.cn_q):
-            key_f = _mesh_key(self.cq_points[jq], self.uci_structure,
-                              self.fine_mesh)
+            key_f = mesh_key(
+                self.cq_points[jq], self.uci_structure, self.fine_mesh)
             iq = self._q_lookup[key_f]
             self._fine_of_coarse[jq] = iq
             self._coarse_of_fine[iq] = jq
@@ -326,12 +256,10 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
             small_freq = np.abs(self.w_q) < CC.Phonons.__EPSILON_W__
             self.valid_modes_q &= ~small_freq
 
-        # == 4. Trilinear corner cache (fine mesh geometry, Q-independent) ==
-        self._build_corner_cache()
-        if self.atom_fourier:
-            self._build_atom_fourier_kernel()
+        # == 4. Atom-pair Fourier kernel (fine geometry, Q-independent) ==
+        self._build_atom_fourier_kernel()
 
-        # == 5. Hermitian-symmetric mesh measure (plan section 2.3) ==
+        # == 5. Hermitian-symmetric mesh measure ==
         ratio = float(self.cn_q) / float(self.n_q)
         self.qspace_scale3 = np.sqrt(ratio)
         self.qspace_scale4 = ratio
@@ -440,87 +368,13 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
     # ================================================================
     # Geometry
     # ================================================================
-    def _build_corner_cache(self):
-        """corners[iq_fine] = [(coarse_index, weight, delta), ...], w > 0.
-
-        Exact integer arithmetic: q'_frac_d = n_d / N_f_d, so
-        N_c_d * x_d = j_d + r_d / N_f_d with (j_d, r_d) = divmod(...).
-        Commensurate fine points collapse to a single corner of weight 1.
-
-        ``delta`` is the LOCAL fractional displacement from the fine
-        point to the (unwrapped) corner, delta_d = (j_d + eps_d)/N_c_d -
-        n_d/N_f_d, with |delta_d| <= 1/N_c_d.  The atomic-phase gauge
-        must be built from this local displacement: wrapping the corner
-        and the fine point into the BZ independently can shift their
-        difference by a lattice vector, which flips the sign of
-        exp(-2 pi i q.tau_a) phases for half-integer tau differences.
-        """
-        Nc = self.coarse_mesh
-        Nf = self.fine_mesh
-        self._corners = []
-        for n in self._fine_idx:
-            jt = [divmod(int(Nc[d]) * int(n[d]), int(Nf[d]))
-                  for d in range(3)]
-            entries = []
-            for eps in itertools.product((0, 1), repeat=3):
-                w = 1.0
-                for d in range(3):
-                    t = jt[d][1] / float(Nf[d])
-                    w *= t if eps[d] else (1.0 - t)
-                if w == 0.0:
-                    continue
-                key = tuple((jt[d][0] + eps[d]) % Nc[d] for d in range(3))
-                delta = np.array(
-                    [(jt[d][0] + eps[d]) / float(Nc[d])
-                     - int(n[d]) / float(Nf[d]) for d in range(3)])
-                entries.append((self._coarse_lookup[key], w, delta))
-            self._corners.append(entries)
-
     def find_fine_q(self, q):
         """Index of a (Cartesian) q-vector in the fine mesh, O(1)."""
-        return self._q_lookup[_mesh_key(q, self.uci_structure,
-                                        self.fine_mesh)]
-
-    def _atomic_delta_phase(self, delta):
-        """Diagonal transport phase exp(+2 pi i delta.tau_a) per (atom,
-        cart) component, for the LOCAL fine->corner displacement delta.
-
-        This equals pc(x_corner)* pf(q_fine) with p(x) =
-        exp(-2 pi i x.tau_a) evaluated on the same (unwrapped) branch,
-        which is the only branch-consistent choice: independent BZ
-        wrapping of corner and fine point shifts delta by lattice
-        vectors and flips the sign for half-integer tau differences.
-        """
-        tau = np.linalg.solve(self.uci_structure.unit_cell.T,
-                              self.uci_structure.coords.T).T
-        phase_atom = np.exp(2j * np.pi * (tau @ np.asarray(delta)))
-        return np.repeat(phase_atom, 3)
+        return self._q_lookup[
+            mesh_key(q, self.uci_structure, self.fine_mesh)]
 
     @staticmethod
-    def _nearest_alias_images(alias, centre, mesh, tol=1e-12):
-        """Nearest integers R == alias (mod mesh) to an atomic centre.
-
-        The returned list contains ``(R, weight)`` pairs. Exact Nyquist
-        ties are retained with equal weights, as in tensor centering.
-
-        NOTE: this is the SEPARABLE, per-axis, metric-FREE rule. It is
-        exact only for orthorhombic coarse lattices. For non-orthogonal
-        cells use ``_metric_alias_images`` (the ``tie_metric=True``
-        default), which resolves the minimal image and its (possibly
-        >2-fold, non-separable) ties with the true 3D cell metric. See
-        ``report/interpolation/scripts/audit_nyquist_ties.py``.
-        """
-        m0 = int(np.floor((float(centre) - int(alias)) / int(mesh)))
-        candidates = np.array(
-            [int(alias) + int(mesh) * m for m in range(m0 - 2, m0 + 4)],
-            dtype=np.float64)
-        distance = np.abs(candidates - float(centre))
-        keep = np.abs(distance - np.min(distance)) < tol
-        chosen = candidates[keep]
-        return [(float(r), 1.0 / len(chosen)) for r in chosen]
-
-    @staticmethod
-    def _metric_alias_images(d, Nc, metric, tol=1e-9, span=2):
+    def _metric_alias_images(d, Nc, metric, tol=1e-10):
         """True 3D minimal-image assignment of every aliasing class.
 
         For atom separation ``d`` (fractional) and coarse mesh ``Nc``,
@@ -537,22 +391,51 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         and select non-axis-aligned images.
         """
         d = np.asarray(d, dtype=np.float64)
-        Nc = np.asarray(Nc, dtype=int)
-        shifts = list(itertools.product(range(-span, span + 1), repeat=3))
+        if d.shape != (3,) or not np.all(np.isfinite(d)):
+            raise ValueError(
+                "atomic displacement must be a finite vector of shape (3,)")
+        Nc = validate_mesh(Nc, "coarse mesh")
+        metric = np.asarray(metric, dtype=np.float64)
+        if (metric.shape != (3, 3)
+                or not np.all(np.isfinite(metric))
+                or not np.allclose(metric, metric.T)):
+            raise ValueError(
+                "cell metric must be a finite symmetric 3x3 matrix")
+        eigenvalues = np.linalg.eigvalsh(metric)
+        if eigenvalues[0] <= 0:
+            raise ValueError(
+                "cell metric must be a positive-definite 3x3 matrix")
+        distance_tol = tol * eigenvalues[-1]
+
         out = {}
         for k in itertools.product(*[range(int(n)) for n in Nc]):
-            best = []
-            best_d2 = np.inf
-            for m in shifts:
-                R = np.array([k[ax] + int(Nc[ax]) * m[ax]
-                              for ax in range(3)], dtype=np.float64)
-                v = R - d
-                d2 = float(v @ metric @ v)
-                if d2 < best_d2 - tol:
-                    best_d2 = d2
-                    best = [tuple(int(x) for x in R)]
-                elif abs(d2 - best_d2) < tol:
-                    best.append(tuple(int(x) for x in R))
+            span = 1
+            while True:
+                best = []
+                best_d2 = np.inf
+                shifts = itertools.product(
+                    range(-span, span + 1), repeat=3)
+                for m in shifts:
+                    R = np.asarray(k) + Nc * np.asarray(m)
+                    v = R - d
+                    d2 = float(v @ metric @ v)
+                    if d2 < best_d2 - distance_tol:
+                        best_d2 = d2
+                        best = [tuple(int(x) for x in R)]
+                    elif abs(d2 - best_d2) <= distance_tol:
+                        best.append(tuple(int(x) for x in R))
+
+                # Any point outside the shift cube has at least one
+                # fractional component this large. The smallest metric
+                # eigenvalue converts that Euclidean bound into a rigorous
+                # lower bound on its Cartesian distance.
+                boundary = (
+                    Nc * (span + 1) - np.abs(np.asarray(k) - d))
+                outside_d2 = eigenvalues[0] * np.min(boundary) ** 2
+                if outside_d2 > best_d2 + distance_tol:
+                    break
+                span *= 2
+
             w = 1.0 / len(best)
             out[k] = [(R, w) for R in best]
         return out
@@ -568,11 +451,8 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         At a commensurate q it is exactly the identity. Between samples it
         selects the aliased Fourier image(s) shortest to d.
 
-        The minimal-image assignment is done with the true 3D cell metric
-        (``tie_metric=True``, default), which is correct on any cell and
-        represents genuine >2-fold / non-separable Nyquist ties. With
-        ``tie_metric=False`` the legacy separable per-axis product is used
-        (exact only for orthorhombic coarse lattices).
+        The minimal-image assignment uses the true 3D cell metric, including
+        genuine non-separable and greater-than-twofold Nyquist ties.
         """
         tau = np.linalg.solve(self.uci_structure.unit_cell.T,
                               self.uci_structure.coords.T).T
@@ -584,36 +464,9 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         coarse_frac = (np.asarray(self._coarse_idx, dtype=np.float64)
                        / self.coarse_mesh[None, :])
 
-        if self.tie_metric:
-            self._build_atom_fourier_kernel_metric(
-                kernel, tau, nat, fine_frac, coarse_frac)
-        else:
-            self._build_atom_fourier_kernel_separable(
-                kernel, tau, nat, fine_frac, coarse_frac)
+        self._build_atom_fourier_kernel_metric(
+            kernel, tau, nat, fine_frac, coarse_frac)
         self._atom_fourier_kernel = kernel
-
-    def _build_atom_fourier_kernel_separable(self, kernel, tau, nat,
-                                             fine_frac, coarse_frac):
-        """Legacy separable per-axis, metric-free kernel (orthorhombic)."""
-        for iq, q in enumerate(fine_frac):
-            for ik, x in enumerate(coarse_frac):
-                dx = q - x
-                for ia in range(nat):
-                    for ib in range(nat):
-                        d = tau[ia] - tau[ib]
-                        value = 1.0 + 0.0j
-                        for axis in range(3):
-                            cardinal = 0.0j
-                            nmesh = int(self.coarse_mesh[axis])
-                            for alias in range(nmesh):
-                                harmonic = 0.0j
-                                for R, weight in self._nearest_alias_images(
-                                        alias, d[axis], nmesh):
-                                    harmonic += weight * np.exp(
-                                        2j * np.pi * dx[axis] * R)
-                                cardinal += harmonic
-                            value *= cardinal / float(nmesh)
-                        kernel[iq, ik, ia, ib] = value
 
     def _build_atom_fourier_kernel_metric(self, kernel, tau, nat,
                                           fine_frac, coarse_frac):
@@ -649,23 +502,24 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
                 kernel[:, :, ia, ib] = norm * (
                     (e_fine * ws[None, :]) @ e_coarse.conj().T)
 
-    def _atom_fourier_cart_kernel(self, iq, ik):
-        """Expand the cached per-atom kernel over Cartesian components."""
-        return np.repeat(np.repeat(
-            self._atom_fourier_kernel[iq, ik], 3, axis=0), 3, axis=1)
-
     # ================================================================
     # Pair maps (fine for psi, coarse for the kernel)
     # ================================================================
     def build_q_pair_map(self, iq_pert):
         """Fine and coarse pair maps for a perturbation at fine index iq_pert.
 
-        The perturbation momentum must lie on the coarse mesh (paper
-        assumption: only the internal loop q' is refined).
+        The perturbation momentum must lie on the coarse mesh; only the
+        internal loop q' is refined.
         """
+        if (not isinstance(iq_pert, (int, np.integer))
+                or not 0 <= int(iq_pert) < self.n_q):
+            raise ValueError(
+                "iq_pert must be an integer in [0, {})".format(self.n_q))
+        iq_pert = int(iq_pert)
         q_pert = self.q_points[iq_pert]
         try:
-            key_c = _mesh_key(q_pert, self.uci_structure, self.coarse_mesh)
+            key_c = mesh_key(
+                q_pert, self.uci_structure, self.coarse_mesh)
         except ValueError:
             raise ValueError(
                 "The perturbation q-point {} must lie on the coarse mesh "
@@ -752,9 +606,9 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
 
         The filter is the coarse-Upsilon part of the interpolated vertex
         (w1 w2 / X * conj(x) conj(x) = 2 conj(Upsilon u) conj(Upsilon u)):
-        the paper prescribes evaluating the Upsilon u legs AT THE CORNERS
-        with the COARSE Upsilon, so the filter is applied to the folded
-        kernel (_fold_alpha_to_coarse) with the coarse f_Y tables. Applying
+        atom-Fourier interpolation evaluates the Upsilon u legs from COARSE
+        samples, so the filter is applied to the folded kernel
+        (_fold_alpha_to_coarse) with the coarse f_Y tables. Applying
         it here with the fine tables (as the parent's
         get_alpha1_beta1_wigner_q does) breaks exact per-configuration
         Hermiticity: the kernel's output dyadics carry f_Y at the corners,
@@ -794,57 +648,35 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
 
         Returns A(cn_q, nb, nb): A[k] is the kernel block whose first leg
         is at coarse k (pairing with Q - k). Enumerates the full fine BZ,
-        so A(Q - k) = A(k)^T holds exactly (corner-mirror property).
+        so A(Q - k) = A(k)^T holds exactly.
         """
         nb = self.n_bands
         nat = nb // 3
 
-        if self.atom_fourier:
-            # Vectorized fold: build every fine Cartesian block, then
-            # contract with the (atom-resolved) cardinal kernel in one
-            # einsum.  A[ik][a,i,b,j] = sum_iq conj(P[iq,ik,a,b])
-            #                                    * blk_cart[iq][a,i,b,j].
-            blk_all = np.empty((self.n_q, nb, nb), dtype=np.complex128)
-            for iq in range(self.n_q):
-                p, is_transpose = self._fine_pair_of[iq]
-                blk = alpha1_fine[p]
-                if is_transpose:
-                    blk = blk.T
-                if2 = int(self.q_pair_map[iq])
-                blk_all[iq] = (self.pols_q[:, :, iq] @ blk
-                               @ self.pols_q[:, :, if2].T)
-            blk_r = blk_all.reshape(self.n_q, nat, 3, nat, 3)
-            A_r = np.einsum('qkab,qaibj->kaibj',
-                            np.conj(self._atom_fourier_kernel), blk_r,
-                            optimize=True)
-            return A_r.reshape(self.cn_q, nb, nb)
-
-        A = np.zeros((self.cn_q, nb, nb), dtype=np.complex128)
+        # Build each fine Cartesian block, then contract all blocks with the
+        # atom-resolved cardinal kernel.  The conjugated kernel is the fold;
+        # reconstruction below uses the exact adjoint.
+        blocks = np.empty((self.n_q, nb, nb), dtype=np.complex128)
         for iq in range(self.n_q):
             p, is_transpose = self._fine_pair_of[iq]
             blk = alpha1_fine[p]
             if is_transpose:
                 blk = blk.T
             if2 = int(self.q_pair_map[iq])
-            blk_cart = self.pols_q[:, :, iq] @ blk @ self.pols_q[:, :, if2].T
-            for ik, w, delta in self._corners[iq]:
-                mapped = blk_cart
-                if self.atomic_phase:
-                    # Leg 1 moves by +delta (fine -> corner), leg 2 (at
-                    # Q - q) by -delta: the transport phases pc* pf per
-                    # leg depend only on the local displacement.
-                    left = self._atomic_delta_phase(delta)
-                    right = left.conj()
-                    mapped = left[:, None] * blk_cart * right[None, :]
-                A[ik] += w * mapped
-        return A
+            blocks[iq] = (
+                self.pols_q[:, :, iq] @ blk @ self.pols_q[:, :, if2].T)
+        blocks = blocks.reshape(self.n_q, nat, 3, nat, 3)
+        folded = np.einsum(
+            'qkab,qaibj->kaibj',
+            np.conj(self._atom_fourier_kernel), blocks, optimize=True)
+        return folded.reshape(self.cn_q, nb, nb)
 
     def _fold_alpha_to_coarse(self, alpha1_fine):
         """Folded alpha blocks in the coarse mode basis, ordered as
         c_unique_pairs (the Julia kernel input).
 
         The coarse f_Y filter is applied on both legs AFTER the fold: this is
-        the coarse Upsilon on the interpolated Upsilon-u legs of the paper.
+        the coarse Upsilon on the interpolated Upsilon-u legs.
         In the commensurate limit f_Y(k1) f_Y(k2) * bare = (w1 w2 / X) *
         dressed, i.e. exactly the parent's alpha1.
         """
@@ -861,53 +693,34 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         return out
 
     def _interp_d2v_to_fine(self, d2v_coarse):
-        """Adjoint interpolation of coarse d2v to the fine mode basis.
-
-        The atomic-gauge option applies the exact paired return
-        transformation corresponding to _fold_alpha_cart.
-        """
+        """Adjoint interpolation of coarse d2v to the fine mode basis."""
         nb = self.n_bands
         nat = nb // 3
-        D = np.zeros((self.cn_q, nb, nb), dtype=np.complex128)
+        coarse = np.zeros((self.cn_q, nb, nb), dtype=np.complex128)
         for p, (ik1, ik2) in enumerate(self.c_unique_pairs):
             E1 = self.cpols_q[:, :, ik1]
             E2 = self.cpols_q[:, :, ik2]
-            Dc = E1 @ d2v_coarse[p] @ E2.T
-            D[ik1] = Dc
+            block = E1 @ d2v_coarse[p] @ E2.T
+            coarse[ik1] = block
             if ik1 != ik2:
                 # Reverse orientation: the kernel's dyadic weights are
                 # pair-symmetric, so the reversed block is the transpose.
-                D[ik2] = Dc.T
-        if self.atom_fourier:
-            # Vectorized unfold: B[p][a,i,b,j] = sum_ik P[iq1(p),ik,a,b]
-            #                                          * D[ik][a,i,b,j].
-            iq1_list = np.array([iq1 for iq1, _ in self.unique_pairs])
-            D_r = D.reshape(self.cn_q, nat, 3, nat, 3)
-            B_r = np.einsum('pkab,kaibj->paibj',
-                            self._atom_fourier_kernel[iq1_list], D_r,
-                            optimize=True)
-            B_all = B_r.reshape(len(self.unique_pairs), nb, nb)
-            fine = []
-            for p, (iq1, iq2) in enumerate(self.unique_pairs):
-                E1 = self.pols_q[:, :, iq1]
-                E2 = self.pols_q[:, :, iq2]
-                fine.append(E1.conj().T @ B_all[p] @ E2.conj())
-            return fine
+                coarse[ik2] = block.T
+
+        iq1 = np.array([pair[0] for pair in self.unique_pairs])
+        coarse = coarse.reshape(self.cn_q, nat, 3, nat, 3)
+        reconstructed = np.einsum(
+            'pkab,kaibj->paibj',
+            self._atom_fourier_kernel[iq1], coarse, optimize=True)
+        reconstructed = reconstructed.reshape(
+            len(self.unique_pairs), nb, nb)
 
         fine = []
-        for iq1, iq2 in self.unique_pairs:
-            B = np.zeros((nb, nb), dtype=np.complex128)
-            for ik, w, delta in self._corners[iq1]:
-                mapped = D[ik]
-                if self.atomic_phase:
-                    # Adjoint of the fold transport: conjugate phases.
-                    left = self._atomic_delta_phase(delta).conj()
-                    right = left.conj()
-                    mapped = left[:, None] * D[ik] * right[None, :]
-                B += w * mapped
+        for p, (iq1, iq2) in enumerate(self.unique_pairs):
             E1 = self.pols_q[:, :, iq1]
             E2 = self.pols_q[:, :, iq2]
-            fine.append(E1.conj().T @ B @ E2.conj())
+            fine.append(
+                E1.conj().T @ reconstructed[p] @ E2.conj())
         return fine
 
     # ================================================================
@@ -970,14 +783,14 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         n_processors = Parallel.GetNProc()
 
         count = n_total // n_processors
-        remainer = n_total % n_processors
+        remainder = n_total % n_processors
         indices = []
         for rank in range(n_processors):
-            if rank < remainer:
+            if rank < remainder:
                 start = np.int64(rank * (count + 1))
                 stop = np.int64(start + count + 1)
             else:
-                start = np.int64(rank * count + remainer)
+                start = np.int64(rank * count + remainder)
                 stop = np.int64(start + count)
             indices.append([start + 1, stop])  # 1-indexed for Julia
 
@@ -1027,8 +840,8 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         if not QL.__MPI4PY__:
             raise RuntimeError(
                 "Distributed mode requires MPI (mpi4py). Use "
-                "load_distributed_trilinear_tdscha under mpirun, or build the "
-                "Lanczos from an ensemble for a replicated run.")
+                "load_distributed_atom_fourier_tdscha under mpirun, or "
+                "build the Lanczos from an ensemble for a replicated run.")
 
         comm = QL.mpi4py.MPI.COMM_WORLD
 
@@ -1074,16 +887,16 @@ class QSpaceTrilinearLanczos(QL.QSpaceLanczos):
         return f_pert, d2v_blocks
 
 
-def load_distributed_trilinear_tdscha(data_dir, population_id, dyn, T,
-                                      fine_mesh=None, use_symmetries=True,
-                                      n_configs=None, final_dyn=None,
-                                      final_T=None, **kwargs):
-    """Distributed-ensemble loader for the *interpolated* q-space Lanczos.
+def load_distributed_atom_fourier_tdscha(
+        data_dir, population_id, dyn, T, fine_mesh,
+        use_symmetries=True, n_configs=None, final_dyn=None,
+        final_T=None, **kwargs):
+    """Build an atom-Fourier Lanczos with a distributed ensemble.
 
     Same contract as ``QSpaceLanczos.load_distributed_tdscha`` -- the ensemble
     is read on the master and the configurations are scattered, so each rank
     holds only N/n_procs of them instead of a full replica -- but the object
-    returned is a :class:`QSpaceTrilinearLanczos`.
+    returned is a :class:`QSpaceAtomFourierLanczos`.
 
     The interpolation is built redundantly on every rank
     (``build_on_all_ranks=True``) and only then are the configurations split.
@@ -1099,8 +912,7 @@ def load_distributed_trilinear_tdscha(data_dir, population_id, dyn, T,
     fine_mesh : tuple(3) of int
         The interpolation mesh, e.g. ``(12, 12, 12)``.
     **kwargs
-        Forwarded to :class:`QSpaceTrilinearLanczos` (``atom_fourier``,
-        ``ignore_effective_charges``, ``allow_unstable``, ...).
+        Forwarded to :class:`QSpaceAtomFourierLanczos`.
 
     Usage
     -----
@@ -1110,5 +922,5 @@ def load_distributed_trilinear_tdscha(data_dir, population_id, dyn, T,
         data_dir, population_id, dyn, T,
         lo_to_split=None, use_symmetries=use_symmetries,
         n_configs=n_configs, final_dyn=final_dyn, final_T=final_T,
-        lanczos_class=QSpaceTrilinearLanczos, build_on_all_ranks=True,
+        lanczos_class=QSpaceAtomFourierLanczos, build_on_all_ranks=True,
         fine_mesh=fine_mesh, **kwargs)

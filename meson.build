@@ -135,8 +135,7 @@ py.install_sources(
       'Modules/QSpaceKPM.py',
       'Modules/QSpaceHessian.py',
       'Modules/QSpaceInterpolation.py',
-      'Modules/QSpaceFactorKernel.py',
-      'Modules/QSpaceTrilinear.py',
+      'Modules/QSpaceAtomFourier.py',
       'Modules/Dynamical.py',
       'Modules/JuliaExt.py',
       'Modules/Parallel.py',
@@ -145,7 +144,6 @@ py.install_sources(
       'Modules/tdscha_core.jl',
       'Modules/tdscha_qspace.jl',
       'Modules/juliapkg.json',
-      'Modules/SpectralFunctions.py',
       'Modules/Tools.py',
       'Modules/cli.py'
     ],

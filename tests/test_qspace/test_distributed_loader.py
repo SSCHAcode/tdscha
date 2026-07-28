@@ -3,13 +3,13 @@
 ``load_distributed_tdscha`` scatters the configurations across MPI ranks so no
 rank holds a full replica.  This checks the property that makes it usable: a
 distributed run reproduces the replicated one, for the plain q-space Lanczos
-*and* for the interpolated (trilinear) one.
+*and* for the atom-Fourier interpolated one.
 
-The interpolated case needs its own strategy.  ``QSpaceTrilinearLanczos``
+The interpolated case needs its own strategy. ``QSpaceAtomFourierLanczos``
 performs MPI collectives inside its constructor
 (``interpolate_dyn_fine`` -> ``ForceTensor.Apply_ASR`` -> ``broadcast``), so the
 master-builds-then-scatters path deadlocks: the master blocks in the ASR
-broadcast while the workers block in the metadata broadcast.  The trilinear
+broadcast while the workers block in the metadata broadcast. The interpolated
 loader therefore builds on every rank and slices afterwards
 (``build_on_all_ranks=True``).  A regression here shows up as a hang, so these
 tests carry a timeout and treat expiry as failure.

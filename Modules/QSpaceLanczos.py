@@ -149,8 +149,8 @@ class QSpaceLanczos(DL.Lanczos):
 
     # Attributes that ``load_distributed_tdscha`` must carry from the master
     # to the worker ranks on top of the common q-space state.  Subclasses that
-    # add their own structure (see QSpaceTrilinearLanczos) list it here so the
-    # distributed loader stays a single code path: the master builds these
+    # add their own structure (see QSpaceAtomFourierLanczos) list it here so
+    # the distributed loader stays a single code path: the master builds these
     # once and broadcasts them, rather than every rank rebuilding them and
     # risking a degenerate-subspace gauge mismatch between ranks.
     _DISTRIBUTED_EXTRA_ATTRS = ()
@@ -1787,8 +1787,8 @@ def _load_distributed_build_everywhere(cls, data_dir, population_id, dyn, T,
 
     The alternative strategy to the master-builds-and-scatters path, and the
     only one that works when the constructor itself performs MPI collectives.
-    ``QSpaceTrilinearLanczos`` is such a case: it calls ``interpolate_dyn_fine``
-    -> ``ForceTensor.Apply_ASR`` -> ``CC.Settings.broadcast``.  If only the
+    ``QSpaceAtomFourierLanczos`` is such a case: harmonic interpolation calls
+    ``ForceTensor.Apply_ASR`` and then ``CC.Settings.broadcast``. If only the
     master ran that, it would block inside the ASR broadcast while every other
     rank sat in the metadata ``bcast`` -- two different collectives, i.e. a
     deadlock (confirmed by stack dump before this path existed).
@@ -1881,14 +1881,13 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         Use this if the final temperature differs from the ensemble temperature.
     lanczos_class : type, optional
         The QSpaceLanczos subclass to build. Defaults to QSpaceLanczos. Pass
-        ``QSpaceTrilinearLanczos`` (or use the
-        ``QSpaceTrilinear.load_distributed_trilinear_tdscha`` wrapper) to
+        ``QSpaceAtomFourierLanczos`` (or use
+        ``QSpaceAtomFourier.load_distributed_atom_fourier_tdscha``) to
         distribute an *interpolated* calculation; the subclass declares the
         extra state to broadcast through ``_DISTRIBUTED_EXTRA_ATTRS``.
     **kwargs
-        Additional arguments passed to the Lanczos class (e.g. ``fine_mesh``,
-        ``atom_fourier`` and ``ignore_effective_charges`` for the trilinear
-        interpolation).
+        Additional arguments passed to the Lanczos class (e.g. ``fine_mesh``
+        and ``ignore_effective_charges`` for interpolation).
 
     Returns
     -------

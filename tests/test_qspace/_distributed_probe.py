@@ -20,7 +20,7 @@ import sscha
 import sscha.Ensemble
 
 import tdscha.QSpaceLanczos as QL
-import tdscha.QSpaceTrilinear as QT
+import tdscha.QSpaceAtomFourier as AF
 import cellconstructor.Settings as Parallel
 
 T = 250.0
@@ -45,12 +45,11 @@ def build(mode, data_dir):
     elif mode == "serial-tri":
         ens = sscha.Ensemble.Ensemble(dyn, T)
         ens.load_bin(data_dir, POP)
-        lanc = QT.QSpaceTrilinearLanczos(ens, fine_mesh=FINE,
-                                         atom_fourier=True)
+        lanc = AF.QSpaceAtomFourierLanczos(ens, fine_mesh=FINE)
         lanc.init(use_symmetries=True)
     elif mode == "dist-tri":
-        lanc = QT.load_distributed_trilinear_tdscha(
-            data_dir, POP, dyn, T, fine_mesh=FINE, atom_fourier=True,
+        lanc = AF.load_distributed_atom_fourier_tdscha(
+            data_dir, POP, dyn, T, fine_mesh=FINE,
             use_symmetries=True)
     else:
         raise ValueError("unknown mode %s" % mode)

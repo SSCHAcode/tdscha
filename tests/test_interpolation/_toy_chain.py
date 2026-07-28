@@ -133,16 +133,12 @@ def make_ensemble(dyn, T, N, seed=0, g3=0.6, g4=0.0, g3b=0.0):
 
     With g4=0 (default) the model is purely cubic: <d^2 V_anh> = D3 <u> = 0,
     so the SSCHA stationarity assumed by the vertex rescaling holds exactly
-    in expectation (Interpolation_plan.md section 6.3).
+    in expectation.
 
     g3b adds a THREE-BODY cubic term per cell and Cartesian component,
         V_3b = g3b * s1^2 * s2,
         s1 = uA(n+1) - uA(n),  s2 = uA(n+2) - uA(n+1),
-    whose Phi3 entries span three distinct cells. This matters for ASR
-    tests: a pairwise potential only populates tensor entries whose legs
-    sit on two sites, and (at L=3) the minimal-image kernel's acoustic-
-    sum-rule violation happens to carry zero weight on exactly those
-    entries -- pairwise toys cannot expose the windowed-ASR leak at all.
+    whose Phi3 entries span three distinct cells.
     """
     np.random.seed(seed)
     ens = sscha.Ensemble.Ensemble(dyn, T)

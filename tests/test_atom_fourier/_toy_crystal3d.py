@@ -1,4 +1,4 @@
-"""Minimal non-orthogonal 3D crystal for the Nyquist-tie tests.
+"""Minimal non-orthogonal 3D crystal for atom-Fourier tests.
 
 The atom-centred Fourier kernel is built from geometry alone (atom
 positions + cell metric) at construction time, so these tests only need a

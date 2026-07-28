@@ -40,7 +40,7 @@ def test_guard_accepts_numpy_2_and_above(monkeypatch, version):
 def test_run_FT_calls_the_guard(monkeypatch):
     """The guard must fire from run_FT itself, before any linear algebra.
 
-    QSpaceTrilinearLanczos inherits run_FT, so guarding it here covers the
+    QSpaceAtomFourierLanczos inherits run_FT, so guarding it here covers the
     interpolated path too.
     """
     monkeypatch.setattr(QS.np, "__version__", "1.26.4")

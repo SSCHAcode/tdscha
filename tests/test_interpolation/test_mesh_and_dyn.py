@@ -46,11 +46,11 @@ def test_mesh_generation_and_lookup():
 
     # every q must find itself through the hash
     for iq, q in enumerate(q_points):
-        assert lookup[QI._mesh_key(q, unit, mesh)] == iq
+        assert lookup[QI.mesh_key(q, unit, mesh)] == iq
 
     # closure under q -> -q, verified against the O(n^2) distance search
     for iq, q in enumerate(q_points):
-        jq = lookup[QI._mesh_key(-q, unit, mesh)]
+        jq = lookup[QI.mesh_key(-q, unit, mesh)]
         d = CC.Methods.get_min_dist_into_cell(bg, -q, q_points[jq])
         assert d < 1e-8
 
@@ -89,7 +89,7 @@ def test_dyn_interpolation_exact_for_range1_model():
     # reference frequencies from the direct 1x1x6 dyn
     lookup = QI.build_q_index_lookup(q_fine, dyn2.structure, (1, 1, 6))
     for jq, q in enumerate(dyn4.q_tot):
-        iq = lookup[QI._mesh_key(np.asarray(q), dyn2.structure, (1, 1, 6))]
+        iq = lookup[QI.mesh_key(np.asarray(q), dyn2.structure, (1, 1, 6))]
         w_ref, _ = dyn4.DyagDinQ(jq)
         assert np.max(np.abs(np.sort(w_ref) - np.sort(w_int[:, iq]))) < 1e-9, \
             "interpolated dispersion wrong at q={}".format(q)
@@ -125,7 +125,7 @@ def test_dyn_interpolation_tri_gauge_and_asr():
 
     # TRI gauge: e(-q) = conj(e(q)), w(-q) = w(q)
     for iq, q in enumerate(q_fine):
-        jq = lookup[QI._mesh_key(-q, dyn.structure, mesh)]
+        jq = lookup[QI.mesh_key(-q, dyn.structure, mesh)]
         assert np.allclose(w_int[:, iq], w_int[:, jq], atol=1e-12)
         assert np.allclose(pols_int[:, :, jq], np.conj(pols_int[:, :, iq]),
                            atol=1e-10)
@@ -138,27 +138,3 @@ def test_dyn_interpolation_tri_gauge_and_asr():
 
     # acoustic branch grows away from Gamma (stability)
     assert np.all(w_int[:, 1:] > -1e-8), "no imaginary frequencies off Gamma"
-
-
-def test_asr_zero_mode_projection():
-    """Rigid shifts of displacements and constant force offsets must be
-    exactly projected out of the fine-mesh fields (plain window):
-    the estimator fields are invariant under u -> u + const and
-    f -> f + const/atom (acoustic sum rule at the field level)."""
-    dyn = TC.build_dyn(3)
-    ens = TC.make_ensemble(dyn, 250.0, 30, seed=5, g3=0.1)
-
-    li_ref = QI.QSpaceLanczosInterp(ens, fine_mesh=(1, 1, 6), prefilter=False)
-    X_ref, Y_ref = li_ref.X_q.copy(), li_ref.Y_q.copy()
-
-    # rigid displacement shift + constant per-atom force offset
-    ens.u_disps = ens.u_disps + np.tile([0.13, -0.07, 0.21],
-                                        ens.u_disps.shape[1] // 3)[None, :]
-    ens.forces = ens.forces + np.array([0.011, -0.023, 0.005])[None, None, :]
-
-    li_shift = QI.QSpaceLanczosInterp(ens, fine_mesh=(1, 1, 6), prefilter=False)
-
-    assert np.max(np.abs(li_shift.X_q - X_ref)) < 1e-10, \
-        "rigid displacement leaked into the fields"
-    assert np.max(np.abs(li_shift.Y_q - Y_ref)) < 1e-10, \
-        "constant force offset leaked into the fields"

@@ -10,7 +10,7 @@ These tests pin that behaviour to be **bit-exact**: a chain of shorter runs
 with a save/load in between must reproduce, coefficient for coefficient, the
 single-shot run of the same total length.  They cover the exact production
 configuration (``reorthogonalize=False``, the default) for both the plain
-``QSpaceLanczos`` and the interpolating ``QSpaceTrilinearLanczos``.
+``QSpaceLanczos`` and the interpolating ``QSpaceAtomFourierLanczos``.
 """
 from __future__ import print_function
 
@@ -31,7 +31,7 @@ import sscha.Ensemble
 
 try:
     import tdscha.QSpaceLanczos as QL
-    import tdscha.QSpaceTrilinear as QT
+    import tdscha.QSpaceAtomFourier as AF
     _HAS_Q = QL.__JULIA_EXT__
 except Exception:
     _HAS_Q = False
@@ -75,7 +75,7 @@ def _make_tri():
     import _toy_chain as TC
     dync = TC.build_dyn(3)
     ensc = TC.make_ensemble(dync, 300.0, 3000, seed=11, g3=0.1)
-    li = QT.QSpaceTrilinearLanczos(ensc, fine_mesh=(1, 1, 6), atom_fourier=True)
+    li = AF.QSpaceAtomFourierLanczos(ensc, fine_mesh=(1, 1, 6))
     li.init(use_symmetries=True)
     li.prepare_mode_q(0, 5)
     return li
@@ -99,7 +99,7 @@ def test_disk_restart_is_bit_exact(maker, total, tmp_path):
     """save_status -> fresh object + init + load_status -> continue == single shot.
 
     This is the production resume path: the object is rebuilt from scratch
-    (kernel included, for the trilinear class) and only the Krylov state is
+    (kernel included, for the atom-Fourier class) and only the Krylov state is
     reloaded from disk.
     """
     ref = maker()

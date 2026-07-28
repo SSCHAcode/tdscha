@@ -271,6 +271,48 @@ gf = qlanc.get_green_function_continued_fraction(w, smearing=smearing)
 spectral = -np.imag(gf)
 ```
 
+### Atom-Fourier interpolation
+
+Use `QSpaceAtomFourierLanczos` when the ensemble supercell provides a coarse
+q mesh but the internal two-phonon integration needs a finer mesh. The same
+atom-centred Fourier map interpolates both d3 and d4; there is no interpolation
+strategy flag to select.
+
+```python
+import tdscha.QSpaceAtomFourier as AF
+
+qlanc = AF.QSpaceAtomFourierLanczos(
+    ens,
+    fine_mesh=(8, 8, 8),  # integer multiple of dyn.GetSupercell()
+)
+qlanc.init(use_symmetries=True)
+
+# External perturbations must remain on the coarse ensemble mesh.
+iq = qlanc.find_fine_q(dyn.q_tot[0])
+qlanc.prepare_mode_q(iq, band_index=3)
+qlanc.run_FT(100)
+```
+
+The interpolation uses the full cell metric, so odd/even, anisotropic, and
+non-orthogonal meshes follow the same API. It preserves commensurate values,
+minimum-image Nyquist ties, d3/d4 permutation symmetry, and the adjoint
+relation between folding and reconstruction.
+
+By default, Born effective charges and the dielectric tensor participate in
+the harmonic dynamical-matrix interpolation. Set
+`ignore_effective_charges=True` only when the ensemble forces came from a
+strictly short-range potential and those values are inherited metadata. The
+input dynamical matrix is never modified.
+
+For a configuration-distributed MPI calculation:
+
+```python
+lanczos = AF.load_distributed_atom_fourier_tdscha(
+    "ensemble_dir", population_id=1, dyn=dyn, T=300,
+    fine_mesh=(8, 8, 8),
+)
+```
+
 ### Choosing the Perturbation
 
 #### Single mode at a q-point

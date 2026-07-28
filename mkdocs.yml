@@ -51,6 +51,7 @@ nav:
   - API Reference:
     - DynamicalLanczos: api/dynamical_lanczos.md
     - QSpaceLanczos: api/qspace_lanczos.md
+    - QSpaceAtomFourier: api/qspace_atom_fourier.md
     - QSpaceHessian: api/qspace_hessian.md
     - StaticHessian: api/static_hessian.md
 
