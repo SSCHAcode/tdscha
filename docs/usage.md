@@ -71,6 +71,11 @@ for i in range(7):
     lanczos.save_status(f"raman_unpolarized_{i}.npz")
 ```
 
+!!! warning "Raman data produced before the 1.7 hotfix"
+
+    Saved `prepare_raman(unpolarized=i)` calculations for channels 0–3 used
+    incomplete diagonal combinations and must be recomputed. Channels 4–6
+    were unaffected and can be reused.
 
 Then you can plot the unpolarized Raman spectrum by summing the contributions of the 7 components. This is done in the following way:
 
@@ -86,8 +91,9 @@ w_ry = w/CC.Units.RY_TO_CM # Convert in Ry (the internal unit of tdscha)
 smearing = 2/CC.Units.RY_TO_CM  # Smearing in cm⁻¹
 
 raman_signal = np.zeros_like(w)
+weights = [45, 7, 7, 7, 7, 7, 7]
 
-# Load the 7 unpolarized Raman components and sum them.
+# Load and combine the seven normalized invariant components.
 for i in range(7):
     lanczos = DL.Lanczos()
     lanczos.load_status(f"raman_unpolarized_{i}.npz")
@@ -97,7 +103,7 @@ for i in range(7):
 
     # The response is proportional to the imaginary part of the Green's function. 
     # The '-' sign selects the retarded response, which is the one relevant for Raman scattering.
-    raman_signal += -np.imag(gf)
+    raman_signal += weights[i] * -np.imag(gf)
 
 
 # Then, we can just plot the data
@@ -106,6 +112,14 @@ plt.xlabel("Frequency (cm-1)")
 plt.ylabel("Unpolarized Raman Intensity (arb. units)")
 plt.show()
 ```
+
+`prepare_raman(unpolarized=i)` prepares normalized invariants and therefore
+uses weights `[45, 7, 7, 7, 7, 7, 7]`. The legacy
+`prepare_unpolarized_raman(index=i)` method prepares the corresponding raw
+Cartesian combinations. When using that API, multiply each spectrum by
+`lanczos.get_prefactors_unpolarized_raman(i)`, currently
+`[5, 7/2, 7/2, 7/2, 21, 21, 21]`. The two conventions give the same total
+unpolarized intensity.
 
 ## Parallel Execution Modes
 
