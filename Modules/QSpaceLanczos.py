@@ -1372,87 +1372,20 @@ Starting from step %d
 
                 The total unpolarized raman intensity is 45 alpha^2 + 7 beta^2
         """
-        # Check if the raman tensor is present
-        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize Raman response"
+        if mixed:
+            print('Prepare Raman')
+            print('Adding other component of the Raman tensor')
 
+        raman_v = self._build_raman_vector(
+            pol_vec_in=pol_vec_in, pol_vec_out=pol_vec_out, mixed=mixed,
+            pol_in_2=pol_in_2, pol_out_2=pol_out_2,
+            unpolarized=unpolarized, normalized=True)
+
+        # A constant real-space perturbation is a Gamma vector whose
+        # unit-cell amplitude is multiplied by sqrt(number of cells).
         n_cell = np.prod(self.dyn.GetSupercell())
-        
-        if unpolarized is None:
-            # Get the raman vector (apply the ASR and contract the raman tensor with the polarization vectors)
-            raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
-            
-            if mixed:
-                print('Prepare Raman')
-                print('Adding other component of the Raman tensor')
-                raman_v += self.dyn.GetRamanVector(pol_in_2, pol_out_2)
-            
-            # Scale for Γ-point constant perturbation
-            new_raman_v = raman_v.ravel() * np.sqrt(n_cell)
-            
-            # Convert in the polarization basis
-            self.prepare_perturbation_q(0, new_raman_v)
-        else:
-            px = np.array([1, 0, 0])
-            py = np.array([0, 1, 0])
-            pz = np.array([0, 0, 1])
-            
-            if unpolarized == 0:
-                # Alpha = (xx + yy + zz)^2/9
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / 3
-                self.prepare_perturbation_q(0, new_raman_v)
-                
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / 3
-                self.prepare_perturbation_q(0, new_raman_v, add=True)
-                
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / 3
-                self.prepare_perturbation_q(0, new_raman_v, add=True)
-            elif unpolarized == 1:
-                # (xx - yy)^2 / 2
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v)
-                
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = -raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v, add=True)
-            elif unpolarized == 2:
-                # (xx - zz)^2 / 2
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v)
-                
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = -raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v, add=True)
-            elif unpolarized == 3:
-                # (yy - zz)^2 / 2
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v)
-                
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = -raman_v.ravel() * np.sqrt(n_cell) / np.sqrt(2)
-                self.prepare_perturbation_q(0, new_raman_v, add=True)
-            elif unpolarized == 4:
-                # 3 xy^2
-                raman_v = self.dyn.GetRamanVector(px, py)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) * np.sqrt(3)
-                self.prepare_perturbation_q(0, new_raman_v)
-            elif unpolarized == 5:
-                # 3 yz^2
-                raman_v = self.dyn.GetRamanVector(py, pz)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) * np.sqrt(3)
-                self.prepare_perturbation_q(0, new_raman_v)
-            elif unpolarized == 6:
-                # 3 xz^2
-                raman_v = self.dyn.GetRamanVector(px, pz)
-                new_raman_v = raman_v.ravel() * np.sqrt(n_cell) * np.sqrt(3)
-                self.prepare_perturbation_q(0, new_raman_v)
-            else:
-                raise ValueError(f"Error, unpolarized must be between [0, ..., 6] got invalid {unpolarized}.")
+        new_raman_v = raman_v.ravel() * np.sqrt(n_cell)
+        self.prepare_perturbation_q(0, new_raman_v)
 
     def prepare_unpolarized_raman(self, index=0, debug=False):
         """
@@ -1472,45 +1405,9 @@ Starting from step %d
         Note: This method prepares the raw components WITHOUT prefactors.
         Use get_prefactors_unpolarized_raman() to get the correct prefactors.
         """
-        # Check if the raman tensor is present
-        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman response"
-        
-        labels = [i for i in range(7)]
-        if index not in labels:
-            raise ValueError(f'{index} should be in {labels}')
-        
-        epols = {'x': np.array([1, 0, 0]),
-                 'y': np.array([0, 1, 0]),
-                 'z': np.array([0, 0, 1])}
-        
+        raman_v = self._build_raman_vector(
+            unpolarized=index, normalized=False)
         n_cell = np.prod(self.dyn.GetSupercell())
-        
-        # (xx + yy + zz)^2
-        if index == 0:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v += self.dyn.GetRamanVector(epols['y'], epols['y'])
-            raman_v += self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (xx - yy)^2    
-        elif index == 1:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v -= self.dyn.GetRamanVector(epols['y'], epols['y'])
-        # (xx - zz)^2       
-        elif index == 2:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (yy - zz)^2   
-        elif index == 3:
-            raman_v = self.dyn.GetRamanVector(epols['y'], epols['y'])
-            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (xy)^2
-        elif index == 4:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['y'])
-        # (xz)^2
-        elif index == 5:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['z'])
-        # (yz)^2
-        elif index == 6:
-            raman_v = self.dyn.GetRamanVector(epols['y'], epols['z'])
             
         if debug:
             np.save(f'raman_v_{index}', raman_v)
@@ -1548,7 +1445,9 @@ Starting from step %d
         v_scaled = vector / np.sqrt(m)
         R1 = np.conj(self.pols_q[:, :, iq]).T @ v_scaled  # (n_bands,) complex
         self.psi[:self.n_bands] += R1
-        self.perturbation_modulus = np.real(np.conj(R1) @ R1)
+        perturbation = self.psi[:self.n_bands]
+        self.perturbation_modulus = np.real(
+            np.conj(perturbation) @ perturbation)
 
     def reset_q(self):
         """Reset the Lanczos state for q-space."""
