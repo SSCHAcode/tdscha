@@ -74,11 +74,18 @@ def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
     by column exactly: k blocks of dimension d cost k*(d-1) extra solves.
     A false positive only costs solves.
 
-    Known limit: the criterion reads the representative column, so it
-    cannot see a reducible block whose basis already happens to be
-    symmetry-adapted -- the off-diagonal leakage is then exactly zero
-    while the two Schur constants still differ. Detecting that needs the
-    other columns, which is precisely what the shortcut avoids solving.
+    Known limits, all inherent to reading only the representative column:
+
+    * a reducible block whose basis already happens to be symmetry
+      adapted is invisible -- the off-diagonal leakage is then exactly
+      zero while the two Schur constants still differ. Detecting it
+      needs the other columns, which is what the shortcut avoids;
+    * the coupling between a singleton mode and a degenerate block that
+      is accidentally degenerate is zeroed without being measured: Schur
+      forbids coupling between different irreps, not between different
+      frequencies;
+    * min(50*tol, 1e-5) is a floor on sensitivity: a coupling weaker
+      than that, relative to the column norm, is not detected.
 
     Parameters
     ----------

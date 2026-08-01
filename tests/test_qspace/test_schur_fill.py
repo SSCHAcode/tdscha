@@ -168,12 +168,13 @@ def test_single_reducible_block_is_detected():
 def test_soft_mode_spectator_does_not_raise_the_threshold():
     """A large-norm spectator block must not hide a later coupling.
 
-    Column norms scale like 1/w^2, so a soft mode can be orders of magnitude
-    larger than the rest. Carrying a running maximum of `scale` across the
-    pair loop makes the threshold monotonically non-decreasing, so a spectator
-    examined BETWEEN two coupled blocks raises it for the pair that follows
-    and masks their coupling. The spectator therefore sits at index 1, with
-    the coupled copies at 0 and 2: that is the order in which the bug bites.
+    A block with a large column norm (a soft mode: the columns of G go as
+    1/w^2) must not raise the detection threshold for the pairs examined
+    after it. Carrying a running maximum of `scale` across the pair loop
+    makes the threshold monotonically non-decreasing, so such a spectator
+    sitting between two coupled blocks masks their coupling entirely. The
+    spectator is therefore at index 1, with the coupled copies at 0 and 2,
+    and its constant is large so that its column norm dominates.
     """
     rng = np.random.default_rng(3)
     n = 6
@@ -183,8 +184,9 @@ def test_soft_mode_spectator_does_not_raise_the_threshold():
     G_true[4:6, 4:6] = 1.2 * np.eye(2)
     G_true[0:2, 4:6] = 3e-4 * np.eye(2)
     G_true[4:6, 0:2] = 3e-4 * np.eye(2)
-    # soft-mode spectator in between: huge column norm, no coupling
-    G_true[2:4, 2:4] = 1e-8 * np.eye(2)
+    # spectator in between, with a column norm ~1e3 times the coupled pair
+    # and no coupling of its own
+    G_true[2:4, 2:4] = 1e3 * np.eye(2)
     blocks = [[0, 1], [2, 3], [4, 5]]
     G_true = _rotate(G_true, rng, blocks)
     G_true = (G_true + G_true.conj().T) / 2
@@ -194,7 +196,7 @@ def test_soft_mode_spectator_does_not_raise_the_threshold():
 
     G = np.zeros_like(G_true)
     full = _adaptive_schur_fill(G, schedule, rep_x, solve, n, 1e-6, True)
-    assert {0, 4} <= full, "coupling masked by the soft-mode spectator"
+    assert full == {0, 4}, "coupling masked by the soft-mode spectator"
     G = (G + G.conj().T) / 2
     assert np.max(np.abs(G - G_true)) < 1e-10
 
@@ -231,5 +233,6 @@ def test_detection_is_order_independent():
         results.append((full, np.max(np.abs(G - G_true))))
 
     assert results[0][0] == results[1][0], "detection depends on block order"
+    assert results[0][0] == {0, 4}, "expected both coupled blocks to be solved"
     for _, err in results:
         assert err < 1e-10
