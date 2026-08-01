@@ -49,6 +49,145 @@ __EPSILON__ = 1e-12
 __RyToK__ = 157887.32400374097
 
 
+def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
+                         use_mode_symmetry, verbose=False, iq=None):
+    """Fill G_q from the solved representative columns, Schur-consistently.
+
+    Schur's lemma (L commutes with the little group of q) fixes the
+    diagonal block of G on a d-dim irrep copy to c*I in ANY orthonormal
+    basis of that copy, but the cross block between two copies of the
+    SAME irrep is c*U_AB with an unknown unitary intertwiner (eigh
+    returns arbitrary bases in each degenerate subspace) -- NOT c*I.
+    The scalar shortcut is therefore valid only where the coupling
+    vanishes (distinct irreps). Couplings between same-dimension blocks
+    are measured on the representative columns with threshold
+    min(50*tol, 1e-5)*scale (the cap keeps the detection meaningful for
+    loose solver tolerances); the coupled groups are solved column by
+    column exactly. A false positive only costs extra solves.
+
+    Parameters
+    ----------
+    G_q : ndarray(nb, nb), complex -- filled in place
+    solve_schedule : list of (band_i, block)
+    rep_x : dict band_i -> solved column (length >= nb)
+    solve_column : callable(band) -> (x, n_iters, elapsed)
+    nb : int -- number of bands (R-sector size)
+    tol : float -- iterative solver relative tolerance
+    use_mode_symmetry : bool
+    verbose, iq : diagnostics only
+
+    Returns
+    -------
+    full_solve : set of representative bands whose blocks were solved
+        column by column (empty when no repeated irrep was detected).
+    """
+    deg_blocks = [b for _, b in solve_schedule if len(b) >= 2]
+    full_solve = set()
+    group_rows = {}
+    if use_mode_symmetry and len(deg_blocks) > 1:
+        parent = {b[0]: b[0] for b in deg_blocks}
+
+        def _find(a):
+            while parent[a] != a:
+                parent[a] = parent[parent[a]]
+                a = parent[a]
+            return a
+
+        for i in range(len(deg_blocks)):
+            for j in range(i + 1, len(deg_blocks)):
+                A, B = deg_blocks[i], deg_blocks[j]
+                if len(A) != len(B):
+                    continue  # different dimension -> different irrep
+                xA, xB = rep_x[A[0]], rep_x[B[0]]
+                scale = max(np.linalg.norm(xA[:nb]),
+                            np.linalg.norm(xB[:nb]), 1e-300)
+                coup = max(np.max(np.abs(xA[np.array(B)])),
+                           np.max(np.abs(xB[np.array(A)])))
+                if coup > min(50.0 * tol, 1e-5) * scale:
+                    ra, rb = _find(A[0]), _find(B[0])
+                    if ra != rb:
+                        parent[rb] = ra
+
+        groups = {}
+        for b in deg_blocks:
+            groups.setdefault(_find(b[0]), []).append(b)
+        for blist in groups.values():
+            if len(blist) > 1:
+                rows = sorted(m for b in blist for m in b)
+                for b in blist:
+                    full_solve.add(b[0])
+                    group_rows[b[0]] = rows
+
+    # Extra solves for the blocks with repeated irreps
+    extra_x = {}
+    if full_solve:
+        if verbose:
+            print("    Repeated irreps detected at iq={}: exact solve "
+                  "for all columns of blocks {}".format(
+                      iq, sorted(full_solve)))
+        for band_i, block in solve_schedule:
+            if band_i not in full_solve:
+                continue
+            extra_x[band_i] = rep_x[band_i]
+            for col in block:
+                if col == band_i:
+                    continue
+                extra_x[col], it, dt = solve_column(col)
+                if verbose:
+                    print("    Band {} (block {}): {} iters, "
+                          "{:.2f}s".format(col, block, it, dt))
+
+    # Fill G_q using Schur's lemma for degenerate blocks.
+    for band_i, block in solve_schedule:
+        x = rep_x[band_i]
+        if len(block) == 1:
+            # Non-degenerate: full column from R-sector
+            G_q[:, band_i] = x[:nb]
+            # Zero out entries for modes in degenerate blocks
+            # (different irreps -> zero by Schur's lemma).
+            # This prevents solver noise from breaking degeneracy
+            # after Hermitian symmetrization.
+            for _, other_block in solve_schedule:
+                if len(other_block) >= 2:
+                    for m in other_block:
+                        G_q[m, band_i] = 0.0
+        elif band_i in full_solve:
+            # Repeated irrep: every column of the coupled group was
+            # solved exactly; rows outside the group are zero by Schur.
+            rows = group_rows[band_i]
+            for col in block:
+                xc = extra_x[col]
+                for m in rows:
+                    G_q[m, col] = xc[m]
+        else:
+            d = len(block)
+            # Extract Schur-consistent scalars only (not the full
+            # noisy solver column). This ensures all columns within
+            # the degenerate block are filled identically, preserving
+            # perfect block structure and preventing degeneracy
+            # breaking after symmetrization.
+            c_diag = x[band_i]  # within-block diagonal constant
+
+            # Fill ALL columns in this block (including rep) uniformly
+            for j in range(d):
+                col = block[j]
+                # Within-block diagonal
+                G_q[col, col] = c_diag
+                # Cross-coupling with other same-dimension blocks
+                # (verified uncoupled above, so this is only the
+                # residual solver noise on a Schur-zero entry)
+                for _, other_block in solve_schedule:
+                    if other_block[0] == band_i:
+                        continue
+                    if len(other_block) == d and \
+                       other_block[0] not in full_solve:
+                        G_q[other_block[j], col] = x[other_block[0]]
+                # Entries with different-dimension blocks and singlets
+                # are zero by Schur (different irreps), left as 0.
+
+    return full_solve
+
+
 class QSpaceHessian:
     """Compute the free energy Hessian in q-space via iterative linear solves.
 
@@ -728,8 +867,12 @@ class QSpaceHessian:
 
         When use_mode_symmetry=True and degenerate modes are present,
         exploits Schur's lemma: L_static commutes with the little group
-        of q, so G_q restricted to a d-dimensional irrep block is c*I_d.
-        Only one solve per degenerate block is needed instead of d solves.
+        of q, so G_q restricted to a d-dimensional irrep block is c*I_d,
+        and the cross block between two copies of the SAME irrep is
+        c*U with an unknown unitary intertwiner U. Only one solve per
+        degenerate block is needed for the uncoupled blocks; blocks with
+        a detected non-vanishing mutual coupling (repeated irreps) are
+        solved column by column instead (see _adaptive_schur_fill).
 
         Parameters
         ----------
@@ -747,8 +890,12 @@ class QSpaceHessian:
             can be very large for big supercells. Default is False.
         use_mode_symmetry : bool
             If True, exploit mode degeneracy to reduce the number of GMRES
-            solves. Within each degenerate block, only one solve is performed
-            and G_q is filled using Schur's lemma (G_block = c * I).
+            solves. Within each degenerate block, only one solve is
+            performed and G_q is filled using Schur's lemma (diagonal
+            block c * I). Groups of same-dimension blocks with detected
+            non-zero coupling (repeated irreps, where Schur only fixes
+            the cross block up to a unitary) fall back to exact
+            column-by-column solves automatically.
 
         Returns
         -------
@@ -796,6 +943,18 @@ class QSpaceHessian:
         non_acoustic = [nu for nu in range(nb)
                         if self.qlanc.valid_modes_q[nu, iq]]
 
+        # With w < 0 (unstable modes) the Bose occupations become n < -1 and
+        # Lambda/Y_w produce finite but physically meaningless numbers with
+        # no other diagnostic: refuse loudly instead of returning garbage.
+        if any(w_qp[nu] < 0 for nu in non_acoustic):
+            raise ValueError(
+                "Negative (unstable) frequencies among the non-acoustic "
+                "modes at iq={} (min w = {:.6e} Ry): the free energy "
+                "Hessian Bose factors are meaningless for w < 0. Apply "
+                "ForcePositiveDefinite() to the dynamical matrix or check "
+                "the SSCHA convergence.".format(
+                    iq, min(w_qp[nu] for nu in non_acoustic)))
+
         # Build solve schedule: list of (band_to_solve, block_members)
         if use_mode_symmetry:
             blocks = self._find_degenerate_blocks(iq)
@@ -819,7 +978,9 @@ class QSpaceHessian:
         total_iters = 0
         L_dense = None  # Built lazily if iterative solvers fail
 
-        for band_i, block in solve_schedule:
+        def _solve_column(band_i):
+            """Solve L_static x = e_{band_i}; returns (x, n_iters, elapsed)."""
+            nonlocal L_dense, total_iters
             rhs = np.zeros(psi_size, dtype=np.complex128)
             rhs[band_i] = 1.0
             rhs_tilde = rhs * sqrt_mask
@@ -878,52 +1039,25 @@ class QSpaceHessian:
             total_iters += n_iters[0]
 
             # Un-transform
-            x = x_tilde * inv_sqrt_mask
+            return x_tilde * inv_sqrt_mask, n_iters[0], t2 - t1
 
-            # Fill G_q using Schur's lemma for degenerate blocks.
-            # G commutes with the little group, so between two d-dim
-            # copies of the same irrep, G = c_cross * I_d.
-            if len(block) == 1:
-                # Non-degenerate: full column from R-sector
-                G_q[:, band_i] = x[:nb]
-                # Zero out entries for modes in degenerate blocks
-                # (different irreps → zero by Schur's lemma).
-                # This prevents GMRES noise from breaking degeneracy
-                # after Hermitian symmetrization.
-                for _, other_block in solve_schedule:
-                    if len(other_block) >= 2:
-                        for m in other_block:
-                            G_q[m, band_i] = 0.0
-            else:
-                d = len(block)
-                # Extract Schur-consistent scalars only (not the full
-                # noisy GMRES column). This ensures all columns within
-                # the degenerate block are filled identically, preserving
-                # perfect block structure and preventing degeneracy
-                # breaking after symmetrization.
-                c_diag = x[band_i]  # within-block diagonal constant
-
-                # Fill ALL columns in this block (including rep) uniformly
-                for j in range(d):
-                    col = block[j]
-                    # Within-block diagonal
-                    G_q[col, col] = c_diag
-                    # Cross-coupling with other same-dimension blocks
-                    for _, other_block in solve_schedule:
-                        if other_block[0] == band_i:
-                            continue
-                        if len(other_block) == d:
-                            # Same irrep type: shifted diagonal
-                            G_q[other_block[j], col] = x[other_block[0]]
-                    # Entries with different-dimension blocks and singlets
-                    # are zero by Schur (different irreps), left as 0.
-
+        # Phase 1: solve one representative column per block
+        rep_x = {}
+        for band_i, block in solve_schedule:
+            x, it, dt = _solve_column(band_i)
+            rep_x[band_i] = x
             if self.verbose:
                 block_str = "{}".format(block) if len(block) > 1 else ""
                 print("    Band {}{}: {} iters, {:.2f}s".format(
                     band_i,
                     " (block {})".format(block_str) if block_str else "",
-                    n_iters[0], t2 - t1))
+                    it, dt))
+
+        # Phases 2-4: detect repeated irreps and fill G_q Schur-consistently
+        # (module-level so the fill logic is unit-testable in isolation).
+        _adaptive_schur_fill(
+            G_q, solve_schedule, rep_x, _solve_column, nb, tol,
+            use_mode_symmetry, verbose=self.verbose, iq=iq)
 
         # 7. Symmetrize G_q (should be Hermitian)
         G_q = (G_q + G_q.conj().T) / 2
@@ -1132,7 +1266,7 @@ def load_distributed_hessian(data_dir, population_id, dyn, T, lo_to_split=None,
                             use_symmetries=True, n_configs=None,
                             final_dyn=None, final_T=None,
                             verbose=True, ignore_v3=False, ignore_v4=False,
-                            **kwargs):
+                            fourier_weights=True, **kwargs):
     """Load QSpaceHessian with distributed configurations across MPI ranks.
 
     Loads the ensemble on master rank only, then distributes configuration data
@@ -1165,6 +1299,14 @@ def load_distributed_hessian(data_dir, population_id, dyn, T, lo_to_split=None,
         If True, exclude cubic (D3) anharmonic contributions.
     ignore_v4 : bool
         If True, exclude quartic (D4) anharmonic contributions.
+    fourier_weights : bool
+        If True (default), the ensemble is built in the opt-in light mode
+        (Ensemble(..., qspace_light=True): no (3N,3N) supercell polarization
+        vectors, not even at construction) and the final_dyn weight update
+        uses the memory-clean q-space update_weights_fourier, when the Julia
+        Fourier backend is available; otherwise falls back to a standard
+        ensemble + the real-space update_weights. Set False to force the
+        legacy behavior exactly.
     **kwargs
         Additional arguments passed to QSpaceLanczos.
 
@@ -1198,6 +1340,7 @@ def load_distributed_hessian(data_dir, population_id, dyn, T, lo_to_split=None,
         n_configs=n_configs,
         final_dyn=final_dyn,
         final_T=final_T,
+        fourier_weights=fourier_weights,
         **kwargs
     )
 
