@@ -59,6 +59,34 @@ try:
 except ImportError:
     __SPGLIB__ = False
 
+# Capability probes for the two companion packages. The q-space path needs
+# features that only exist in the patched CellConstructor / python-sscha; the
+# probes let this module degrade with an explicit warning instead of dying on
+# a TypeError or an AttributeError deep inside __init__ when it is installed
+# next to an unpatched release. They are cheap and evaluated once at import.
+import inspect as _inspect
+
+
+def _cc_has_q_only():
+    try:
+        return "q_only" in _inspect.signature(
+            CC.Phonons.Phonons.DiagonalizeSupercell).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _ensemble_supports_light():
+    """True if python-sscha exposes the linear q-space ensemble API."""
+    try:
+        import sscha.Ensemble
+        return "qspace_light" in _inspect.signature(
+            sscha.Ensemble.Ensemble.__init__).parameters
+    except Exception:
+        return False
+
+
+_CC_HAS_Q_ONLY = _cc_has_q_only()
+
 
 # Constants
 __EPSILON__ = 1e-12
@@ -131,6 +159,7 @@ class QSpaceLanczos(DL.Lanczos):
         # -- Add the q-space attributes --
         qspace_attrs = [
             'q_points', 'n_q', 'n_bands', 'w_q', 'pols_q',
+            'mode_iq', 'mode_band',
             'valid_modes_q', 'X_q', 'Y_q',
             'iq_pert', 'q_pair_map', 'unique_pairs',
             '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
@@ -142,12 +171,40 @@ class QSpaceLanczos(DL.Lanczos):
 
         # If ensemble is None, perform a bare initialization like the parent
         if ensemble is None:
+            # Declared above but never assigned on this path: the non-master
+            # ranks of the distributed loader go through here, so reading them
+            # would raise AttributeError instead of returning "not available".
+            self.mode_iq = None
+            self.mode_band = None
             return
 
         # == 1. Get q-space eigenmodes ==
-        ws_sc, pols_sc, w_q, pols_q = self.dyn.DiagonalizeSupercell(
-            return_qmodes=True, lo_to_split=lo_to_split)
+        # q_only=True never allocates the (3N,3N) supercell polarization matrix.
+        # It returns (w_array, mode_iq, mode_band, w_q, pols_q); w_q/pols_q are
+        # bitwise identical to the legacy return_qmodes=True outputs. mode_iq /
+        # mode_band map the sorted supercell mode index k -> (iq, band) and are
+        # kept for Phase F3.
+        # Older CellConstructor releases have no q_only: fall back to
+        # return_qmodes, which computes the same w_q/pols_q but does allocate
+        # the dense (3N,3N). Probing the signature keeps this module usable
+        # against an unpatched CellConstructor instead of raising TypeError.
+        if _CC_HAS_Q_ONLY:
+            w_array, mode_iq, mode_band, w_q, pols_q = self.dyn.DiagonalizeSupercell(
+                q_only=True, lo_to_split=lo_to_split)
+        else:
+            warnings.warn(
+                "This CellConstructor has no DiagonalizeSupercell(q_only=True): "
+                "falling back to return_qmodes=True, which allocates the dense "
+                "(3N,3N) supercell polarization matrix. The q-space path will "
+                "give the same numbers but will not be linear in memory.")
+            w_array, e_pols_sc, w_q, pols_q = self.dyn.DiagonalizeSupercell(
+                return_qmodes=True, lo_to_split=lo_to_split)
+            del e_pols_sc
+            mode_iq = None
+            mode_band = None
 
+        self.mode_iq = mode_iq      # (3N,) intp: supercell mode -> q index
+        self.mode_band = mode_band  # (3N,) intp: supercell mode -> band index
         self.q_points = np.array(self.dyn.q_tot)  # (n_q, 3)
         self.n_q = len(self.q_points)
         self.n_bands = 3 * self.uci_structure.N_atoms  # uniform band count
@@ -193,6 +250,39 @@ class QSpaceLanczos(DL.Lanczos):
         self._N_eff_global = self.N_eff
         self._N_local = self.N
 
+        # -- Pin the real-space array slots to None --
+        #
+        # As of Phase F2 these arrays are NEVER allocated on the q-space path:
+        # `_init_realspace` is overridden below to a no-op, so the base class
+        # skips the supercell diagonalization, `pols` (3*N_sc x n_modes), the
+        # `psi` working vector (n_modes + n_modes*(n_modes+1)/2 ~ (3N)^2), and
+        # X/Y/u_tilde/f_tilde entirely. They keep their empty scalar-block
+        # defaults; we pin them to None so the downstream None-guards behave:
+        #  * self.psi must be None so run_FT / QSpaceKPM.run_KPM raise their
+        #    explicit ValueError until reset_q() sizes psi at the q-space size.
+        #  * load_distributed_tdscha frees X/Y via `if qlanc.X is not None`.
+        # Everything the q-space algorithm needs lives in X_q, Y_q, pols_q, w_q
+        # and rho. None of QSpaceLanczos / QSpaceKPM / QSpaceHessian ever reads
+        # self.pols / X / Y / u_tilde / f_tilde (verified by grep, Phase F2).
+        self.pols = None
+        self.psi = None
+        self.X = None
+        self.Y = None
+        self.u_tilde = None
+        self.f_tilde = None
+
+    def _init_realspace(self, ensemble, unwrap_symmetries, select_modes, lo_to_split):
+        """Override: skip the base-class real-space preprocessing entirely.
+
+        The direct real-space Lanczos allocates the (3N,3N) polarization matrix,
+        the X/Y projections and the O((3N)^2) psi vector here. The q-space path
+        needs none of it -- it does its own single q_only diagonalization and
+        Bloch-transforms the ensemble into X_q/Y_q -- so this is a no-op. This is
+        the seam that keeps any (3N,3N)-order array from ever being allocated on
+        the QSpaceLanczos / QSpaceHessian / QSpaceKPM construction path.
+        """
+        return
+
     def _bloch_transform_ensemble(self):
         """Bloch transform the ensemble displacements and forces into q-space mode basis.
 
@@ -202,14 +292,39 @@ class QSpaceLanczos(DL.Lanczos):
         The forces are the anharmonic residual: f - f_SSCHA - <f - f_SSCHA>,
         matching the preprocessing done in DynamicalLanczos.__init__.
         """
-        # Ensure the ensemble has computed q-space quantities
-        # Check if fourier_gradient is active or force it
-        if self.ensemble.u_disps_qspace is None:
-             # Force fourier gradient initialization in the ensemble
-             if not self.ensemble.fourier_gradient:
-                 print("Ensemble checking: computing Fourier transform of displacements and forces...")
-                 self.ensemble.fourier_gradient = True
-             self.ensemble.init()
+        # Ensure the q-space caches describe the same current dynamical matrix
+        # as the real-space ensemble data. update_weights() refreshes the
+        # real-space SSCHA forces but historically leaves sscha_forces_qspace
+        # stale; update_weights_fourier() does the converse. Refresh from
+        # real-space only after a real-space update, by Fourier transforming
+        # the real-space arrays themselves: unlike Ensemble.init(), this keeps
+        # the displacements referenced to current_dyn's centroids (init()
+        # would reset them to dyn_0's) and does not clobber rho,
+        # sscha_energies or the u_disps_original baseline. On the
+        # Fourier/light path the q-space cache is already authoritative, so
+        # the refresh is skipped and memory stays O(Nq).
+        qspace_cache_current = bool(getattr(
+            self.ensemble, "_last_weight_update_fourier", False))
+        if self.ensemble.u_disps_qspace is None or not qspace_cache_current:
+            refresh = getattr(
+                self.ensemble, "refresh_qspace_caches_from_real_space",
+                getattr(self.ensemble,
+                        "_refresh_qspace_caches_from_real_space", None))
+            if refresh is None:
+                raise AttributeError(
+                    "This ensemble has no refresh_qspace_caches_from_real_space(): "
+                    "the q-space path needs a python-sscha that provides the "
+                    "q-space cache API (qspace_light / update_weights_fourier). "
+                    "Install the matching python-sscha, or build the Lanczos "
+                    "from a real-space ensemble instead.")
+            if not self.ensemble.fourier_gradient:
+                if Parallel.am_i_the_master():
+                    print("Ensemble checking: computing Fourier transform of "
+                          "displacements and forces...")
+                self.ensemble.fourier_gradient = True
+            # The ensemble raises its own coherence marker: this package must
+            # not reach into Ensemble.__dict__ to flip private state.
+            refresh()
 
         # Unit conversion factors
         # Target: Bohr (u) and Ry/Bohr (f)
@@ -219,7 +334,12 @@ class QSpaceLanczos(DL.Lanczos):
             u_conv = CC.Units.A_TO_BOHR
             f_conv = 1.0 / CC.Units.A_TO_BOHR
         elif self.ensemble.units == "hartree":
-            f_conv = 2.0 # Ha -> Ry
+            raise NotImplementedError(
+                "units='hartree' is not supported on the q-space path: the "
+                "Fourier caches (u_disps_qspace, forces_qspace, "
+                "sscha_forces_qspace) are built with Ry/Angstrom conversion "
+                "factors and Ensemble.convert_units does not update them. "
+                "Convert the ensemble back to default units first.")
 
         # Mass scaling factors (sqrt(m) for u, 1/sqrt(m) for f)
         # We use self.dyn.structure corresponding to unit cell
@@ -227,9 +347,12 @@ class QSpaceLanczos(DL.Lanczos):
         sqrt_m = np.sqrt(m_uc)
         sqrt_m_3 = np.repeat(sqrt_m, 3) # (3*nat_uc,)
 
-        # Compute the average anharmonic force (matching parent DynamicalLanczos)
-        # get_average_forces returns rho-weighted <f - f_SSCHA> in unit cell, Ry/Angstrom
-        f_mean_uc = self.ensemble.get_average_forces(get_error=False)  # (nat_uc, 3)
+        # Compute the average from the SAME q-space residual used below.
+        # get_average_forces() reads the real-space SSCHA cache, which can be
+        # stale after update_weights_fourier(); get_fourier_forces() reads
+        # forces_qspace - sscha_forces_qspace and therefore stays coherent.
+        f_mean_uc = self.ensemble.get_fourier_forces(
+            get_error=False).reshape((-1, 3))  # Ry/Angstrom
         # Symmetrize the average force
         qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
         qe_sym.SetupQPoint()
@@ -1511,7 +1634,7 @@ Starting from step %d
         Returns irt such that R @ tau[kappa] + t ≡ tau[irt[kappa]] mod lattice.
         """
         nat = structure.N_atoms
-        irt = np.zeros(nat, dtype=int)
+        irt = np.full(nat, -1, dtype=int)
         for kappa in range(nat):
             tau = structure.coords[kappa]
             mapped = R_cart @ tau + t_cart
@@ -1522,6 +1645,13 @@ Starting from step %d
                 if np.linalg.norm(M @ diff_frac) < tol:
                     irt[kappa] = kp
                     break
+        if np.any(irt < 0) or len(np.unique(irt)) != nat:
+            raise ValueError(
+                "A symmetry operation does not map the atoms onto themselves "
+                "within tol={} A (irt={}): the structure is distorted away "
+                "from the detected symmetry group, or two atoms fall within "
+                "the matching tolerance. Refusing to build a wrong "
+                "symmetrization matrix.".format(tol, irt))
         return irt
 
     def _build_qspace_symmetries(self, rot_frac_all, trans_frac_all,
@@ -1543,13 +1673,11 @@ Starting from step %d
         n_total = self.n_q * self.n_bands
         nb = self.n_bands
 
-        n_syms = len(pg_indices)
-        self.n_syms_qspace = n_syms
-
         # Build all sparse matrices in Python, then pass to Julia
         all_rows = []
         all_cols = []
         all_vals = []
+        n_skipped_syms = 0
 
         for i_sym_idx in pg_indices:
             R_frac = rot_frac_all[i_sym_idx].astype(float)
@@ -1559,6 +1687,19 @@ Starting from step %d
             R_cart = M @ R_frac @ Minv
             t_cart = M @ t_frac
 
+            # Map all q points first: a point-group operation of the unit
+            # cell need not preserve an anisotropic q grid (e.g. C4 on a
+            # 2x2x4 supercell). The preserving operations form a subgroup,
+            # so averaging over them alone is still a valid projector:
+            # skip the others instead of crashing.
+            try:
+                iq_prime_map = [
+                    find_q_index(R_cart @ self.q_points[jq], self.q_points, bg)
+                    for jq in range(self.n_q)]
+            except ValueError:
+                n_skipped_syms += 1
+                continue
+
             # Get atom permutation
             irt = self._get_atom_perm(
                 self.uci_structure, R_cart, t_cart, M, Minv)
@@ -1567,10 +1708,9 @@ Starting from step %d
 
             for iq in range(self.n_q):
                 q = self.q_points[iq]
-                Rq = R_cart @ q
 
-                # Find iq' matching Rq
-                iq_prime = find_q_index(Rq, self.q_points, bg)
+                # iq' matching R q (precomputed above)
+                iq_prime = iq_prime_map[iq]
                 q_prime = self.q_points[iq_prime]
 
                 # Build P_uc with Bloch phase factor
@@ -1599,6 +1739,19 @@ Starting from step %d
             all_rows.append(np.array(rows, dtype=np.int32))
             all_cols.append(np.array(cols, dtype=np.int32))
             all_vals.append(np.array(vals, dtype=np.complex128))
+
+        n_syms = len(all_rows)
+        self.n_syms_qspace = n_syms
+        if n_skipped_syms > 0:
+            warnings.warn(
+                "{} point-group operations do not preserve the q grid and "
+                "were excluded from the q-space symmetrization (subgroup of "
+                "{} operations kept).".format(n_skipped_syms, n_syms))
+        if n_syms == 0:
+            raise ValueError(
+                "No point-group operation preserves the q grid: cannot "
+                "build the q-space symmetrization. Use no_sym=True or fix "
+                "the q grid.")
 
         # Pass to Julia for caching (convert to 1-indexed)
         for i in range(n_syms):
@@ -1643,7 +1796,8 @@ Starting from step %d
 
 def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
                            use_symmetries=True, n_configs=None,
-                           final_dyn=None, final_T=None, **kwargs):
+                           final_dyn=None, final_T=None, fourier_weights=True,
+                           **kwargs):
     """Load QSpaceLanczos with distributed configurations across MPI ranks.
 
     Loads the ensemble on master rank only, then distributes configuration data
@@ -1674,6 +1828,17 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     final_T : float, optional
         Temperature for weight updates. Defaults to T if not specified.
         Use this if the final temperature differs from the ensemble temperature.
+    fourier_weights : bool
+        If True (default), build the ensemble in the opt-in light mode
+        (Ensemble(..., qspace_light=True): the (3N,3N) supercell polarization
+        vectors are never materialized) and route the final_dyn weight update
+        through the memory-clean q-space update_weights_fourier, when the
+        Julia Fourier backend is available; otherwise fall back to a standard
+        ensemble + real-space update_weights. Set False to force the legacy
+        behavior exactly (standard ensemble, real-space update, exact bitwise
+        legacy rho, dense Upsilon transient). Direct (non-loader) usage of the
+        light pipeline: Ensemble(dyn, T, qspace_light=True) +
+        update_weights_fourier + QSpaceHessian/QSpaceLanczos.
     **kwargs
         Additional arguments passed to QSpaceLanczos.
 
@@ -1697,18 +1862,86 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     rank = comm.Get_rank()
     n_procs = Parallel.GetNProc()
 
+    # Decide before touching the disk. Whatever fourier_weights says, the
+    # QSpaceLanczos built at the end of this function needs the q-space cache
+    # API on the ensemble: without it _bloch_transform_ensemble raises, and it
+    # raises *after* load_bin and a real-space update_weights have already
+    # spent minutes and a dense Upsilon transient. Failing here keeps the error
+    # cheap and says what to install. The deprecated private name is accepted
+    # so that a python-sscha checkout predating the public rename still works.
+    if not (hasattr(sscha.Ensemble.Ensemble, "refresh_qspace_caches_from_real_space")
+            or hasattr(sscha.Ensemble.Ensemble, "_refresh_qspace_caches_from_real_space")):
+        raise AttributeError(
+            "This python-sscha does not expose the q-space cache API "
+            "(refresh_qspace_caches_from_real_space): the q-space Lanczos "
+            "cannot be built from any ensemble it produces. Install the "
+            "q-space python-sscha.")
+
     if Parallel.am_i_the_master():
         # ========== MASTER (RANK 0) ==========
-        ensemble = sscha.Ensemble.Ensemble(dyn, T)
+        # fourier_weights=True (default): the ensemble is built in the OPT-IN
+        # light mode (Ensemble(..., qspace_light=True)): the (3N,3N) supercell
+        # polarization vectors are never materialized (not even at
+        # construction) and the final_dyn weight update goes through the
+        # memory-clean q-space update_weights_fourier -- the whole load window
+        # stays free of quadratic transients. The light rho is bitwise
+        # identical to the standard fourier path and differs from the
+        # real-space update only at floating-point noise (~1e-12 relative).
+        # It requires the Julia Fourier backend; if that is unavailable we
+        # warn and fall back to a standard ensemble + the real-space
+        # update_weights (exact bitwise legacy rho, dense (3N,3N) transients).
+        # Pass fourier_weights=False to force the legacy behavior exactly.
+        # Two independent capabilities are needed, and __JULIA_EXT__ alone
+        # covers neither reliably: upstream defines it as "juliacall is
+        # importable", not "the runtime works", and it says nothing about
+        # whether this python-sscha even accepts qspace_light. Probing the
+        # constructor signature is what actually decides, and it is what keeps
+        # this loader working against an unpatched python-sscha instead of
+        # raising AttributeError from the frozen-attribute hook.
+        has_light = _ensemble_supports_light()
+        # qspace_light also needs the CellConstructor side: Ensemble.__setattr__
+        # calls DiagonalizeSupercell(q_only=True) as soon as the flag is set, so
+        # building a light ensemble against an unpatched CellConstructor raises
+        # TypeError right there -- before __init__ of this class, hence before
+        # its q_only fallback can do anything about it.
+        use_fourier = fourier_weights and has_light and _CC_HAS_Q_ONLY and \
+            bool(getattr(sscha.Ensemble, "__JULIA_EXT__", False))
+        if fourier_weights and not use_fourier:
+            if not has_light:
+                warnings.warn(
+                    "fourier_weights=True requested but this python-sscha has "
+                    "no Ensemble(qspace_light=...): falling back to a standard "
+                    "ensemble and the real-space update_weights (dense Upsilon "
+                    "transient). Install the q-space python-sscha for the "
+                    "linear-memory path.")
+            elif not _CC_HAS_Q_ONLY:
+                warnings.warn(
+                    "fourier_weights=True requested but this CellConstructor has "
+                    "no DiagonalizeSupercell(q_only=True), so the light ensemble "
+                    "cannot be built: falling back to a standard ensemble and the "
+                    "real-space update_weights (dense Upsilon transient). Install "
+                    "the q-space CellConstructor for the linear-memory path.")
+            else:
+                warnings.warn(
+                    "fourier_weights=True requested but the Julia Fourier backend "
+                    "is unavailable; falling back to a standard ensemble and the "
+                    "real-space update_weights (dense Upsilon transient).")
+        if use_fourier:
+            ensemble = sscha.Ensemble.Ensemble(dyn, T, qspace_light=True)
+        else:
+            ensemble = sscha.Ensemble.Ensemble(dyn, T)
         if n_configs is not None:
             ensemble.load_bin(data_dir, population_id, n_configs=n_configs)
         else:
             ensemble.load_bin(data_dir, population_id)
 
-        # Update weights if final_dyn is provided
+        # Update weights if final_dyn is provided.
         if final_dyn is not None:
             T_for_update = final_T if final_T is not None else T
-            ensemble.update_weights(final_dyn, T_for_update)
+            if use_fourier:
+                ensemble.update_weights_fourier(final_dyn, T_for_update)
+            else:
+                ensemble.update_weights(final_dyn, T_for_update)
 
         qlanc = QSpaceLanczos(ensemble, lo_to_split=lo_to_split, **kwargs)
         qlanc.init(use_symmetries=use_symmetries)
@@ -1775,7 +2008,13 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         qlanc._N_eff_global = N_eff_global
         qlanc._N_local = N_local
         qlanc.N = N_local
-        qlanc.N_eff = int(np.sum(qlanc.rho))
+        # NOTE: must stay a *float*. Julia normalises its result by
+        # n_syms * sum(rho_local) (float); _call_julia_qspace_distributed
+        # multiplies back by self.N_eff to undo exactly that division.
+        # The cancellation is only exact if N_eff == float(sum(rho_local)),
+        # so truncating to int silently corrupts the result whenever rho is
+        # non-integer (i.e. after ensemble.update_weights).
+        qlanc.N_eff = float(np.sum(qlanc.rho))
 
         # Free unused arrays
         if hasattr(qlanc, 'X') and qlanc.X is not None:
@@ -1830,7 +2069,13 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         qlanc._N_eff_global = metadata['N_eff_global']
         qlanc._N_local = N_local
         qlanc.N = N_local
-        qlanc.N_eff = int(np.sum(qlanc.rho))
+        # NOTE: must stay a *float*. Julia normalises its result by
+        # n_syms * sum(rho_local) (float); _call_julia_qspace_distributed
+        # multiplies back by self.N_eff to undo exactly that division.
+        # The cancellation is only exact if N_eff == float(sum(rho_local)),
+        # so truncating to int silently corrupts the result whenever rho is
+        # non-integer (i.e. after ensemble.update_weights).
+        qlanc.N_eff = float(np.sum(qlanc.rho))
 
         # Build Julia symmetry cache
         qlanc.prepare_symmetrization(no_sym=not use_symmetries)
