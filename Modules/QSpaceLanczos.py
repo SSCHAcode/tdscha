@@ -22,6 +22,7 @@ from __future__ import division
 
 import sys, os
 import time
+import inspect
 import warnings
 import numpy as np
 
@@ -60,16 +61,20 @@ except ImportError:
     __SPGLIB__ = False
 
 # Capability probes for the two companion packages. The q-space path needs
-# features that only exist in the patched CellConstructor / python-sscha; the
-# probes let this module degrade with an explicit warning instead of dying on
-# a TypeError or an AttributeError deep inside __init__ when it is installed
-# next to an unpatched release. They are cheap and evaluated once at import.
-import inspect as _inspect
+# features that only exist in newer CellConstructor / python-sscha releases;
+# the probes let this module degrade with an explicit warning instead of dying
+# on a TypeError or an AttributeError deep inside __init__ when installed next
+# to an older one. They are cheap and evaluated once at import.
+#
+# These will be removed in favour of a version pin in requirements.txt and
+# pyproject.toml once the companion features are released: today no published
+# version of either package exposes them, so a pin cannot be written yet.
+# See CellConstructor PR #126 and python-sscha PR #428.
 
 
 def _cc_has_q_only():
     try:
-        return "q_only" in _inspect.signature(
+        return "q_only" in inspect.signature(
             CC.Phonons.Phonons.DiagonalizeSupercell).parameters
     except (AttributeError, TypeError, ValueError):
         return False
@@ -78,11 +83,20 @@ def _cc_has_q_only():
 def _ensemble_supports_light():
     """True if python-sscha exposes the linear q-space ensemble API."""
     try:
-        import sscha.Ensemble
-        return "qspace_light" in _inspect.signature(
+        return "qspace_light" in inspect.signature(
             sscha.Ensemble.Ensemble.__init__).parameters
     except Exception:
         return False
+
+
+def _ensemble_has_qspace_cache_api(ensemble_cls):
+    """True if the ensemble class can rebuild its q-space caches.
+
+    Accepts the deprecated private name so that a python-sscha predating the
+    public rename still works.
+    """
+    return (hasattr(ensemble_cls, "refresh_qspace_caches_from_real_space")
+            or hasattr(ensemble_cls, "_refresh_qspace_caches_from_real_space"))
 
 
 _CC_HAS_Q_ONLY = _cc_has_q_only()
@@ -1869,8 +1883,7 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     # spent minutes and a dense Upsilon transient. Failing here keeps the error
     # cheap and says what to install. The deprecated private name is accepted
     # so that a python-sscha checkout predating the public rename still works.
-    if not (hasattr(sscha.Ensemble.Ensemble, "refresh_qspace_caches_from_real_space")
-            or hasattr(sscha.Ensemble.Ensemble, "_refresh_qspace_caches_from_real_space")):
+    if not _ensemble_has_qspace_cache_api(sscha.Ensemble.Ensemble):
         raise AttributeError(
             "This python-sscha does not expose the q-space cache API "
             "(refresh_qspace_caches_from_real_space): the q-space Lanczos "

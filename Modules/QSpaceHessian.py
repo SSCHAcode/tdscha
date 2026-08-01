@@ -59,11 +59,26 @@ def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
     SAME irrep is c*U_AB with an unknown unitary intertwiner (eigh
     returns arbitrary bases in each degenerate subspace) -- NOT c*I.
     The scalar shortcut is therefore valid only where the coupling
-    vanishes (distinct irreps). Couplings between same-dimension blocks
-    are measured on the representative columns with threshold
-    min(50*tol, 1e-5)*scale (the cap keeps the detection meaningful for
-    loose solver tolerances); the coupled groups are solved column by
-    column exactly. A false positive only costs extra solves.
+    vanishes (distinct irreps). Two kinds of failure are detected, both
+    measured on columns that are solved anyway, so detection is free:
+
+    * a block that is reducible on its own (a repeated irrep at the same
+      frequency, or an accidental degeneracy between different irreps):
+      the representative column of a clean single copy has zero support
+      on the rest of its own block, so nonzero leakage exposes it;
+    * a coupling between two blocks sharing an irrep.
+
+    Both use the threshold min(50*tol, 1e-5)*scale (the cap keeps the
+    detection meaningful for loose solver tolerances). Every block of a
+    coupled group, and every self-reducible block, is then solved column
+    by column exactly: k blocks of dimension d cost k*(d-1) extra solves.
+    A false positive only costs solves.
+
+    Known limit: the criterion reads the representative column, so it
+    cannot see a reducible block whose basis already happens to be
+    symmetry-adapted -- the off-diagonal leakage is then exactly zero
+    while the two Schur constants still differ. Detecting that needs the
+    other columns, which is precisely what the shortcut avoids solving.
 
     Parameters
     ----------
@@ -84,7 +99,7 @@ def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
     deg_blocks = [b for _, b in solve_schedule if len(b) >= 2]
     full_solve = set()
     group_rows = {}
-    if use_mode_symmetry and len(deg_blocks) > 1:
+    if use_mode_symmetry and deg_blocks:
         parent = {b[0]: b[0] for b in deg_blocks}
 
         def _find(a):
@@ -93,12 +108,42 @@ def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
                 a = parent[a]
             return a
 
+        # Pass 1: blocks that are not a single irrep copy. A degenerate block
+        # can already be reducible on its own -- a repeated irrep at the same
+        # frequency, or an accidental degeneracy between different irreps --
+        # and then c*I is wrong for it with no partner block to reveal it.
+        # Schur forces G on one irrep copy to be c*I in ANY basis, so the
+        # representative column of a clean copy has zero support on the rest
+        # of its own block: nonzero leakage means the block is reducible.
+        # This is measured on columns that are solved anyway, so it is free.
+        for A in deg_blocks:
+            others = np.array([m for m in A if m != A[0]])
+            if not others.size:
+                continue
+            xA = rep_x[A[0]]
+            scale = max(np.linalg.norm(xA[:nb]), 1e-300)
+            if np.max(np.abs(xA[others])) > min(50.0 * tol, 1e-5) * scale:
+                full_solve.add(A[0])
+
+        # Pass 2: couplings between blocks. Kept separate from pass 1 because
+        # the dimension shortcut below reads full_solve, which must already be
+        # complete: deciding both in one loop makes the result depend on the
+        # order the blocks happen to be listed in.
         for i in range(len(deg_blocks)):
             for j in range(i + 1, len(deg_blocks)):
                 A, B = deg_blocks[i], deg_blocks[j]
-                if len(A) != len(B):
-                    continue  # different dimension -> different irrep
+                # "different dimension -> different irrep -> no coupling" only
+                # holds when BOTH blocks are irreducible; a reducible one can
+                # share an irrep with a block of any size, so it is measured.
+                if len(A) != len(B) and \
+                   A[0] not in full_solve and B[0] not in full_solve:
+                    continue
                 xA, xB = rep_x[A[0]], rep_x[B[0]]
+                # Recomputed per pair: carrying a running maximum across the
+                # loop would make the threshold monotonically non-decreasing,
+                # so a single soft-mode block (||x|| ~ 1/w^2, orders of
+                # magnitude larger) would raise it for every later pair and
+                # silently hide their couplings.
                 scale = max(np.linalg.norm(xA[:nb]),
                             np.linalg.norm(xB[:nb]), 1e-300)
                 coup = max(np.max(np.abs(xA[np.array(B)])),
@@ -112,9 +157,11 @@ def _adaptive_schur_fill(G_q, solve_schedule, rep_x, solve_column, nb, tol,
         for b in deg_blocks:
             groups.setdefault(_find(b[0]), []).append(b)
         for blist in groups.values():
-            if len(blist) > 1:
-                rows = sorted(m for b in blist for m in b)
-                for b in blist:
+            rows = sorted(m for b in blist for m in b)
+            for b in blist:
+                # Every block of a coupled group is solved in full; a block
+                # that is reducible on its own is a group of one.
+                if len(blist) > 1 or b[0] in full_solve:
                     full_solve.add(b[0])
                     group_rows[b[0]] = rows
 

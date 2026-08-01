@@ -102,3 +102,134 @@ def test_singletons_and_no_mode_symmetry():
         full = _adaptive_schur_fill(G, schedule, rep_x, solve, 4, 1e-6, ums)
         assert full == set()
         assert np.max(np.abs(G - G_true)) < 1e-12
+
+
+def _block_diag_irrep(consts, dim, mixer=None):
+    """G with `len(consts)` copies of one dim-dimensional irrep.
+
+    Each copy m contributes consts[m] * I_dim on its diagonal block; `mixer`,
+    if given, is the (ncopies, ncopies) hermitian matrix of cross-block
+    constants, so that the block (m, n) is mixer[m, n] * I_dim. This is the
+    exact structure Schur's lemma allows in a symmetry-adapted basis.
+    """
+    n = len(consts) * dim
+    G = np.zeros((n, n), dtype=np.complex128)
+    for m, cm in enumerate(consts):
+        G[m * dim:(m + 1) * dim, m * dim:(m + 1) * dim] = cm * np.eye(dim)
+    if mixer is not None:
+        for m in range(len(consts)):
+            for n_ in range(len(consts)):
+                if m != n_:
+                    G[m * dim:(m + 1) * dim, n_ * dim:(n_ + 1) * dim] = \
+                        mixer[m, n_] * np.eye(dim)
+    return G
+
+
+def _rotate(G, rng, blocks):
+    """Rotate each degenerate block by a random unitary.
+
+    This is what eigh does in practice: inside a degenerate subspace the basis
+    is arbitrary, which is exactly why the cross block is c*U and not c*I.
+    """
+    n = G.shape[0]
+    U = np.eye(n, dtype=np.complex128)
+    for b in blocks:
+        k = len(b)
+        M = rng.normal(size=(k, k)) + 1j * rng.normal(size=(k, k))
+        Q, _ = np.linalg.qr(M)
+        U[np.ix_(b, b)] = Q
+    return U.conj().T @ G @ U
+
+
+def test_single_reducible_block_is_detected():
+    """A lone degenerate block can already be reducible.
+
+    Two copies of the same irrep degenerate at the SAME frequency land in one
+    block, so there is no partner block to reveal the coupling. The scalar
+    shortcut is wrong for it, and the leakage of the representative column
+    onto the rest of its own block is what exposes it.
+    """
+    rng = np.random.default_rng(11)
+    block = list(range(4))
+    G_true = _block_diag_irrep([2.0, 3.5], dim=2,
+                               mixer=np.array([[0.0, 0.9], [0.9, 0.0]]))
+    G_true = _rotate(G_true, rng, [block])
+    solve = _exact_solver(G_true)
+    schedule = [(0, block)]
+    rep_x = {0: solve(0)[0]}
+
+    G = np.zeros_like(G_true)
+    full = _adaptive_schur_fill(G, schedule, rep_x, solve, 4, 1e-6, True)
+    assert full == {0}, "reducible single block not detected"
+    G = (G + G.conj().T) / 2
+    assert np.max(np.abs(G - G_true)) < 1e-10
+
+
+def test_soft_mode_spectator_does_not_raise_the_threshold():
+    """A large-norm spectator block must not hide a later coupling.
+
+    Column norms scale like 1/w^2, so a soft mode can be orders of magnitude
+    larger than the rest. Carrying a running maximum of `scale` across the
+    pair loop makes the threshold monotonically non-decreasing, so a spectator
+    examined BETWEEN two coupled blocks raises it for the pair that follows
+    and masks their coupling. The spectator therefore sits at index 1, with
+    the coupled copies at 0 and 2: that is the order in which the bug bites.
+    """
+    rng = np.random.default_rng(3)
+    n = 6
+    G_true = np.zeros((n, n), dtype=np.complex128)
+    # two copies of a 2-dim irrep, coupled, at indices 0-1 and 4-5
+    G_true[0:2, 0:2] = 1.0 * np.eye(2)
+    G_true[4:6, 4:6] = 1.2 * np.eye(2)
+    G_true[0:2, 4:6] = 3e-4 * np.eye(2)
+    G_true[4:6, 0:2] = 3e-4 * np.eye(2)
+    # soft-mode spectator in between: huge column norm, no coupling
+    G_true[2:4, 2:4] = 1e-8 * np.eye(2)
+    blocks = [[0, 1], [2, 3], [4, 5]]
+    G_true = _rotate(G_true, rng, blocks)
+    G_true = (G_true + G_true.conj().T) / 2
+    solve = _exact_solver(G_true)
+    schedule = [(b[0], b) for b in blocks]
+    rep_x = {b[0]: solve(b[0])[0] for b in blocks}
+
+    G = np.zeros_like(G_true)
+    full = _adaptive_schur_fill(G, schedule, rep_x, solve, n, 1e-6, True)
+    assert {0, 4} <= full, "coupling masked by the soft-mode spectator"
+    G = (G + G.conj().T) / 2
+    assert np.max(np.abs(G - G_true)) < 1e-10
+
+
+def test_detection_is_order_independent():
+    """The result must not depend on the order the blocks are listed in.
+
+    The dimension shortcut reads the set of self-reducible blocks, so that set
+    has to be complete before any pair is examined; deciding both in one pass
+    makes the outcome depend on the iteration order.
+    """
+    rng = np.random.default_rng(5)
+    # a self-reducible 4-dim block coupled to a 2-dim block: the pair has
+    # different dimensions, so it is only examined because one is reducible
+    G_true = np.zeros((6, 6), dtype=np.complex128)
+    G_true[:4, :4] = _block_diag_irrep([2.0, 2.6], dim=2,
+                                       mixer=np.array([[0.0, 0.8],
+                                                       [0.8, 0.0]]))
+    G_true[4:, 4:] = 1.5 * np.eye(2)
+    G_true[:2, 4:] = 0.4 * np.eye(2)
+    G_true[4:, :2] = 0.4 * np.eye(2)
+    blocks_a = [[0, 1, 2, 3], [4, 5]]
+    G_true = _rotate(G_true, rng, blocks_a)
+    G_true = (G_true + G_true.conj().T) / 2
+    solve = _exact_solver(G_true)
+
+    results = []
+    for blocks in (blocks_a, list(reversed(blocks_a))):
+        schedule = [(b[0], b) for b in blocks]
+        rep_x = {b[0]: solve(b[0])[0] for b in blocks}
+        G = np.zeros_like(G_true)
+        full = _adaptive_schur_fill(G, schedule, rep_x, solve, 6, 1e-6, True)
+        G = (G + G.conj().T) / 2
+        results.append((full, np.max(np.abs(G - G_true))))
+
+    assert results[0][0] == results[1][0], "detection depends on block order"
+    for _, err in results:
+        assert err < 1e-10
