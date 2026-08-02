@@ -59,6 +59,13 @@ import sys
 
 import numpy as np
 
+import cellconstructor as CC
+import cellconstructor.Phonons
+import cellconstructor.Settings as Parallel
+import sscha.Ensemble
+import tdscha.QSpaceLanczos as QL
+from tdscha.QSpaceLanczos import load_distributed_tdscha
+
 # In-repo test ensemble (the one used by tests/test_qspace/test_distributed.py)
 ENS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "..", "test_julia", "data")
@@ -72,9 +79,6 @@ SCALE = 1.05     # perturbation of the dynamical matrix used by update_weights
 
 
 def _load_dyns():
-    import cellconstructor as CC
-    import cellconstructor.Phonons
-
     dyn0 = CC.Phonons.Phonons(os.path.join(ENS_DIR, "dyn_gen_pop1_"), NQIRR)
     # A slightly different dyn, so that update_weights yields non-integer rho.
     dyn_f = dyn0.Copy()
@@ -85,11 +89,6 @@ def _load_dyns():
 
 def run_mpi():
     """Body of the test; must be executed under mpirun with >= 2 ranks."""
-    import cellconstructor.Settings as Parallel
-    import sscha.Ensemble
-    import tdscha.QSpaceLanczos as QL
-    from tdscha.QSpaceLanczos import load_distributed_tdscha
-
     n_procs = Parallel.GetNProc()
     assert n_procs >= 2, "this test must be run with mpirun -np 2 (got %d)" % n_procs
 
