@@ -79,6 +79,11 @@ function get_d2v_from_R_pert_qspace(
     # Buffers
     x_buf = zeros(ComplexF64, n_total)
     y_buf = zeros(ComplexF64, n_total)
+    # NOTE: x_rot/y_rot are overwritten by mul! on every (config, sym)
+    # iteration and never outlive it. Do NOT parallelize that loop
+    # without making these buffers thread-local.
+    x_rot = zeros(ComplexF64, n_total)
+    y_rot = zeros(ComplexF64, n_total)
 
     for bigindex in start_index:end_index
         i_config = div(bigindex - 1, n_syms) + 1
@@ -94,8 +99,8 @@ function get_d2v_from_R_pert_qspace(
         end
 
         # Apply symmetry
-        x_rot = symmetries[j_sym] * x_buf
-        y_rot = symmetries[j_sym] * y_buf
+        mul!(x_rot, symmetries[j_sym], x_buf)
+        mul!(y_rot, symmetries[j_sym], y_buf)
 
         # Views at q_pert
         x_pert = view(x_rot, (iq_pert-1)*n_bands+1:iq_pert*n_bands)
@@ -193,6 +198,11 @@ function get_d2v_from_Y_pert_qspace(
     # Buffers
     x_buf = zeros(ComplexF64, n_total)
     y_buf = zeros(ComplexF64, n_total)
+    # NOTE: x_rot/y_rot are overwritten by mul! on every (config, sym)
+    # iteration and never outlive it. Do NOT parallelize that loop
+    # without making these buffers thread-local.
+    x_rot = zeros(ComplexF64, n_total)
+    y_rot = zeros(ComplexF64, n_total)
     buffer_u = zeros(ComplexF64, n_q, n_bands)
 
     for bigindex in start_index:end_index
@@ -209,8 +219,8 @@ function get_d2v_from_Y_pert_qspace(
         end
 
         # Apply symmetry
-        x_rot = symmetries[j_sym] * x_buf
-        y_rot = symmetries[j_sym] * y_buf
+        mul!(x_rot, symmetries[j_sym], x_buf)
+        mul!(y_rot, symmetries[j_sym], y_buf)
 
         # Step 1: Compute buffer_u and total_wD4
         # buffer_u[iq1, nu1] = sum_nu2 alpha1[p][nu1, nu2] * x_rot[iq2, nu2]
@@ -352,6 +362,11 @@ function get_f_from_Y_pert_qspace(
     # Buffers
     x_buf = zeros(ComplexF64, n_total)
     y_buf = zeros(ComplexF64, n_total)
+    # NOTE: x_rot/y_rot are overwritten by mul! on every (config, sym)
+    # iteration and never outlive it. Do NOT parallelize that loop
+    # without making these buffers thread-local.
+    x_rot = zeros(ComplexF64, n_total)
+    y_rot = zeros(ComplexF64, n_total)
     buffer_u = zeros(ComplexF64, n_q, n_bands)
 
     for bigindex in start_index:end_index
@@ -368,8 +383,8 @@ function get_f_from_Y_pert_qspace(
         end
 
         # Apply symmetry
-        x_rot = symmetries[j_sym] * x_buf
-        y_rot = symmetries[j_sym] * y_buf
+        mul!(x_rot, symmetries[j_sym], x_buf)
+        mul!(y_rot, symmetries[j_sym], y_buf)
 
         # Compute buffer_u and total_sum (same as d2v function)
         total_sum = zero(ComplexF64)
@@ -492,6 +507,11 @@ function get_perturb_averages_qspace_fused(
     # Buffers (reused each iteration)
     x_buf = zeros(ComplexF64, n_total)
     y_buf = zeros(ComplexF64, n_total)
+    # NOTE: x_rot/y_rot are overwritten by mul! on every (config, sym)
+    # iteration and never outlive it. Do NOT parallelize that loop
+    # without making these buffers thread-local.
+    x_rot = zeros(ComplexF64, n_total)
+    y_rot = zeros(ComplexF64, n_total)
     buffer_u = zeros(ComplexF64, n_q, n_bands)
 
     for bigindex in start_index:end_index
@@ -507,8 +527,8 @@ function get_perturb_averages_qspace_fused(
             end
         end
 
-        x_rot = symmetries[j_sym] * x_buf
-        y_rot = symmetries[j_sym] * y_buf
+        mul!(x_rot, symmetries[j_sym], x_buf)
+        mul!(y_rot, symmetries[j_sym], y_buf)
 
         # === Step 2: D3 weights from R1 perturbation ===
         x_pert = view(x_rot, (iq_pert-1)*n_bands+1:iq_pert*n_bands)
