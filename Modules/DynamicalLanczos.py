@@ -3538,6 +3538,9 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         """
         Save only the a, b, and c coefficients from the lanczos.
         In this way the calculation cannot be restarted.
+
+        The perturbation modulus is stored in the first comment line,
+        so that it is preserved when the calculation is reanalyzed.
         """
 
         total_len = len(self.a_coeffs)
@@ -3547,14 +3550,25 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         abc[:len(self.b_coeffs),1] = self.b_coeffs
         abc[:len(self.c_coeffs),2] = self.c_coeffs
 
-        np.savetxt(file, abc, header = "a; b; c")
+        header = "perturbation_modulus = {}\na; b; c".format(
+            format(self.perturbation_modulus, ".16g"))
+        np.savetxt(file, abc, header = header)
 
     def load_abc(self, file):
         """
         Load only the a, b, and c coefficients from the ".abc" file
+
+        The perturbation modulus is read back from the first comment line
+        if it is present. Old .abc files (or files produced by other tools)
+        may not store it: in that case the value is left untouched.
         """
 
-        abc = np.loadtxt(file)
+        with open(file, "r") as fp:
+            first_line = fp.readline()
+            if "perturbation_modulus" in first_line:
+                self.perturbation_modulus = float(first_line.split("=")[1].strip())
+            fp.seek(0)
+            abc = np.loadtxt(fp)
         self.a_coeffs = abc[:,0]
         self.b_coeffs = abc[:,1]
         self.c_coeffs = abc[:,2]
