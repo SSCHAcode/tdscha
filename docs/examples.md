@@ -309,46 +309,6 @@ Use distributed loading when:
 - Running on 4+ MPI processes
 - Memory per process is limiting your calculation
 
-### Distributed QSpaceLanczos with KPM
-
-```python
-# distributed_kpm.py
-import cellconstructor as CC
-import sscha.Ensemble
-from tdscha.QSpaceLanczos import load_distributed_tdscha
-import tdscha.QSpaceKPM as QK
-
-# Load dynamical matrix
-dyn = CC.Phonons.Phonons("final_dyn_", NQIRR)
-
-# Load with distributed configurations across MPI ranks
-# The ensemble is loaded on master rank only, then distributed
-qlanc = load_distributed_tdscha(
-    data_dir="ensemble/",
-    population_id=1,
-    dyn=dyn,
-    T=TEMPERATURE,
-    use_symmetries=True,
-    n_configs=N_CONFIGS
-)
-
-# Prepare perturbation
-iq = 0  # Gamma point
-band = 5  # Mode index
-qlanc.prepare_mode_q(iq, band)
-
-# Create KPM from distributed Lanczos
-kpm = QK.QSpaceKPM.from_qspace_lanczos(qlanc)
-kpm.prepare_mode_q(iq, band)
-
-# Run KPM
-n_moments = kpm.estimate_kpm_steps(precision_cm=50)
-kpm.run_KPM(n_moments)
-
-# Save results
-kpm.save_kpm("kpm_results.dat")
-```
-
 ### Distributed Lanczos for IR/Raman
 
 ```python
@@ -434,7 +394,7 @@ The normalization is handled automatically:
 # Run with MPI (automatically distributes configurations)
 # The Julia extension (pip install juliacall) is picked up automatically,
 # no python-jl wrapper is needed.
-mpirun -np 8 python distributed_kpm.py
+mpirun -np 8 python distributed_ir.py
 ```
 
 ### Memory Comparison
@@ -449,7 +409,7 @@ For N=10000, n_q=10, n_bands=60, the memory per rank drops from ~460 MB to ~57 M
 ### Limitations
 
 - Serial execution (1 process): falls back to standard mode
-- Currently implemented for QSpaceLanczos, QSpaceKPM, and QSpaceHessian
+- Currently implemented for QSpaceLanczos and QSpaceHessian
 - Standard DynamicalLanczos does not yet support distributed loading
 
 ## Example 7: Convergence Analysis

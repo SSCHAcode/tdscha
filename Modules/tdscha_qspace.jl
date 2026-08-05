@@ -647,6 +647,57 @@ function get_perturb_averages_qspace_fused(
     return f_pert, d2v_blocks
 end
 
+function project_perturbation_average_qspace(
+    f_pert::Vector{ComplexF64},
+    d2v_blocks::Vector{Matrix{ComplexF64}},
+    symmetries::Vector{SparseMatrixCSC{ComplexF64,Int32}},
+    stabilizer_indices::Vector{Int32},
+    characters::Vector{ComplexF64}, iq_pert::Int64,
+    unique_pairs::Matrix{Int32}, n_bands::Int64, n_q::Int64
+)
+    isempty(stabilizer_indices) && return f_pert, d2v_blocks
+    length(stabilizer_indices) == length(characters) ||
+        error("one stabilizer character is required per symmetry")
+
+    n_total = n_q * n_bands
+    full_f = zeros(ComplexF64, n_total)
+    gamma_range = (iq_pert - 1) * n_bands + 1:iq_pert * n_bands
+    full_f[gamma_range] .= f_pert
+
+    full_d2v = spzeros(ComplexF64, n_total, n_total)
+    for (pair, block) in enumerate(d2v_blocks)
+        iq1 = unique_pairs[pair, 1]
+        iq2 = unique_pairs[pair, 2]
+        range1 = (iq1 - 1) * n_bands + 1:iq1 * n_bands
+        range2 = (iq2 - 1) * n_bands + 1:iq2 * n_bands
+        full_d2v[range1, range2] = block
+        if iq1 != iq2
+            full_d2v[range2, range1] = transpose(block)
+        end
+    end
+
+    projected_f = zeros(ComplexF64, n_total)
+    projected_d2v = spzeros(ComplexF64, n_total, n_total)
+    for (index, character) in zip(stabilizer_indices, characters)
+        symmetry = symmetries[index]
+        projected_f .+= character .* (symmetry * full_f)
+        projected_d2v = projected_d2v + character .* (
+            symmetry * full_d2v * transpose(symmetry))
+    end
+    projected_f ./= length(stabilizer_indices)
+    projected_d2v ./= length(stabilizer_indices)
+
+    projected_blocks = Matrix{ComplexF64}[]
+    for pair in axes(unique_pairs, 1)
+        iq1 = unique_pairs[pair, 1]
+        iq2 = unique_pairs[pair, 2]
+        range1 = (iq1 - 1) * n_bands + 1:iq1 * n_bands
+        range2 = (iq2 - 1) * n_bands + 1:iq2 * n_bands
+        push!(projected_blocks, Matrix(projected_d2v[range1, range2]))
+    end
+    return projected_f[gamma_range], projected_blocks
+end
+
 
 """
     get_perturb_averages_qspace(...)
@@ -673,17 +724,22 @@ function get_perturb_averages_qspace(
     valid_modes_q::Matrix{Bool},  # Mask from Python: false for acoustic/small-w modes
     scale3::Float64=1.0,          # D3 vertex rescaling sqrt(N_c/N_f) for interpolation
     scale4::Float64=1.0,          # D4 vertex rescaling N_c/N_f for interpolation
-    prefiltered::Bool=false       # X_q fields already carry f_Y; f_psi folded in alpha1
+    prefiltered::Bool=false,      # X_q fields already carry f_Y; f_psi folded in alpha1
+    coset_indices::Vector{Int32}=Int32[],
+    stabilizer_indices::Vector{Int32}=Int32[],
+    characters::Vector{ComplexF64}=ComplexF64[]
 )
     n_q = size(X_q, 1)
     n_bands = size(X_q, 3)
     n_pairs = size(unique_pairs, 1)
 
     # Get symmetries
-    symmetries = _cached_qspace_symmetries[]
-    if symmetries === nothing
+    full_symmetries = _cached_qspace_symmetries[]
+    if full_symmetries === nothing
         error("Q-space symmetries not initialized. Call init_sparse_symmetries_qspace first.")
     end
+    symmetries = isempty(coset_indices) ? full_symmetries :
+        full_symmetries[coset_indices]
 
     # Precompute occupation numbers and scaling factors
     # Masked modes (valid_modes_q == false) get f_Y=0, f_psi=0 to avoid NaN/Inf
@@ -733,6 +789,10 @@ function get_perturb_averages_qspace(
         X_q, Y_q, f_Y, f_psi, rho, R1, alpha1_blocks, symmetries,
         apply_v4, iq_pert, unique_pairs, n_bands, n_q,
         start_index, end_index, scale3, scale4)
+
+    f_pert, d2v = project_perturbation_average_qspace(
+        f_pert, d2v, full_symmetries, stabilizer_indices, characters,
+        iq_pert, unique_pairs, n_bands, n_q)
 
     # Pack result: f_pert followed by flattened d2v blocks
     result = zeros(ComplexF64, n_bands + n_pairs * n_bands^2)

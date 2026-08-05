@@ -831,7 +831,10 @@ class QSpaceLanczos(DL.Lanczos):
 
         jl = JuliaExt.get_main()
 
-        n_total = self.n_syms_qspace * self.N
+        n_active_syms = self._spectroscopy_symmetry_count(
+            self.n_syms_qspace)
+        reduction_args = self._spectroscopy_reduction_arguments()
+        n_total = n_active_syms * self.N
         n_processors = Parallel.GetNProc()
 
         count = n_total // n_processors
@@ -862,7 +865,7 @@ class QSpaceLanczos(DL.Lanczos):
                 int(start_end[0]), int(start_end[1]),
                 valid_modes,  # Pass mask to Julia
                 float(self.qspace_scale3), float(self.qspace_scale4),
-                bool(self.qspace_prefiltered)
+                bool(self.qspace_prefiltered), *reduction_args
             )
 
         combined = Parallel.GoParallel(get_combined, indices, "+")
@@ -924,7 +927,10 @@ class QSpaceLanczos(DL.Lanczos):
             return f_pert_global, d2v_blocks
 
         # Total number of (config, sym) pairs for this proc
-        n_total_local = self.n_syms_qspace * N_local
+        n_active_syms = self._spectroscopy_symmetry_count(
+            self.n_syms_qspace)
+        reduction_args = self._spectroscopy_reduction_arguments()
+        n_total_local = n_active_syms * N_local
 
         # Build indices for this proc (1-indexed for Julia)
         indices = [[1, n_total_local]]  # Single element list for local range
@@ -949,7 +955,7 @@ class QSpaceLanczos(DL.Lanczos):
                 int(start_end[0]), int(start_end[1]),
                 valid_modes,  # Pass mask to Julia
                 float(self.qspace_scale3), float(self.qspace_scale4),
-                bool(self.qspace_prefiltered)
+                bool(self.qspace_prefiltered), *reduction_args
             )
 
         # Call Julia (serial call, local configs only)
@@ -1297,130 +1303,17 @@ Starting from step %d
         if band_index < 0 or band_index >= self.n_bands:
             raise ValueError("Invalid band index for perturbation: {}".format(band_index))
 
+        self._clear_spectroscopy_symmetry()
         self.build_q_pair_map(iq)
         self.reset_q()
         self.psi[band_index] = 1.0 + 0j
         self.perturbation_modulus = 1.0
 
-    def prepare_ir(self, effective_charges = None, pol_vec = np.array([1.0, 0.0, 0.0])):
-        """
-        PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
-        =================================================
-
-        In this subroutine we prepare the lanczos algorithm for the computation of the
-        infrared spectrum signal.
-
-        Parameters
-        ----------
-            effective_charges : ndarray(size = (n_atoms, 3, 3), dtype = np.double)
-                The effective charges. Indices are: Number of atoms in the unit cell,
-                electric field component, atomic coordinate. If None, the effective charges
-                contained in the dynamical matrix will be considered.
-            pol_vec : ndarray(size = 3)
-                The polarization vector of the light.
-        """
-
-        ec = self.dyn.effective_charges
-        if not effective_charges is None:
-            ec = effective_charges
-
-        assert not ec is None, "Error, no effective charge found. Cannot initialize IR responce"
-
-        z_eff = np.einsum("abc, b", ec, pol_vec)
-
-        # Get the gamma effective charge
-        # FIX: remove double mass scaling and add supercell factor
+    def _prepare_gamma_cartesian_perturbation(self, vector):
+        """Prepare a unit-cell Cartesian Gamma perturbation in q space."""
         n_cell = np.prod(self.dyn.GetSupercell())
-        new_zeff = z_eff.ravel() * np.sqrt(n_cell)
-
-        # This is a Gamma perturbation
-        self.prepare_perturbation_q(0, new_zeff)
-
-    def prepare_raman(self, pol_vec_in=np.array([1.0, 0.0, 0.0]), pol_vec_out=np.array([1.0, 0.0, 0.0]), 
-                     mixed=False, pol_in_2=None, pol_out_2=None, unpolarized=None):
-        """
-        PREPARE LANCZOS FOR RAMAN SPECTRUM COMPUTATION
-        ==============================================
-
-        In this subroutine we prepare the lanczos algorithm for the computation of the
-        Raman spectrum signal.
-
-        Parameters
-        ----------
-            pol_vec_in : ndarray(size = 3)
-                The polarization vector of the incoming light
-            pol_vec_out : ndarray(size = 3)
-                The polarization vector for the outcoming light
-            mixed : bool
-                If True, add another component of the Raman tensor
-            pol_in_2 : ndarray(size = 3) or None
-                Second incoming polarization if mixed=True
-            pol_out_2 : ndarray(size = 3) or None  
-                Second outcoming polarization if mixed=True
-            unpolarized : int or None
-                The perturbation for unpolarized raman (if different from None, overrides the behaviour
-                of pol_vec_in and pol_vec_out). Indices goes from 0 to 6 (included).
-                0 is alpha^2
-                1 + 2 + 3 + 4 + 5 + 6 are beta^2
-                alpha_0 = (xx + yy + zz)^2/9
-                beta_1 = (xx -yy)^2 / 2
-                beta_2 = (xx -zz)^2 / 2
-                beta_3 = (yy -zz)^2 / 2
-                beta_4 = 3xy^2
-                beta_5 = 3xz^2
-                beta_6 = 3yz^2
-
-                The total unpolarized raman intensity is 45 alpha^2 + 7 beta^2
-        """
-        if mixed:
-            print('Prepare Raman')
-            print('Adding other component of the Raman tensor')
-
-        raman_v = self._build_raman_vector(
-            pol_vec_in=pol_vec_in, pol_vec_out=pol_vec_out, mixed=mixed,
-            pol_in_2=pol_in_2, pol_out_2=pol_out_2,
-            unpolarized=unpolarized, normalized=True)
-
-        # A constant real-space perturbation is a Gamma vector whose
-        # unit-cell amplitude is multiplied by sqrt(number of cells).
-        n_cell = np.prod(self.dyn.GetSupercell())
-        new_raman_v = raman_v.ravel() * np.sqrt(n_cell)
-        self.prepare_perturbation_q(0, new_raman_v)
-
-    def prepare_unpolarized_raman(self, index=0, debug=False):
-        """
-        PREPARE UNPOLARIZED RAMAN SIGNAL
-        ================================
-        
-        The raman tensor is read from the dynamical matrix provided by the original ensemble.
-        
-        The perturbations are prepared according to the formula (see https://doi.org/10.1021/jp5125266)
-        
-        ..math:
-        
-            I_unpol = 45/9 (xx + yy + zz)^2
-                      + 7/2 [(xx-yy)^2 + (xx-zz)^2 + (yy-zz)^2]
-                      + 7 * 3 [(xy)^2 + (yz)^2 + (xz)^2]
-        
-        Note: This method prepares the raw components WITHOUT prefactors.
-        Use get_prefactors_unpolarized_raman() to get the correct prefactors.
-        """
-        raman_v = self._build_raman_vector(
-            unpolarized=index, normalized=False)
-        n_cell = np.prod(self.dyn.GetSupercell())
-            
-        if debug:
-            np.save(f'raman_v_{index}', raman_v)
-        
-        # Scale for Γ-point constant perturbation
-        new_raman_v = raman_v.ravel() * np.sqrt(n_cell)
-        
-        # Convert in the polarization basis
-        self.prepare_perturbation_q(0, new_raman_v)
-            
-        if debug:
-            print(f'[NEW] Perturbation modulus with eq Raman tensors = {self.perturbation_modulus}')
-        print()
+        gamma_vector = np.asarray(vector).ravel() * np.sqrt(n_cell)
+        self.prepare_perturbation_q(0, gamma_vector)
 
     def prepare_perturbation_q(self, iq, vector, add=False):
         """Prepare perturbation at q from a real-space vector (3*n_at_uc,).
@@ -1437,6 +1330,7 @@ Starting from step %d
             If true, the perturbation is added on top of the one already setup.
             Calling add does not cause a reset of the Lanczos.
         """
+        self._clear_spectroscopy_symmetry()
         if not add:
             self.build_q_pair_map(iq)
             self.reset_q()
@@ -1479,11 +1373,20 @@ Starting from step %d
         to Cartesian for the representation matrices.
         """
         self.initialized = True
+        self._clear_spectroscopy_symmetry()
 
         if no_sym:
             # Identity only
             self.n_syms_qspace = 1
+            self.n_syms = 1
+            self._spectroscopy_symmetry_rotations = (np.eye(3),)
             n_total = self.n_q * self.n_bands
+            indices = np.arange(n_total, dtype=np.int32)
+            self._qspace_sym_data = ((
+                indices.copy(), indices.copy(),
+                np.ones(n_total, dtype=np.complex128)),)
+            self._qspace_sym_q_map = np.arange(
+                self.n_q, dtype=np.int32)[None, :]
             # Build identity sparse matrix
             jl = JuliaExt.get_main()
             jl.eval("""
@@ -1514,7 +1417,15 @@ Starting from step %d
 
         # Extract unique point-group rotations (keep first occurrence)
         unique_pg = {}
+        supercell_matrix = np.diag(
+            np.asarray(self.dyn.GetSupercell(), dtype=float))
+        inverse_supercell = np.linalg.inv(supercell_matrix)
         for i in range(len(rot_frac_all)):
+            mesh_rotation = (
+                inverse_supercell @ rot_frac_all[i] @ supercell_matrix)
+            if not np.allclose(mesh_rotation, np.rint(mesh_rotation),
+                               atol=1e-8, rtol=0):
+                continue
             key = rot_frac_all[i].tobytes()
             if key not in unique_pg:
                 unique_pg[key] = i
@@ -1534,19 +1445,8 @@ Starting from step %d
 
         Returns irt such that R @ tau[kappa] + t ≡ tau[irt[kappa]] mod lattice.
         """
-        nat = structure.N_atoms
-        irt = np.zeros(nat, dtype=int)
-        for kappa in range(nat):
-            tau = structure.coords[kappa]
-            mapped = R_cart @ tau + t_cart
-            for kp in range(nat):
-                diff = mapped - structure.coords[kp]
-                diff_frac = Minv @ diff
-                diff_frac -= np.round(diff_frac)
-                if np.linalg.norm(M @ diff_frac) < tol:
-                    irt[kappa] = kp
-                    break
-        return irt
+        return DL.Spectroscopy.find_atom_permutation(
+            structure, R_cart, t_cart, tolerance=tol)
 
     def _build_qspace_symmetries(self, rot_frac_all, trans_frac_all,
                                   pg_indices, M, Minv, verbose=True):
@@ -1569,11 +1469,16 @@ Starting from step %d
 
         n_syms = len(pg_indices)
         self.n_syms_qspace = n_syms
+        self.n_syms = n_syms
+        self._spectroscopy_symmetry_rotations = tuple(
+            M @ rot_frac_all[index].astype(float) @ Minv
+            for index in pg_indices)
 
         # Build all sparse matrices in Python, then pass to Julia
         all_rows = []
         all_cols = []
         all_vals = []
+        all_q_maps = []
 
         for i_sym_idx in pg_indices:
             R_frac = rot_frac_all[i_sym_idx].astype(float)
@@ -1588,6 +1493,7 @@ Starting from step %d
                 self.uci_structure, R_cart, t_cart, M, Minv)
 
             rows, cols, vals = [], [], []
+            q_map = np.empty(self.n_q, dtype=np.int32)
 
             for iq in range(self.n_q):
                 q = self.q_points[iq]
@@ -1595,6 +1501,7 @@ Starting from step %d
 
                 # Find iq' matching Rq
                 iq_prime = find_q_index(Rq, self.q_points, bg)
+                q_map[iq] = iq_prime
                 q_prime = self.q_points[iq_prime]
 
                 # Build P_uc with Bloch phase factor
@@ -1623,6 +1530,15 @@ Starting from step %d
             all_rows.append(np.array(rows, dtype=np.int32))
             all_cols.append(np.array(cols, dtype=np.int32))
             all_vals.append(np.array(vals, dtype=np.complex128))
+            all_q_maps.append(q_map)
+
+        # Keep the exact representation used by Julia available to Python.
+        # This is required for finite-q little-group detection and is also the
+        # portable representation sent by the distributed loader.
+        self._qspace_sym_data = tuple(
+            (rows.copy(), cols.copy(), vals.copy())
+            for rows, cols, vals in zip(all_rows, all_cols, all_vals))
+        self._qspace_sym_q_map = np.asarray(all_q_maps, dtype=np.int32)
 
         # Pass to Julia for caching (convert to 1-indexed)
         for i in range(n_syms):
@@ -1653,6 +1569,123 @@ Starting from step %d
         if verbose:
             print("Q-space symmetry matrices ({} x {}), {} symmetries cached in Julia".format(
                 n_total, n_total, n_syms))
+
+    def _apply_qspace_symmetry(self, symmetry_index, vector):
+        """Apply the exact cached Bloch-mode representation in Python."""
+        if self._qspace_sym_data is None:
+            raise RuntimeError("Call init(use_symmetries=True) first")
+        vector = np.asarray(vector, dtype=np.complex128)
+        expected = self.n_q * self.n_bands
+        if vector.shape != (expected,):
+            raise ValueError(
+                "q-space vector must have shape ({},)".format(expected))
+        rows, cols, values = self._qspace_sym_data[int(symmetry_index)]
+        result = np.zeros(expected, dtype=np.complex128)
+        np.add.at(result, rows, values * vector[cols])
+        return result
+
+    @staticmethod
+    def _line_phase(reference, candidate, tolerance):
+        """Unit phase when ``candidate`` spans the line of ``reference``."""
+        denominator = np.vdot(reference, reference)
+        if abs(denominator) <= np.finfo(float).tiny:
+            return None
+        phase = np.vdot(reference, candidate) / denominator
+        scale = max(np.linalg.norm(reference), np.linalg.norm(candidate),
+                    np.finfo(float).tiny)
+        if (abs(abs(phase) - 1.0) > tolerance or
+                np.linalg.norm(candidate - phase * reference) >
+                tolerance * scale):
+            return None
+        return phase / abs(phase)
+
+    def configure_qspace_perturbation_symmetry(
+            self, vector=None, tolerance=1e-8):
+        """Configure coset reduction for the current finite-q perturbation.
+
+        Unlike :meth:`configure_spectroscopy_symmetry`, which accepts the
+        real Cartesian Gamma representation used by optical requests, this
+        method detects the stabilizer directly in the complex Bloch-mode
+        representation cached by :class:`QSpaceLanczos`.  It is therefore
+        valid at non-time-reversal-invariant q points as well.
+
+        Parameters
+        ----------
+        vector : array-like, optional
+            A one-phonon vector of length ``n_bands`` at ``iq_pert``, or a
+            full vector of length ``n_q * n_bands``.  The current R sector is
+            used by default.
+        tolerance : float
+            Relative line-invariance tolerance.
+
+        Returns
+        -------
+        dict
+            Full order, stabilizer order, coset count, and projector phases.
+        """
+        if self.iq_pert is None or self.psi is None:
+            raise RuntimeError(
+                "Prepare a q-space perturbation before symmetry reduction")
+        if not np.isfinite(tolerance) or tolerance <= 0:
+            raise ValueError("tolerance must be a positive finite number")
+        if self._qspace_sym_data is None:
+            raise RuntimeError("Call init(use_symmetries=True) first")
+
+        if vector is None:
+            vector = self.get_R1_q()
+        vector = np.asarray(vector, dtype=np.complex128).ravel()
+        full_size = self.n_q * self.n_bands
+        if vector.size == self.n_bands:
+            full_vector = np.zeros(full_size, dtype=np.complex128)
+            start = self.iq_pert * self.n_bands
+            full_vector[start:start + self.n_bands] = vector
+        elif vector.size == full_size:
+            full_vector = vector.copy()
+        else:
+            raise ValueError(
+                "vector must have length n_bands or n_q * n_bands")
+        if np.linalg.norm(full_vector) <= np.finfo(float).tiny:
+            raise ValueError("the q-space perturbation must not be zero")
+
+        # The point-group multiplication table and the Bloch matrices have
+        # exactly the same ordering (both were built from pg_indices).
+        from tdscha.Spectroscopy import SymmetryGroup
+        group = SymmetryGroup.from_matrices(
+            self._spectroscopy_symmetry_rotations,
+            tolerance=max(float(tolerance), 1e-7))
+        stabilizer = []
+        eigenphases = []
+        for index in range(self.n_syms_qspace):
+            candidate = self._apply_qspace_symmetry(index, full_vector)
+            phase = self._line_phase(full_vector, candidate, tolerance)
+            if phase is not None:
+                stabilizer.append(index)
+                eigenphases.append(phase)
+
+        cosets = group.right_cosets(stabilizer)
+        if len(cosets) >= self.n_syms_qspace:
+            self._clear_spectroscopy_symmetry()
+        else:
+            self._spectroscopy_coset_indices = np.asarray(
+                [coset[0] + 1 for coset in cosets], dtype=np.int32)
+            self._spectroscopy_stabilizer_indices = np.asarray(
+                [index + 1 for index in stabilizer], dtype=np.int32)
+            # P_chi = |H|^-1 sum_h conj(chi_h) D(h).
+            self._spectroscopy_characters = np.asarray(
+                np.conj(eigenphases), dtype=np.complex128)
+
+        return {
+            "full_group_order": int(self.n_syms_qspace),
+            "stabilizer_order": len(stabilizer),
+            "coset_representatives": len(cosets),
+            "eigenphases": tuple(complex(value) for value in eigenphases),
+        }
+
+    def _spectroscopy_reduction_arguments(self):
+        """Return complex projector characters for the q-space Julia API."""
+        cosets, stabilizer, characters = super()._spectroscopy_reduction_arguments()
+        return (cosets, stabilizer,
+                np.asarray(characters, dtype=np.complex128))
 
     # Override init to use q-space symmetrization
     def init(self, use_symmetries=True):

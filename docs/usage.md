@@ -2,6 +2,13 @@
 
 ## Choosing Perturbation Types
 
+!!! tip "Use the Spectroscopy driver for Raman and IR"
+
+    The restartable, symmetry-reduced API for new optical calculations is
+    documented in [Raman and IR spectroscopy](spectroscopy.md). The direct
+    `Lanczos.prepare_raman` and `prepare_ir` calls below are compatibility
+    primitives for existing scripts.
+
 TD-SCHA supports three main perturbation types, each with specific use cases:
 
 ### 1. Single Phonon Mode

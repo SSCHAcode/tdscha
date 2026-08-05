@@ -91,6 +91,31 @@ def test_default_is_to_use_the_charges():
     assert np.allclose(w_default, w_used)
 
 
+def test_explicit_lo_to_direction_controls_tensorial_gamma_limit():
+    dyn = _dyn_with_charges()
+    gamma = np.zeros((1, 3))
+    w_x, _ = QI.interpolate_dyn_fine(
+        dyn, gamma, use_asr=False, reuse_commensurate=False,
+        lo_to_split=[1, 0, 0])
+    w_z, _ = QI.interpolate_dyn_fine(
+        dyn, gamma, use_asr=False, reuse_commensurate=False,
+        lo_to_split=[0, 0, 1])
+
+    # epsilon_inf is anisotropic, hence the nonanalytic correction depends on
+    # qhat^T epsilon_inf qhat and the two directional limits must differ.
+    assert np.max(np.abs(np.sort(w_x[:, 0]) - np.sort(w_z[:, 0]))) > 1e-8
+
+    w_ignored_with_direction, _ = QI.interpolate_dyn_fine(
+        dyn, gamma, use_asr=False, reuse_commensurate=False,
+        ignore_effective_charges=True, lo_to_split=[1, 0, 0])
+    w_ignored, _ = QI.interpolate_dyn_fine(
+        dyn, gamma, use_asr=False, reuse_commensurate=False,
+        ignore_effective_charges=True, lo_to_split=None)
+    np.testing.assert_allclose(w_ignored_with_direction, w_ignored)
+    assert dyn.effective_charges is not None
+    assert dyn.dielectric_tensor is not None
+
+
 def test_commensurate_limit_is_blind_to_the_flag():
     """The subtract/re-add cycle cancels identically on the coarse mesh.
 

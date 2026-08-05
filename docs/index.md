@@ -17,6 +17,7 @@ Part of the SSCHA ecosystem: `cellconstructor` → `python-sscha` → `tdscha`.
 5. **[CLI Tools](cli.md)** - Command-line interface for analysis and visualization.
 
 6. **API Reference** - Automatically generated documentation:
+   - [Spectroscopy](api/spectroscopy.md) - Stable Raman and IR calculations
    - [DynamicalLanczos](api/dynamical_lanczos.md) - Core Lanczos algorithm
    - [QSpaceLanczos](api/qspace_lanczos.md) - Q-space (Bloch basis) Lanczos algorithm
    - [StaticHessian](api/static_hessian.md) - Free energy Hessian calculations
@@ -27,6 +28,8 @@ Part of the SSCHA ecosystem: `cellconstructor` → `python-sscha` → `tdscha`.
 - **Full quantum treatment of atomic nuclei**
 - **Parallel execution** with MPI
 - **Symmetry-aware** calculations for efficiency
+- **Restartable polarized and unpolarized Raman/IR workflows** with automatic
+  symmetry-orbit and stabilizer/coset reduction
 - **Q-space Lanczos**: Bloch-basis formulation exploiting momentum conservation for large supercells (see [In-Depth Usage](usage.md#q-space-lanczos))
 
 ## Theoretical Foundation

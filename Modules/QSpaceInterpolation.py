@@ -118,7 +118,7 @@ def _matching_q(q, candidates, reciprocal, tol=1e-6):
 
 def interpolate_dyn_fine(
         dyn, q_points, use_asr=True, reuse_commensurate=True,
-        ignore_effective_charges=False, verbose=False):
+        ignore_effective_charges=False, lo_to_split=None, verbose=False):
     """Fourier-interpolate a dynamical matrix at arbitrary q points.
 
     The real-space second-order force constants are centred before
@@ -131,6 +131,11 @@ def interpolate_dyn_fine(
     when the ensemble forces came from a strictly short-range potential but
     ``dyn`` contains long-range metadata inherited from another calculation.
     The caller's object is never modified.
+
+    ``lo_to_split`` controls the nonanalytic Gamma limit: ``None`` disables
+    it, ``"random"`` lets CellConstructor choose a direction, and a finite
+    nonzero three-vector selects an explicit propagation direction.  At
+    nonzero q the usual tensorial dipole--dipole interpolation is retained.
 
     Returns
     -------
@@ -148,6 +153,30 @@ def interpolate_dyn_fine(
         raise ValueError("q_points must contain at least one q-point")
     if not np.all(np.isfinite(q_points)):
         raise ValueError("q_points must contain only finite values")
+
+    if isinstance(lo_to_split, str):
+        if lo_to_split != "random":
+            raise ValueError(
+                "lo_to_split must be None, 'random', or a three-vector")
+        q_direct = None
+        use_gamma_nonanalytic = True
+    elif lo_to_split is None:
+        q_direct = None
+        use_gamma_nonanalytic = False
+    else:
+        q_direct = np.asarray(lo_to_split, dtype=float)
+        if (q_direct.shape != (3,) or not np.all(np.isfinite(q_direct)) or
+                np.linalg.norm(q_direct) <= 1e-14):
+            raise ValueError("lo_to_split must be a finite nonzero three-vector")
+        use_gamma_nonanalytic = True
+
+    if ignore_effective_charges:
+        # The flag is local to harmonic interpolation.  It suppresses the
+        # complete dipolar correction, including the directional Gamma
+        # limit, without modifying dyn.effective_charges.  Those charges can
+        # therefore still define an IR perturbation downstream.
+        q_direct = None
+        use_gamma_nonanalytic = False
 
     work_dyn = dyn
     if ignore_effective_charges and dyn.effective_charges is not None:
@@ -194,8 +223,13 @@ def interpolate_dyn_fine(
                 work_dyn.dynmats[commensurate[iq]], dtype=np.complex128)
         else:
             # Tensor2 and Phonons use opposite Fourier phase conventions.
+            at_gamma = np.linalg.norm(
+                CC.Methods.get_min_dist_into_cell(
+                    reciprocal, np.asarray(q), np.zeros(3))) < 1e-8
             force_constants = tensor2.Interpolate(
-                -q, asr=False, lo_to_splitting=False)
+                -q, asr=False,
+                lo_to_splitting=(use_gamma_nonanalytic and at_gamma),
+                q_direct=(q_direct if at_gamma else None))
 
         dynamical = force_constants * mass_factor
         dynamical = 0.5 * (dynamical + dynamical.conj().T)

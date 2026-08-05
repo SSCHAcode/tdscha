@@ -81,6 +81,49 @@ def test_identity_mesh_reproduces_parent_d3_and_d4(system):
     assert not np.allclose(no_d4_a, interp_a, rtol=1e-7, atol=1e-14)
 
 
+def test_atom_fourier_accepts_directional_lo_to_and_pins_gamma_basis():
+    dyn = chain.build_dyn(COARSE)
+    charges = np.zeros((dyn.structure.N_atoms, 3, 3))
+    charges[0] = 1.5 * np.eye(3)
+    charges[1] = -1.5 * np.eye(3)
+    dyn.effective_charges = charges
+    dyn.dielectric_tensor = np.diag([2.0, 3.0, 5.0])
+    ensemble = chain.make_ensemble(
+        dyn, TEMPERATURE, 12, seed=17, g3=0.2, g4=0.3)
+    direction = np.array([1.0, 2.0, 3.0])
+
+    parent = QL.QSpaceLanczos(ensemble, lo_to_split=direction)
+    interpolated = AF.QSpaceAtomFourierLanczos(
+        ensemble, fine_mesh=(1, 1, 2 * COARSE),
+        lo_to_split=direction, allow_unstable=True)
+    gamma_fine = interpolated._fine_of_coarse[0]
+    np.testing.assert_allclose(
+        interpolated.w_q[:, gamma_fine], parent.w_q[:, 0], atol=1e-14)
+    np.testing.assert_allclose(
+        interpolated.pols_q[:, :, gamma_fine], parent.pols_q[:, :, 0],
+        atol=1e-14)
+
+    short_range_parent = QL.QSpaceLanczos(ensemble, lo_to_split=None)
+    short_range = AF.QSpaceAtomFourierLanczos(
+        ensemble, fine_mesh=(1, 1, 2 * COARSE),
+        lo_to_split=direction, ignore_effective_charges=True,
+        allow_unstable=True)
+    gamma_short = short_range._fine_of_coarse[0]
+    np.testing.assert_allclose(
+        short_range.w_q[:, gamma_short], short_range_parent.w_q[:, 0],
+        atol=1e-14)
+    np.testing.assert_allclose(
+        short_range.pols_q[:, :, gamma_short],
+        short_range_parent.pols_q[:, :, 0], atol=1e-14)
+
+    # Suppression is interpolation-local: the original Z* remains available
+    # and can still prepare an IR perturbation.
+    np.testing.assert_allclose(short_range.dyn.effective_charges, charges)
+    short_range.init(use_symmetries=False)
+    short_range.prepare_ir(pol_vec=[1, 0, 0])
+    assert short_range.perturbation_modulus > 0
+
+
 def test_commensurate_frequencies_and_normalization(
         system, interpolated):
     _, ensemble = system

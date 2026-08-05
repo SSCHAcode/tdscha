@@ -255,3 +255,35 @@ def test_atom_fourier_lanczos_inherits_qspace_raman_implementation():
     assert "prepare_raman" not in cls.__dict__
     assert "prepare_unpolarized_raman" not in cls.__dict__
     assert "prepare_perturbation_q" not in cls.__dict__
+
+
+def test_qspace_uses_only_backend_hook_for_optical_perturbations():
+    assert "prepare_ir" not in QL.QSpaceLanczos.__dict__
+    assert "prepare_raman" not in QL.QSpaceLanczos.__dict__
+    assert "prepare_unpolarized_raman" not in QL.QSpaceLanczos.__dict__
+    assert "_prepare_gamma_cartesian_perturbation" in (
+        QL.QSpaceLanczos.__dict__)
+
+
+@pytest.mark.parametrize("backend", [_RealHarness, _QSpaceHarness])
+@pytest.mark.parametrize("method_name", [
+    "prepare_unpolarized_raman_FT",
+    "prepare_anharmonic_raman_FT",
+    "prepare_anharmonic_raman_FT_2ph",
+])
+def test_unvalidated_two_phonon_raman_is_disabled(backend, method_name, dyn):
+    lanczos = backend(dyn)
+    with pytest.raises(NotImplementedError, match="Two-phonon Raman"):
+        getattr(lanczos, method_name)()
+
+
+@pytest.mark.parametrize("backend", [_RealHarness, _QSpaceHarness])
+@pytest.mark.parametrize("method_name", [
+    "prepare_anharmonic_ir_FT",
+    "prepare_anharmonic_ir",
+])
+def test_unvalidated_configuration_dependent_ir_is_disabled(
+        backend, method_name, dyn):
+    lanczos = backend(dyn)
+    with pytest.raises(NotImplementedError, match="Configuration-dependent"):
+        getattr(lanczos, method_name)()

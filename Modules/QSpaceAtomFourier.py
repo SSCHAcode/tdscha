@@ -115,13 +115,17 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
                  ignore_effective_charges=False,
                  w_min_guard=1e-8, allow_unstable=False,
                  lo_to_split=None, **kwargs):
-
-        if lo_to_split is not None:
-            raise NotImplementedError(
-                "LO-TO splitting is not supported by atom-Fourier "
-                "interpolation.")
-
-        super().__init__(ensemble, lo_to_split=None, **kwargs)
+        # The parent fixes the commensurate (including Gamma) mode basis with
+        # the requested nonanalytic direction.  The fine interpolation below
+        # uses the same long-range convention and those commensurate points
+        # are pinned back to this exact basis.  Effective-charge suppression
+        # is deliberately scoped to this harmonic backend: it disables both
+        # the analytic dipole tail and its Gamma LO--TO limit, while the
+        # caller's dynamical matrix retains Z* for IR perturbations.
+        interpolation_lo_to_split = (
+            None if ignore_effective_charges else lo_to_split)
+        super().__init__(
+            ensemble, lo_to_split=interpolation_lo_to_split, **kwargs)
 
         self.__total_attributes__.extend(self._INTERPOLATION_ATTRS)
 
@@ -196,7 +200,8 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
         w_f, pols_f = interpolate_dyn_fine(
             self.dyn, q_fine, use_asr=use_asr_dyn,
             ignore_effective_charges=self.ignore_effective_charges,
-            reuse_commensurate=True)
+            reuse_commensurate=True,
+            lo_to_split=interpolation_lo_to_split)
 
         # Pin the commensurate fine points to the parent's
         # DiagonalizeSupercell output: the R sector and the kernel exchange
@@ -591,6 +596,27 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
             (self.q_points, self.n_q, self.w_q, self.pols_q,
              self.valid_modes_q) = fine
 
+    def configure_qspace_perturbation_symmetry(
+            self, vector=None, tolerance=1e-8):
+        """Detect a finite-Q stabilizer in the coarse kernel basis."""
+        if self.c_iq_pert is None:
+            raise RuntimeError(
+                "Prepare a coarse-commensurate perturbation first")
+        if vector is not None:
+            vector = np.asarray(vector).ravel()
+            if vector.size not in (self.n_bands,
+                                   self.cn_q * self.n_bands):
+                raise ValueError(
+                    "atom-Fourier symmetry vectors must use the coarse "
+                    "one-phonon representation")
+        fine_n_q, fine_iq = self.n_q, self.iq_pert
+        self.n_q, self.iq_pert = self.cn_q, self.c_iq_pert
+        try:
+            return super().configure_qspace_perturbation_symmetry(
+                vector=vector, tolerance=tolerance)
+        finally:
+            self.n_q, self.iq_pert = fine_n_q, fine_iq
+
     # ================================================================
     # Fold / unfold (all cross-q mixing in Cartesian)
     # ================================================================
@@ -779,7 +805,10 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
 
         jl = JuliaExt.get_main()
 
-        n_total = self.n_syms_qspace * self.N
+        n_active_syms = self._spectroscopy_symmetry_count(
+            self.n_syms_qspace)
+        reduction_args = self._spectroscopy_reduction_arguments()
+        n_total = n_active_syms * self.N
         n_processors = Parallel.GetNProc()
 
         count = n_total // n_processors
@@ -811,7 +840,7 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
                 int(start_end[0]), int(start_end[1]),
                 valid_modes,
                 float(self.qspace_scale3), float(self.qspace_scale4),
-                False)
+                False, *reduction_args)
 
         combined = Parallel.GoParallel(get_combined, indices, "+")
         f_pert = combined[:self.n_bands]
@@ -869,10 +898,11 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
                 iq_pert_jl,
                 q_pair_map_jl,
                 unique_pairs_arr,
-                1, int(self.n_syms_qspace * N_local),
+                1, int(self._spectroscopy_symmetry_count(
+                    self.n_syms_qspace) * N_local),
                 valid_modes,
                 float(self.qspace_scale3), float(self.qspace_scale4),
-                False)
+                False, *self._spectroscopy_reduction_arguments())
             if N_eff_local > 0:
                 combined_local = combined_local * N_eff_local
 
@@ -890,7 +920,7 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
 def load_distributed_atom_fourier_tdscha(
         data_dir, population_id, dyn, T, fine_mesh,
         use_symmetries=True, n_configs=None, final_dyn=None,
-        final_T=None, **kwargs):
+        final_T=None, lo_to_split=None, **kwargs):
     """Build an atom-Fourier Lanczos with a distributed ensemble.
 
     Same contract as ``QSpaceLanczos.load_distributed_tdscha`` -- the ensemble
@@ -920,7 +950,7 @@ def load_distributed_atom_fourier_tdscha(
     """
     return QL.load_distributed_tdscha(
         data_dir, population_id, dyn, T,
-        lo_to_split=None, use_symmetries=use_symmetries,
+        lo_to_split=lo_to_split, use_symmetries=use_symmetries,
         n_configs=n_configs, final_dyn=final_dyn, final_T=final_T,
         lanczos_class=QSpaceAtomFourierLanczos, build_on_all_ranks=True,
         fine_mesh=fine_mesh, **kwargs)

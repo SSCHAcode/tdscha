@@ -26,7 +26,6 @@ import cellconstructor.Settings
 import sscha, sscha.Ensemble
 
 import tdscha.QSpaceLanczos as QL
-import tdscha.QSpaceKPM as QK
 import tdscha.QSpaceHessian as QH
 
 from tdscha.QSpaceLanczos import load_distributed_tdscha
@@ -229,42 +228,6 @@ def test_distributed_hessian():
     
     # All eigenvalues should be non-negative (for stable system)
     assert np.all(evals >= -1e-10), "Negative eigenvalues in Hessian"
-
-
-def test_distributed_kpm():
-    """Test that KPM works with distributed configurations."""
-    n_procs = _get_n_procs()
-    if n_procs < 2:
-        pytest.skip("This test requires mpirun -np 2")
-
-    pprint("=" * 60)
-    pprint("TEST: Distributed KPM")
-    pprint("=" * 60)
-
-    # Create dynamical matrix
-    dyn = _create_dyn()
-
-    # Use load_distributed_tdscha
-    qlanc = load_distributed_tdscha(DATA_DIR, 1, dyn, T, lo_to_split=None, use_symmetries=True)
-    
-    # Prepare perturbation
-    iq = 0
-    band = _find_gamma_mode(dyn)
-    qlanc.prepare_mode_q(iq, band)
-    
-    # Create KPM from distributed Lanczos
-    pprint("Creating KPM from distributed Lanczos...")
-    kpm = QK.QSpaceKPM.from_qspace_lanczos(qlanc)
-    kpm.prepare_mode_q(iq, band)
-    
-    # Estimate and run KPM
-    pprint("Running KPM...")
-    n_moments = kpm.estimate_kpm_steps(precision_cm=50)
-    n_moments = min(n_moments, 16)  # Cap for test speed
-    kpm.run_KPM(n_moments, verbose=False)
-    
-    # Check that moments are finite
-    assert all(np.isfinite(kpm.kpm_moments)), "KPM moments contain NaN/Inf"
 
 
 def test_goparallel_vs_distributed():

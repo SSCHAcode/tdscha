@@ -14,7 +14,6 @@ import cellconstructor.Phonons
 
 import sscha
 import tdscha, tdscha.DynamicalLanczos as DL
-import tdscha.QSpaceKPM as QKPM
 import sscha.Ensemble
 MSG = """
 TDSCHA  
@@ -57,9 +56,7 @@ Usage:
 
 tdscha-plot-data file [w_start] [w_end] [smearing] [options]
 
-Pass a .abc, .npz, or .kpm file resulting from a linear response calculation.
-- .abc / .npz : use Lanczos continued fraction
-- .kpm        : use KPM spectral function
+Pass a .abc or .npz file resulting from a Lanczos calculation.
 
 The legacy positional arguments [w_start] [w_end] [smearing] (in cm-1) are
 still supported. Use the optional flags below for full control.
@@ -195,7 +192,7 @@ def plot():
         epilog = MSG_PLOT,
         formatter_class = argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("file", help = "the .abc, .npz, or .kpm file from a linear response calculation")
+    parser.add_argument("file", help = "the .abc or .npz file from a Lanczos calculation")
     parser.add_argument("w_start_pos", nargs = "?", type = float, default = None,
                         metavar = "w_start",
                         help = "[legacy] start frequency in cm-1 (use --w-start instead)")
@@ -235,23 +232,15 @@ def plot():
     if not os.path.exists(fname):
         parser.error("Error, file {} does not exist".format(fname))
 
-    use_kpm = fname.endswith(".kpm")
-
-    if use_kpm:
-        print("Loading KPM file {}".format(fname))
-        kpm = QKPM.QSpaceKPM(None)
-        kpm.load_kpm(fname)
-        lanc = None
+    print("Loading file {}".format(fname))
+    lanc = DL.Lanczos()
+    if fname.endswith(".abc"):
+        lanc.load_abc(fname)
+    elif fname.endswith(".npz"):
+        lanc.load_status(fname)
     else:
-        print("Loading file {}".format(fname))
-        lanc = DL.Lanczos()
-        if fname.endswith(".abc"):
-            lanc.load_abc(fname)
-        elif fname.endswith(".npz"):
-            lanc.load_status(fname)
-        else:
-            print("ERROR, the specified file must be a .abc, .npz, or .kpm file.")
-            exit()
+        print("ERROR, the specified file must be a .abc or .npz file.")
+        exit()
 
     # The explicit flags take precedence over the legacy positional arguments
     w_start = args.w_start if args.w_start is not None else (0 if args.w_start_pos is None else args.w_start_pos)
@@ -263,22 +252,14 @@ def plot():
     w_ry = w / CC.Units.RY_TO_CM
     smearing /= CC.Units.RY_TO_CM
 
-    if use_kpm:
-        # KPM spectral function does not use smearing parameter
-        spectrum = kpm.get_spectral_function_KPM(w_ry, regularization="jackson")
-    else:
-        gf = lanc.get_green_function_continued_fraction(w_ry, smearing = smearing,
-                                                        use_terminator = args.terminator,
-                                                        last_average = args.last_average,
-                                                        smooth_ramp = args.smooth_ramp)
-        spectrum = - np.imag(gf)
+    gf = lanc.get_green_function_continued_fraction(
+        w_ry, smearing=smearing, use_terminator=args.terminator,
+        last_average=args.last_average, smooth_ramp=args.smooth_ramp)
+    spectrum = -np.imag(gf)
 
     # Print some info about the calculation
     print()
-    if use_kpm:
-        print("Number of KPM moments: {}".format(kpm.kpm_n_moments))
-    else:
-        print("Number of poles: {}".format(len(lanc.a_coeffs)))
+    print("Number of poles: {}".format(len(lanc.a_coeffs)))
 
     plt.figure(dpi = args.dpi)
     plt.plot(w, spectrum)
@@ -469,4 +450,3 @@ def tdscha_convergence_analysis():
     plt.tight_layout()
 
     plt.show()
-
