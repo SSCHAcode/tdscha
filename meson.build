@@ -151,6 +151,17 @@ py.install_sources(
     subdir: 'tdscha'
 )
 
+# Test-data helpers used by the doctests in docs/. They are part of the
+# package because scripts/validate_docs.py imports them from the *installed*
+# tdscha, not from the source tree.
+py.install_sources(
+    [
+      'Modules/testing/__init__.py',
+      'Modules/testing/test_data.py'
+    ],
+    subdir: 'tdscha/testing'
+)
+
 install_data(
   'Modules/tdscha_core.jl',
   install_dir: py.get_install_dir() / 'Modules'
