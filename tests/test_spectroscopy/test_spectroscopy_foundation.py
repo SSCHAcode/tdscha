@@ -167,14 +167,14 @@ def test_symmetry_group_rejects_non_groups():
 
 
 def test_request_registry_has_one_canonical_manifest_representation():
-    job = SP.Spectroscopy(object(), backend="qspace", workdir="spectroscopy")
+    job = SP.Spectroscopy(None, backend="qspace", workdir="spectroscopy")
     job.add_raman_polarized([1, 0, 0], [0, 1, 0], name="raman_xy")
     job.add_raman_unpolarized(name="raman_powder")
     job.add_ir_polarized([2, 0, 0], name="ir_x")
     job.add_ir_unpolarized(name="ir_powder")
 
     manifest = job.manifest()
-    assert manifest["schema_version"] == 2
+    assert manifest["schema_version"] == 3
     assert manifest["backend"] == "qspace"
     assert [request["name"] for request in manifest["requests"]] == [
         "raman_xy", "raman_powder", "ir_x", "ir_powder"]
@@ -191,7 +191,7 @@ def test_request_registry_has_one_canonical_manifest_representation():
 
 def test_per_request_effective_charges_are_immutable():
     charges = np.arange(18, dtype=float).reshape(2, 3, 3)
-    job = SP.Spectroscopy(object())
+    job = SP.Spectroscopy(None)
     job.add_ir_unpolarized("ir", effective_charges=charges)
     charges[:] = 0
     stored = np.asarray(job.requests["ir"].source)

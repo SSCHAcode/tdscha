@@ -22,7 +22,7 @@ import numpy as np
 
 _DEFAULT_TOLERANCE = 1e-10
 _RAMAN_SCHEMA_VERSION = 1
-_SPECTROSCOPY_SCHEMA_VERSION = 2
+_SPECTROSCOPY_SCHEMA_VERSION = 3
 
 
 def _finite_array(value, shape, name):
@@ -651,6 +651,217 @@ def symmetric_raman_vector(coefficients):
         dtype=float)
 
 
+def _load_phonons(source, nqirr, name):
+    """Return a CellConstructor dynamical matrix from a path or an object."""
+    if source is None:
+        return None
+    if isinstance(source, (str, os.PathLike)):
+        if nqirr is None:
+            raise ValueError(
+                "{} was given as a file prefix, so the number of irreducible "
+                "q-points must be given too".format(name))
+        if (not isinstance(nqirr, (int, np.integer))
+                or isinstance(nqirr, bool) or int(nqirr) < 1):
+            raise ValueError(
+                "the number of irreducible q-points for {} must be a "
+                "positive integer".format(name))
+        import cellconstructor.Phonons
+
+        return cellconstructor.Phonons.Phonons(
+            os.fspath(source), int(nqirr))
+    if nqirr is not None:
+        raise ValueError(
+            "{} is already a dynamical matrix object, so its number of "
+            "irreducible q-points must not be given".format(name))
+    for attribute in ("structure", "dynmats", "GetSupercell"):
+        if not hasattr(source, attribute):
+            raise TypeError(
+                "{} must be a file prefix or a CellConstructor Phonons "
+                "object, got {}".format(name, type(source).__name__))
+    return source
+
+
+@dataclass(frozen=True)
+class EnsembleSource:
+    """Where a stochastic ensemble lives on disk, and how to reweight it.
+
+    :class:`Spectroscopy` takes one of these instead of a loaded ensemble so
+    that the configurations are read **once, by the MPI master**, and
+    scattered: every rank keeps only its ``N / n_procs`` slice of the
+    Bloch-transformed displacements and forces.  Handing a fully loaded
+    ``sscha.Ensemble.Ensemble`` to every rank instead replicates the
+    configurations, which is what makes a large ensemble impossible to run.
+
+    Nothing here is heavy.  The dynamical matrices are small and are held on
+    every rank -- the run plan, the symmetry analysis, the fingerprint, and
+    the spectral analysis all need them.  Only the configurations are
+    distributed.
+
+    Parameters
+    ----------
+    data_dir : str or os.PathLike
+        Directory holding the binary ensemble files.
+    population : int
+        Population identifier of the ensemble inside ``data_dir``.
+    dyn : str, os.PathLike, or CC.Phonons.Phonons
+        The dynamical matrix the ensemble was *generated* with, either as a
+        CellConstructor file prefix or as an already loaded object.
+    T : float
+        Temperature in Kelvin at which the ensemble was generated.
+    nqirr : int, optional
+        Number of irreducible q-points; required when ``dyn`` is a prefix.
+    n_configs : int, optional
+        Read only the first ``n_configs`` configurations.  ``None`` reads
+        every configuration in the population.
+    final_dyn : str, os.PathLike, or CC.Phonons.Phonons, optional
+        The converged solution.  When given, the ensemble is reweighted onto
+        it and it becomes the reference dynamical matrix of the calculation:
+        the Raman tensor, the effective charges, and the mode basis all come
+        from it.  Production runs should always set it.
+    final_nqirr : int, optional
+        Number of irreducible q-points; required when ``final_dyn`` is a
+        prefix.
+    final_T : float, optional
+        Temperature of the reweighted ensemble.  Defaults to ``T``.
+    """
+
+    data_dir: str
+    population: int
+    dyn: object
+    T: float
+    nqirr: Optional[int] = None
+    n_configs: Optional[int] = None
+    final_dyn: object = None
+    final_nqirr: Optional[int] = None
+    final_T: Optional[float] = None
+
+    def __post_init__(self):
+        data_dir = os.fspath(self.data_dir)
+        if not data_dir:
+            raise ValueError("data_dir must be a non-empty path")
+        if not os.path.isdir(data_dir):
+            raise ValueError(
+                "the ensemble directory {!r} does not exist".format(data_dir))
+        object.__setattr__(self, "data_dir", data_dir)
+
+        if (not isinstance(self.population, (int, np.integer))
+                or isinstance(self.population, bool)):
+            raise ValueError("population must be an integer")
+        object.__setattr__(self, "population", int(self.population))
+
+        temperature = float(self.T)
+        if not np.isfinite(temperature) or temperature < 0:
+            raise ValueError("T must be a finite non-negative temperature")
+        object.__setattr__(self, "T", temperature)
+
+        if self.n_configs is not None:
+            if (not isinstance(self.n_configs, (int, np.integer))
+                    or isinstance(self.n_configs, bool)
+                    or int(self.n_configs) < 1):
+                raise ValueError("n_configs must be a positive integer")
+            object.__setattr__(self, "n_configs", int(self.n_configs))
+
+        if self.final_dyn is None and self.final_nqirr is not None:
+            raise ValueError(
+                "final_nqirr was given without a final_dyn")
+        if self.final_dyn is None and self.final_T is not None:
+            raise ValueError(
+                "final_T was given without a final_dyn: the ensemble is not "
+                "reweighted, so its temperature is T")
+
+        object.__setattr__(self, "_generating_dyn", _load_phonons(
+            self.dyn, self.nqirr, "dyn"))
+        object.__setattr__(self, "_converged_dyn", _load_phonons(
+            self.final_dyn, self.final_nqirr, "final_dyn"))
+
+        if self.final_T is not None:
+            final_temperature = float(self.final_T)
+            if not np.isfinite(final_temperature) or final_temperature < 0:
+                raise ValueError(
+                    "final_T must be a finite non-negative temperature")
+            object.__setattr__(self, "final_T", final_temperature)
+
+    @property
+    def generating_dyn(self):
+        """The dynamical matrix the configurations were sampled from."""
+        return self._generating_dyn
+
+    @property
+    def converged_dyn(self):
+        """The reweighting target, or ``None`` when there is none."""
+        return self._converged_dyn
+
+    @property
+    def reference_dyn(self):
+        """The ensemble's ``current_dyn``: the converged one when reweighting."""
+        if self._converged_dyn is not None:
+            return self._converged_dyn
+        return self._generating_dyn
+
+    @property
+    def reference_temperature(self):
+        """The ensemble's ``current_T`` after any reweighting."""
+        if self._converged_dyn is not None and self.final_T is not None:
+            return float(self.final_T)
+        return float(self.T)
+
+    def load_ensemble(self):
+        """Read the whole ensemble into memory on the calling process.
+
+        This is the replicated path.  It is what ``backend="real"`` needs --
+        the real-space Lanczos parallelizes over a replicated ensemble -- and
+        it is the wrong thing to call from a q-space driver, which must go
+        through the distributed loaders instead.
+        """
+        import sscha.Ensemble
+
+        ensemble = sscha.Ensemble.Ensemble(self.generating_dyn, self.T)
+        if self.n_configs is None:
+            ensemble.load_bin(self.data_dir, self.population)
+        else:
+            ensemble.load_bin(self.data_dir, self.population,
+                              n_configs=self.n_configs)
+        if self.converged_dyn is not None:
+            ensemble.update_weights(self.converged_dyn,
+                                    self.reference_temperature)
+        return ensemble
+
+    def describe(self):
+        """Return the JSON-stable identity checked when a run is resumed.
+
+        Deliberately *not* the absolute path.  What makes two ensembles
+        different is the population, how many of its configurations are read,
+        and how they are reweighted -- none of which the fingerprint of the
+        dynamical matrix can see, since the same matrix generates every
+        population.  The directory enters only through its name, so that
+        moving a finished calculation to another machine does not invalidate
+        its checkpoint while ``pop1/`` and ``pop2/`` still do not collide.
+        The full path is recorded separately, for provenance.
+        """
+        return {
+            "directory_name": os.path.basename(
+                os.path.normpath(os.path.abspath(self.data_dir))),
+            "population": self.population,
+            "n_configs": self.n_configs,
+            "temperature": float(self.T),
+            "reweighted": self.converged_dyn is not None,
+            "reference_temperature": self.reference_temperature,
+        }
+
+    def provenance(self):
+        """Return where this ensemble was read from, for the record only."""
+        def path_of(value):
+            if isinstance(value, (str, os.PathLike)):
+                return os.fspath(value)
+            return None
+
+        return {
+            "data_dir": os.path.abspath(self.data_dir),
+            "dyn": path_of(self.dyn),
+            "final_dyn": path_of(self.final_dyn),
+        }
+
+
 @dataclass(frozen=True)
 class SpectroscopyRequest:
     """One named user request, possibly containing several perturbations."""
@@ -666,6 +877,18 @@ class SpectroscopyRequest:
 class Spectroscopy:
     """Restartable polarized and unpolarized Raman/IR calculation driver.
 
+    The ensemble is normally given as an :class:`EnsembleSource` -- where it
+    lives on disk -- rather than as a loaded ``sscha.Ensemble.Ensemble``.
+    Under ``mpirun`` the q-space backends then read the configurations on
+    the master alone and scatter them, so each rank holds ``N / n_procs`` of
+    them and a large ensemble does not have to fit in memory ``n_procs``
+    times.  :meth:`from_ensemble_path` is the shorthand for the common case.
+
+    A loaded ensemble is still accepted and still works; it is the
+    replicated path, appropriate for small systems and for
+    ``backend="real"``, whose real-space Lanczos parallelizes over a
+    replicated ensemble by design.
+
     ``ignore_v3`` and ``ignore_v4`` control the anharmonic vertices in every
     backend.  ``lo_to_split`` uses one common convention: ``None`` disables
     the nonanalytic Gamma correction, ``"random"`` delegates the direction
@@ -675,6 +898,21 @@ class Spectroscopy:
     """
 
     SUPPORTED_BACKENDS = ("real", "qspace", "atom_fourier")
+
+    @classmethod
+    def from_ensemble_path(cls, data_dir, population, dyn, T, nqirr=None,
+                           n_configs=None, final_dyn=None, final_nqirr=None,
+                           final_T=None, **options):
+        """Build a driver that reads its ensemble from ``data_dir``.
+
+        Shorthand for ``Spectroscopy(EnsembleSource(...), **options)``; see
+        :class:`EnsembleSource` for the meaning of the ensemble arguments and
+        :meth:`__init__` for the rest.
+        """
+        return cls(EnsembleSource(
+            data_dir=data_dir, population=population, dyn=dyn, T=T,
+            nqirr=nqirr, n_configs=n_configs, final_dyn=final_dyn,
+            final_nqirr=final_nqirr, final_T=final_T), **options)
 
     def __init__(self, ensemble, backend="qspace", workdir="spectroscopy",
                  use_symmetries=True, symmetry_tolerance=1e-8,
@@ -690,6 +928,14 @@ class Spectroscopy:
             raise ValueError("workdir must be a non-empty path") from error
         if not workdir:
             raise ValueError("workdir must be a non-empty path")
+        if (ensemble is not None
+                and not isinstance(ensemble, EnsembleSource)
+                and not (hasattr(ensemble, "current_dyn")
+                         and hasattr(ensemble, "current_T"))):
+            raise TypeError(
+                "ensemble must be an EnsembleSource, an "
+                "sscha.Ensemble.Ensemble, or None for load-only analysis; "
+                "got {}".format(type(ensemble).__name__))
         self.ensemble = ensemble
         self.backend = backend
         self.workdir = workdir
@@ -731,6 +977,44 @@ class Spectroscopy:
     @property
     def requests(self):
         return MappingProxyType(self._requests.copy())
+
+    @property
+    def ensemble_source(self):
+        """The :class:`EnsembleSource`, or ``None`` for a loaded ensemble."""
+        return self.ensemble if isinstance(self.ensemble, EnsembleSource) \
+            else None
+
+    @property
+    def reference_dyn(self):
+        """The dynamical matrix every observable and symmetry is defined on.
+
+        This is the ensemble's ``current_dyn``: the converged solution when
+        the ensemble is reweighted onto one.  It carries the Raman tensor,
+        the Born effective charges, and the electronic dielectric tensor.
+        It is small and is held on every MPI rank, unlike the configurations.
+        """
+        if self.ensemble is None:
+            return None
+        if isinstance(self.ensemble, EnsembleSource):
+            return self.ensemble.reference_dyn
+        return self.ensemble.current_dyn
+
+    @property
+    def reference_temperature(self):
+        """The ensemble's ``current_T`` after any reweighting."""
+        if self.ensemble is None:
+            return None
+        if isinstance(self.ensemble, EnsembleSource):
+            return self.ensemble.reference_temperature
+        return float(self.ensemble.current_T)
+
+    def _require_reference_dyn(self, what):
+        dyn = self.reference_dyn
+        if dyn is None:
+            raise ValueError(
+                "An ensemble source or a loaded ensemble is required to "
+                "{}".format(what))
+        return dyn
 
     def _add_request(self, request):
         if not isinstance(request.name, str) or not request.name:
@@ -859,6 +1143,7 @@ class Spectroscopy:
                 "source": request.source,
                 "perturbations": perturbations,
             })
+        source = self.ensemble_source
         return {
             "schema_version": _SPECTROSCOPY_SCHEMA_VERSION,
             "raman_schema_version": _RAMAN_SCHEMA_VERSION,
@@ -869,20 +1154,23 @@ class Spectroscopy:
             "ignore_v4": self.ignore_v4,
             "lo_to_split": self.lo_to_split,
             "backend_options": self.backend_options,
+            "ensemble_source": source.describe() if source is not None
+            else None,
+            "ensemble_provenance": source.provenance() if source is not None
+            else None,
             "requests": requests,
         }
 
     def plan_calculations(self):
         """Return the symmetry-reduced run plan without executing Lanczos."""
-        if self.ensemble is None:
-            raise ValueError("An ensemble is required to build a run plan")
+        dyn = self._require_reference_dyn("build a run plan")
         if not self._requests:
             raise ValueError("Add at least one Raman or IR request first")
         from tdscha import _SpectroscopyWorkflow as workflow
 
         self._run_specs, self._request_maps, group_order = (
             workflow.build_execution_plan(
-                self._requests, self.ensemble.current_dyn,
+                self._requests, dyn,
                 use_symmetries=self.use_symmetries,
                 tolerance=self.symmetry_tolerance))
         return {
@@ -920,18 +1208,20 @@ class Spectroscopy:
 
         plan = self.plan_calculations()
         manifest = self.manifest()
-        structure = self.ensemble.current_dyn.structure
-        supercell = np.asarray(self.ensemble.current_dyn.GetSupercell())
+        dyn = self._require_reference_dyn("write an execution manifest")
+        temperature = float(self.reference_temperature)
+        structure = dyn.structure
+        supercell = np.asarray(dyn.GetSupercell())
         unit_cell_volume = float(abs(np.linalg.det(structure.unit_cell)))
         manifest.update({
-            "ensemble_fingerprint": workflow.ensemble_fingerprint(
-                self.ensemble),
-            "temperature": float(self.ensemble.current_T),
+            "ensemble_fingerprint": workflow.reference_fingerprint(
+                dyn, temperature),
+            "temperature": temperature,
             "unit_cell_volume_angstrom3": unit_cell_volume,
             "supercell_volume_angstrom3": unit_cell_volume * float(
                 np.prod(supercell)),
             "dielectric_tensor": workflow.json_compatible(
-                getattr(self.ensemble.current_dyn, "dielectric_tensor", None)),
+                getattr(dyn, "dielectric_tensor", None)),
             "target_steps": int(n_steps),
             "run_options": workflow.json_compatible(run_options),
             "group_order": plan["group_order"],
@@ -946,12 +1236,15 @@ class Spectroscopy:
 
     @staticmethod
     def _validate_restart_manifest(existing, current):
+        # ``ensemble_provenance`` is intentionally absent: it records the
+        # absolute paths the ensemble was read from, which must not stop a
+        # calculation from resuming after it has been moved.
         fields = (
             "schema_version", "raman_schema_version", "backend",
             "use_symmetries", "symmetry_tolerance", "backend_options",
             "ignore_v3", "ignore_v4", "lo_to_split",
-            "requests", "ensemble_fingerprint", "run_options",
-            "request_components")
+            "requests", "ensemble_fingerprint", "ensemble_source",
+            "run_options", "request_components")
         mismatches = [field for field in fields
                       if existing.get(field) != current.get(field)]
         if mismatches:
@@ -965,6 +1258,12 @@ class Spectroscopy:
 
         ``n_steps`` is the total requested number of Lanczos coefficients,
         including work restored from checkpoints.
+
+        The backend engine is built once and reused for every independent
+        perturbation: preparing a perturbation resets the whole Lanczos
+        state, and reading a production ensemble is minutes of I/O that must
+        not be repeated per run.  It is built lazily, so a fully restored
+        calculation reloads nothing.
         """
         from tdscha import _SpectroscopyWorkflow as workflow
 
@@ -995,6 +1294,19 @@ class Spectroscopy:
         self._manifest_data = current
         workflow.atomic_write_json(manifest_path, current)
 
+        engine_options = dict(self.backend_options)
+        engine_options.update(
+            ignore_v3=self.ignore_v3,
+            ignore_v4=self.ignore_v4,
+            lo_to_split=(
+                np.asarray(self.lo_to_split, dtype=float)
+                if isinstance(self.lo_to_split, list)
+                else self.lo_to_split))
+        # Built on first use.  Every rank walks the same run list and makes
+        # the same skip decisions, so the construction -- which is collective
+        # for the distributed backends -- stays matched across ranks.
+        engine = None
+
         for run_id, spec in self._run_specs.items():
             run_dir = workdir / "runs" / run_id
             status_path = run_dir / "status.npz"
@@ -1017,16 +1329,10 @@ class Spectroscopy:
                         shift=analysis.get("shift", 0.0))
                 continue
 
-            engine_options = dict(self.backend_options)
-            engine_options.update(
-                ignore_v3=self.ignore_v3,
-                ignore_v4=self.ignore_v4,
-                lo_to_split=(
-                    np.asarray(self.lo_to_split, dtype=float)
-                    if isinstance(self.lo_to_split, list)
-                    else self.lo_to_split))
-            engine = workflow.create_backend(
-                self.ensemble, self.backend, engine_options)
+            if engine is None:
+                engine = workflow.create_backend(
+                    self.ensemble, self.backend, engine_options,
+                    use_symmetries=self.use_symmetries)
             workflow.prepare_engine(
                 engine, spec.as_array(), self.use_symmetries, spec,
                 self.symmetry_tolerance)
@@ -1177,7 +1483,11 @@ class Spectroscopy:
             if self._manifest_data is not None:
                 temperature = self._manifest_data["temperature"]
             else:
-                temperature = self.ensemble.current_T
+                temperature = self.reference_temperature
+            if temperature is None:
+                raise ValueError(
+                    "No temperature is available: pass temperature=, or run "
+                    "or load the calculation first")
         import tdscha.DynamicalLanczos as DL
         occupation = DL.bose_occupation(frequencies, float(temperature))
         spectrum = spectrum * (
@@ -1233,9 +1543,9 @@ class Spectroscopy:
             raise ValueError("Request {!r} is not IR".format(name))
         if self._manifest_data is None:
             raise RuntimeError("Run or load the calculation before analysis")
-        if epsilon_infinity is None and self.ensemble is not None:
+        if epsilon_infinity is None and self.reference_dyn is not None:
             epsilon_infinity = getattr(
-                self.ensemble.current_dyn, "dielectric_tensor", None)
+                self.reference_dyn, "dielectric_tensor", None)
         if epsilon_infinity is None:
             epsilon_infinity = self._manifest_data.get("dielectric_tensor")
         if epsilon_infinity is None:
@@ -1261,8 +1571,9 @@ class Spectroscopy:
             if volume_angstrom3 is None:
                 # Backward compatibility with manifests written before the
                 # supercell volume was stored.
-                n_cell = float(np.prod(np.asarray(
-                    self.ensemble.current_dyn.GetSupercell())))
+                dyn = self._require_reference_dyn(
+                    "recover the supercell volume of an old manifest")
+                n_cell = float(np.prod(np.asarray(dyn.GetSupercell())))
                 volume_angstrom3 = (
                     self._manifest_data["unit_cell_volume_angstrom3"]
                     * n_cell)
@@ -1273,7 +1584,7 @@ class Spectroscopy:
 
 
 __all__ = [
-    "CartesianPerturbation", "IRPolarizationPerturbation",
+    "CartesianPerturbation", "EnsembleSource", "IRPolarizationPerturbation",
     "PerturbationKind", "PerturbationOrbit", "RAMAN_COMPONENTS",
     "RamanComponent", "RamanTensorPerturbation", "Spectroscopy",
     "SpectroscopyRequest", "SymmetryGroup", "build_ir_vector",

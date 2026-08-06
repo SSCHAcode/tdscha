@@ -5,14 +5,15 @@ rank holds a full replica.  This checks the property that makes it usable: a
 distributed run reproduces the replicated one, for the plain q-space Lanczos
 *and* for the atom-Fourier interpolated one.
 
-The interpolated case needs its own strategy. ``QSpaceAtomFourierLanczos``
-performs MPI collectives inside its constructor
-(``interpolate_dyn_fine`` -> ``ForceTensor.Apply_ASR`` -> ``broadcast``), so the
-master-builds-then-scatters path deadlocks: the master blocks in the ASR
-broadcast while the workers block in the metadata broadcast. The interpolated
-loader therefore builds on every rank and slices afterwards
-(``build_on_all_ranks=True``).  A regression here shows up as a hang, so these
-tests carry a timeout and treat expiry as failure.
+The interpolated case is the delicate one.  Building
+``QSpaceAtomFourierLanczos`` interpolates the dynamical matrix, and that goes
+through CellConstructor's ``ForceTensor`` (``Center`` and ``Apply_ASR``), each
+of which ends in an unconditional ``Settings.broadcast``.  Left inside the
+master-only branch it deadlocks -- master in the ASR broadcast, workers in the
+metadata broadcast.  ``prepare_distributed_construction`` moves exactly that
+step in front of the master/worker split so every rank runs it together, and
+the master then reads the configurations alone.  A regression here shows up as
+a hang, so these tests carry a timeout and treat expiry as failure.
 
 Each case runs in its own ``mpirun`` because every matrix-vector product is a
 collective: a rank that built a second, replicated object and stepped it alone
@@ -86,3 +87,49 @@ def test_distributed_matches_replicated(kind, tmp_path):
     assert int(dist["xq_nq"]) == int(serial["xq_nq"])
 
     _assert_same_coeffs(serial, dist, "distributed %s" % kind)
+
+
+def test_interpolated_master_only_matches_build_everywhere(tmp_path):
+    """The production loader must reproduce the replicating oracle exactly.
+
+    ``build_on_all_ranks=True`` rebuilds the whole object identically on every
+    rank, so it cannot disagree with itself about the interpolated mode basis.
+    The production path instead interpolates on all ranks and then takes the
+    master's copy of that basis; if those two ever produced different
+    polarization vectors, the ensemble Bloch fields would be projected in one
+    gauge and contracted in another, and the coefficients would move.
+    """
+    oracle = _run("oracle-tri", str(tmp_path / "oracle.npz"), 2)
+    dist = _run("dist-tri", str(tmp_path / "dist.npz"), 2)
+
+    assert bool(dist["distributed"]) is True
+    assert int(dist["n_global"]) == int(oracle["n_global"])
+    assert int(dist["n_local"]) == int(oracle["n_local"])
+    _assert_same_coeffs(oracle, dist, "master-only vs build-everywhere")
+
+
+def test_collective_left_in_the_constructor_fails_loudly(tmp_path):
+    """The historical defect must not be able to come back silently.
+
+    A collective the master runs alone does not raise anywhere: MPI matches
+    it against whatever the workers happen to be waiting in and hands them
+    the wrong payload.  Before the sentinel in the metadata, that produced a
+    hang -- and, when it did not hang, a plausible but wrong spectrum.  The
+    loader must now diagnose it and stop the job.
+    """
+    cmd = ["mpirun", "-np", "2", sys.executable, PROBE, "guard-tri", DATA,
+           str(tmp_path / "unused.npz")]
+    env = dict(os.environ, OMP_NUM_THREADS="1")
+    try:
+        proc = subprocess.run(cmd, cwd=REPO, env=env, timeout=TIMEOUT,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT)
+    except subprocess.TimeoutExpired:
+        pytest.fail("a mismatched collective must abort, not hang")
+    output = proc.stdout.decode()
+    assert proc.returncode != 0, \
+        "a mismatched collective must not be reported as success:\n%s" % (
+            output[-3000:])
+    assert "distributed loader received something other than its own" \
+        in output, output[-3000:]
+    assert not os.path.exists(str(tmp_path / "unused.npz"))

@@ -6,6 +6,44 @@ restart files, and spectrum assembly. The lower-level
 `DynamicalLanczos.prepare_raman` and `prepare_ir` methods remain available so
 existing scripts keep working, but new calculations should use this class.
 
+## Where the ensemble comes from
+
+The driver takes the **location** of the ensemble, not a loaded one:
+
+```python
+from tdscha.Spectroscopy import EnsembleSource
+
+source = EnsembleSource(
+    data_dir="ensemble_data",
+    population=3,
+    dyn="dyn_gen_pop3_", nqirr=8,   # the generating dynamical matrix
+    T=250.0,
+    final_dyn="dyn_end_", final_nqirr=8,   # the converged solution
+    final_T=250.0,
+    n_configs=None,                 # None reads the whole population
+)
+```
+
+Under `mpirun` the `qspace` and `atom_fourier` backends then read the
+configurations **once, on the master**, and scatter them: every rank keeps
+only `N / n_procs` of the Bloch-transformed displacements and forces. A
+160 000-configuration ensemble therefore never exists more than once, which
+is what makes it runnable at all. Nothing else is distributed — the
+dynamical matrices are small and every rank holds them, because the run
+plan, the symmetry analysis, and the spectral assembly all need them.
+
+`final_dyn` is the reference of the whole calculation: the ensemble is
+reweighted onto it, and its Raman tensor, Born effective charges, and
+dielectric tensor define the optical vertices. Production runs should always
+set it.
+
+A loaded `sscha.Ensemble.Ensemble` is still accepted and behaves as before —
+replicated on every rank (a warning says so when a q-space backend gets one
+under `mpirun`). That is the right thing for small systems and it is what
+`backend="real"` needs, since the real-space Lanczos parallelizes by splitting
+a replicated ensemble across ranks. Passing an `EnsembleSource` to
+`backend="real"` therefore loads the ensemble on every rank, by design.
+
 ## Polarized and unpolarized requests
 
 ```python
@@ -13,7 +51,7 @@ import numpy as np
 from tdscha.Spectroscopy import Spectroscopy
 
 spectra = Spectroscopy(
-    ensemble,
+    source,
     backend="qspace",              # real, qspace, or atom_fourier
     workdir="optical_spectroscopy",
     ignore_v3=False,
@@ -33,10 +71,32 @@ print(spectra.plan_calculations())
 spectra.run(200, save_each=10)
 ```
 
+`Spectroscopy.from_ensemble_path` is the shorthand that builds the
+`EnsembleSource` for you:
+
+```python
+spectra = Spectroscopy.from_ensemble_path(
+    "ensemble_data", 3, "dyn_gen_pop3_", 250.0, nqirr=8,
+    final_dyn="dyn_end_", final_nqirr=8,
+    backend="qspace", workdir="optical_spectroscopy",
+)
+```
+
 The polarization vectors are normalized by the API. Equilibrium Raman
 derivatives, Born effective charges, and the electronic dielectric tensor are
-read from `ensemble.current_dyn`. `effective_charges=` can be passed to either
-IR request when an explicit override is needed.
+read from the reference dynamical matrix (`spectra.reference_dyn`, i.e. the
+ensemble's `current_dyn`: `final_dyn` when the ensemble is reweighted).
+`effective_charges=` can be passed to either IR request when an explicit
+override is needed.
+
+For `atom_fourier`, the interpolation mesh is a backend option:
+
+```python
+spectra = Spectroscopy(
+    source, backend="atom_fourier", workdir="raman_interpolated",
+    backend_options={"fine_mesh": (8, 6, 8)},
+)
+```
 
 `ignore_v3` and `ignore_v4` are explicit backend-independent physics
 switches. The former `backend_options={"ignore_v3": ..., "ignore_v4": ...}`
@@ -95,7 +155,17 @@ loaded = Spectroscopy.load("optical_spectroscopy")
 Each independent perturbation stores native restart state, a backend-neutral
 result, and (for Lanczos backends) a portable `.abc` file. Manifest
 fingerprints reject restarts made with different ensembles, requests, backend
-options, or run options.
+options, or run options. The manifest records both a fingerprint of the
+reference dynamical matrix and temperature, and the identity of the ensemble
+on disk (`data_dir`, population, `n_configs`, whether it was reweighted), so a
+restart pointed at a different population is refused rather than silently
+mixed.
+
+The engine is built once per `run()` and reused for every independent
+perturbation: preparing a perturbation resets the whole Lanczos state, and
+reading a production ensemble is minutes of I/O that must not be repeated per
+run. It is built lazily, so re-running a finished calculation for analysis
+reloads nothing.
 
 ## Raman spectra
 
@@ -144,7 +214,7 @@ factor and `Omega` must be the supercell volume
 matching the CellConstructor non-analytic LO-TO term (the 8 is the Rydberg
 `e^2 = 2`).  `ionic_prefactor=` can override the remaining `4*pi/Omega`
 convention explicitly.
-The full 3x3 `ensemble.current_dyn.dielectric_tensor` is stored in the
+The full 3x3 `reference_dyn.dielectric_tensor` is stored in the
 manifest and inferred during both live and load-only analysis. Polarized IR
 uses `e.T @ epsilon_infinity @ e`; an unpolarized request uses
 `trace(epsilon_infinity)/3`. Passing `epsilon_infinity=` remains an explicit

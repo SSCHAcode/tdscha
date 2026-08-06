@@ -331,8 +331,21 @@ For a configuration-distributed MPI calculation:
 lanczos = AF.load_distributed_atom_fourier_tdscha(
     "ensemble_dir", population_id=1, dyn=dyn, T=300,
     fine_mesh=(8, 8, 8),
+    final_dyn=final_dyn, final_T=300,
 )
 ```
+
+The master reads the ensemble and scatters the configurations, so no rank ever
+holds a replica. The harmonic interpolation is the one part every rank runs
+together — it broadcasts inside CellConstructor's `ForceTensor`, and a
+master-only build would leave the workers in a different collective. It is
+handled by `QSpaceAtomFourierLanczos.prepare_distributed_construction()`, which
+the loader calls before the master/worker split; nothing needs to be passed for
+it.
+
+For Raman and IR the same loading happens automatically through
+`Spectroscopy(EnsembleSource(...), backend="atom_fourier", ...)`; see
+[Raman and IR spectroscopy](spectroscopy.md).
 
 ### Choosing the Perturbation
 

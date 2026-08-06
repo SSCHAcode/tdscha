@@ -128,7 +128,7 @@ def test_run_resume_load_and_analyze(monkeypatch, tmp_path):
     ensemble = _Ensemble()
     _FakeEngine.created = 0
 
-    def make_engine(_ensemble, _backend, _options):
+    def make_engine(_ensemble, _backend, _options, **_):
         return _FakeEngine(_ensemble.current_T)
 
     monkeypatch.setattr(workflow, "create_backend", make_engine)
@@ -195,7 +195,7 @@ def test_dielectric_tensor_is_projected_not_scalarized(monkeypatch, tmp_path):
         [2.0, 0.4, 0.0], [0.4, 4.0, 0.0], [0.0, 0.0, 8.0]])
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _FakeEngine(ens.current_T))
+        lambda ens, backend, options, **_: _FakeEngine(ens.current_T))
     job = SP.Spectroscopy(
         ensemble, backend="real", workdir=tmp_path / "tensor")
     direction = np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0)
@@ -233,7 +233,7 @@ def test_dielectric_function_uses_supercell_volume(monkeypatch, tmp_path):
     ensemble.current_dyn.GetSupercell = lambda: np.array([2, 1, 2])
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _FakeEngine(ens.current_T))
+        lambda ens, backend, options, **_: _FakeEngine(ens.current_T))
     job = SP.Spectroscopy(
         ensemble, backend="real", workdir=tmp_path / "supercell_ir")
     job.add_ir_unpolarized("powder")
@@ -293,7 +293,7 @@ def test_restart_manifest_rejects_changed_requests(monkeypatch, tmp_path):
     ensemble = _Ensemble()
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _FakeEngine(ens.current_T))
+        lambda ens, backend, options, **_: _FakeEngine(ens.current_T))
     workdir = tmp_path / "spectroscopy"
     first = SP.Spectroscopy(ensemble, backend="real", workdir=workdir)
     first.add_ir_polarized([1, 0, 0], "ir")
@@ -314,7 +314,7 @@ def test_interrupted_run_resumes_from_native_status(monkeypatch, tmp_path):
     workdir = tmp_path / "interrupted"
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _InterruptingEngine(ens.current_T))
+        lambda ens, backend, options, **_: _InterruptingEngine(ens.current_T))
     interrupted = SP.Spectroscopy(
         ensemble, backend="real", workdir=workdir,
         use_symmetries=False)
@@ -324,7 +324,7 @@ def test_interrupted_run_resumes_from_native_status(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _FakeEngine(ens.current_T))
+        lambda ens, backend, options, **_: _FakeEngine(ens.current_T))
     resumed = SP.Spectroscopy(
         ensemble, backend="real", workdir=workdir,
         use_symmetries=False)
@@ -342,7 +342,7 @@ def test_unpolarized_and_polarized_raman_assembly(monkeypatch, tmp_path):
     ensemble = _Ensemble()
     monkeypatch.setattr(
         workflow, "create_backend",
-        lambda ens, backend, options: _FakeEngine(ens.current_T))
+        lambda ens, backend, options, **_: _FakeEngine(ens.current_T))
     job = SP.Spectroscopy(
         ensemble, backend="real", workdir=tmp_path / "raman",
         use_symmetries=False)

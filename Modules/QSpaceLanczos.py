@@ -155,6 +155,43 @@ class QSpaceLanczos(DL.Lanczos):
     # risking a degenerate-subspace gauge mismatch between ranks.
     _DISTRIBUTED_EXTRA_ATTRS = ()
 
+    @classmethod
+    def prepare_distributed_construction(cls, dyn, **kwargs):
+        """Run the collective part of the construction on every MPI rank.
+
+        ``load_distributed_tdscha`` reads the ensemble on the master alone,
+        so anything the constructor does that involves an MPI collective
+        would leave the workers -- parked in the metadata broadcast -- in a
+        different collective.  MPI does not diagnose the mismatch: the run
+        either hangs or silently delivers one collective's payload to the
+        other's receiver.
+
+        The loader therefore calls this classmethod on **all** ranks before
+        the master/worker split.  Whatever it returns is merged into the
+        constructor keyword arguments, so the collective work is already
+        done by the time the master builds the object alone.
+
+        The plain q-space construction has no collective step, so the base
+        implementation returns an empty mapping.  Subclasses whose
+        constructor calls into CellConstructor's ``ForceTensor`` -- see
+        :class:`~tdscha.QSpaceAtomFourier.QSpaceAtomFourierLanczos` --
+        override it.
+
+        Parameters
+        ----------
+        dyn : CC.Phonons.Phonons
+            The dynamical matrix the object will be built on: the ensemble's
+            ``current_dyn``, i.e. ``final_dyn`` when the loader reweights.
+        **kwargs
+            The constructor keyword arguments of the loader call.
+
+        Returns
+        -------
+        dict
+            Extra keyword arguments for the constructor.
+        """
+        return {}
+
     def __init__(self, ensemble, lo_to_split=None, **kwargs):
         """Initialize the Q-Space Lanczos.
 
@@ -1698,6 +1735,47 @@ Starting from step %d
 # Distributed Configuration Loading
 # =============================================================================
 
+# Sentinel carried by the distributed loader's metadata broadcast.  It is
+# not decoration: the failure this catches is the one that made the previous
+# interpolated loader unusable.  When the master enters a collective the
+# workers are not in -- CellConstructor's ForceTensor broadcasts, say -- MPI
+# matches the two by arrival order and the workers' ``bcast`` returns
+# *something else*, with no error anywhere.  Checking the payload turns that
+# into an immediate, explicit failure instead of a silently wrong spectrum.
+_DISTRIBUTED_METADATA_TAG = "__tdscha_distributed_metadata__"
+_DISTRIBUTED_METADATA_VERSION = 1
+
+
+def _check_distributed_metadata(metadata):
+    """Fail loudly unless the broadcast delivered the loader's own metadata.
+
+    Once a collective has been mismatched the communicator is unusable and
+    no rank can make progress: the master is blocked in a collective nobody
+    will complete.  Waiting for a scheduler to time out is the worst of the
+    available outcomes, so this reports the diagnosis and aborts the job.
+    """
+    if (isinstance(metadata, dict)
+            and metadata.get(_DISTRIBUTED_METADATA_TAG)
+            == _DISTRIBUTED_METADATA_VERSION):
+        return
+    message = (
+        "The distributed loader received something other than its own "
+        "metadata from the master.\n\n"
+        "The master entered an MPI collective that the other ranks did "
+        "not: MPI matched them by arrival order and delivered the wrong "
+        "payload here.  The usual cause is construction work that "
+        "broadcasts internally -- CellConstructor's ForceTensor does, "
+        "while centering the force constants and imposing the acoustic sum "
+        "rule.  Such work belongs in the Lanczos class's "
+        "prepare_distributed_construction(), which every rank runs "
+        "together, not in the master-only branch.\n")
+    sys.stderr.write("\nTD-SCHA distributed loader: " + message)
+    sys.stderr.flush()
+    if __MPI4PY__ and mpi4py.MPI.COMM_WORLD.Get_size() > 1:
+        mpi4py.MPI.COMM_WORLD.Abort(1)
+    raise RuntimeError(message)
+
+
 def _distributed_slice(rank, n_procs, N_global):
     """Contiguous [start, end) block of configurations owned by ``rank``."""
     per_proc = N_global // n_procs
@@ -1717,23 +1795,18 @@ def _load_distributed_build_everywhere(cls, data_dir, population_id, dyn, T,
                                        final_T=None, **kwargs):
     """Distribute the configurations by building on every rank, then slicing.
 
-    The alternative strategy to the master-builds-and-scatters path, and the
-    only one that works when the constructor itself performs MPI collectives.
-    ``QSpaceAtomFourierLanczos`` is such a case: harmonic interpolation calls
-    ``ForceTensor.Apply_ASR`` and then ``CC.Settings.broadcast``. If only the
-    master ran that, it would block inside the ASR broadcast while every other
-    rank sat in the metadata ``bcast`` -- two different collectives, i.e. a
-    deadlock (confirmed by stack dump before this path existed).
+    A diagnostic oracle for the master-builds-and-scatters path, not a
+    production loader: every rank reads the whole ensemble, so peak memory is
+    the replicated one and the very cost this module exists to remove is paid
+    in full.  It survives because it makes no assumption at all about which
+    rank computed what -- the ranks run the same deterministic code on the
+    same input and are never compared -- which makes it a clean reference for
+    checking that the master-only path returns the same coefficients.
 
-    Here every rank performs the identical construction, so all collectives are
-    matched, and only afterwards does each rank drop the configurations it does
-    not own.  Building redundantly also removes the gauge question entirely:
-    the ranks are not compared, they run the same deterministic code on the
-    same input.
-
-    The ensemble is replicated only *during* construction; what matters for a
-    long run is the steady state, where each rank keeps N/n_procs columns of
-    X_q/Y_q -- the arrays that dominate the footprint.
+    A constructor performing MPI collectives is *not* a reason to prefer this
+    path; those collectives belong in
+    ``QSpaceLanczos.prepare_distributed_construction``, which the master-only
+    loader runs on every rank.
     """
     rank = Parallel.get_rank() if hasattr(Parallel, "get_rank") else \
         mpi4py.MPI.COMM_WORLD.Get_rank()
@@ -1816,7 +1889,16 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
         ``QSpaceAtomFourierLanczos`` (or use
         ``QSpaceAtomFourier.load_distributed_atom_fourier_tdscha``) to
         distribute an *interpolated* calculation; the subclass declares the
-        extra state to broadcast through ``_DISTRIBUTED_EXTRA_ATTRS``.
+        extra state to broadcast through ``_DISTRIBUTED_EXTRA_ATTRS`` and the
+        collective part of its construction through
+        ``prepare_distributed_construction``.
+    build_on_all_ranks : bool
+        Diagnostic path.  Every rank loads the whole ensemble, builds the
+        whole object, and only then drops the configurations it does not
+        own.  It replicates the ensemble during construction, which is
+        exactly what this loader exists to avoid, and it is kept only as an
+        oracle the master-only path can be compared against on small
+        systems.  Leave it False for production.
     **kwargs
         Additional arguments passed to the Lanczos class (e.g. ``fine_mesh``
         and ``ignore_effective_charges`` for interpolation).
@@ -1832,6 +1914,10 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     mpirun -np 8 python your_script.py
 
     Flow:
+    - All ranks: run ``cls.prepare_distributed_construction`` together, so
+                 that any MPI collective inside the construction (the
+                 harmonic interpolation of the interpolated subclasses) is
+                 matched across ranks before the master goes on alone
     - Rank 0: loads ensemble, optionally updates weights, creates QSpaceLanczos,
               broadcasts metadata, sends slices
     - Ranks 1..n-1: receive metadata, build bare QSpaceLanczos, receive slices
@@ -1848,6 +1934,14 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
             cls, data_dir, population_id, dyn, T, lo_to_split=lo_to_split,
             use_symmetries=use_symmetries, n_configs=n_configs,
             final_dyn=final_dyn, final_T=final_T, **kwargs)
+
+    # Collective, on every rank: the object the master is about to build
+    # lives on the ensemble's current_dyn, which is final_dyn whenever the
+    # weights are updated.
+    kwargs = dict(kwargs)
+    kwargs.update(cls.prepare_distributed_construction(
+        dyn if final_dyn is None else final_dyn,
+        lo_to_split=lo_to_split, **kwargs))
 
     if Parallel.am_i_the_master():
         # ========== MASTER (RANK 0) ==========
@@ -1874,6 +1968,7 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
 
         # Broadcast metadata (structure arrays, NO config data)
         metadata = {
+            _DISTRIBUTED_METADATA_TAG: _DISTRIBUTED_METADATA_VERSION,
             'T': qlanc.T, 'dyn': qlanc.dyn,
             'uci_structure': qlanc.uci_structure,
             'super_structure': qlanc.super_structure,
@@ -1951,6 +2046,7 @@ def load_distributed_tdscha(data_dir, population_id, dyn, T, lo_to_split=None,
     else:
         # ========== OTHER RANKS ==========
         metadata = comm.bcast(None, root=0)
+        _check_distributed_metadata(metadata)
 
         # Barrier to ensure all ranks have received metadata before slices are sent
         comm.barrier()

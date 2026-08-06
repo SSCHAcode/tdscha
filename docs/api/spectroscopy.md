@@ -2,6 +2,8 @@
 
 ::: tdscha.Spectroscopy.Spectroscopy
 
+::: tdscha.Spectroscopy.EnsembleSource
+
 ::: tdscha.Spectroscopy.RamanTensorPerturbation
 
 ::: tdscha.Spectroscopy.IRPolarizationPerturbation

@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 from typing import Optional, Tuple
+import warnings
 
 import numpy as np
 
@@ -86,8 +87,16 @@ def array_fingerprint(*arrays):
     return digest.hexdigest()
 
 
-def ensemble_fingerprint(ensemble):
-    dyn = ensemble.current_dyn
+def reference_fingerprint(dyn, temperature):
+    """Fingerprint the reference dynamical matrix and temperature.
+
+    This is what identifies a calculation for restart purposes.  It
+    deliberately does not touch the configurations: they live only on the
+    master once the ensemble is loaded distributed, so any fingerprint over
+    them would either be unavailable or force a collective.  The
+    configurations are identified separately, by the manifest's
+    ``ensemble_source`` entry.
+    """
     structure = dyn.structure
     dynmats = getattr(dyn, "dynmats", ())
     arrays = [
@@ -100,7 +109,7 @@ def ensemble_fingerprint(ensemble):
         getattr(dyn, "raman_tensor", None),
         getattr(dyn, "effective_charges", None),
         getattr(dyn, "dielectric_tensor", None),
-        np.asarray([ensemble.current_T], dtype=float),
+        np.asarray([float(temperature)], dtype=float),
     ])
     return array_fingerprint(*arrays)
 
@@ -227,7 +236,75 @@ def build_execution_plan(requests, dyn, use_symmetries=True, tolerance=1e-8):
     return run_specs, request_maps, len(group)
 
 
-def create_backend(ensemble, backend, options):
+def _create_distributed_backend(source, backend, options, use_symmetries):
+    """Build a q-space engine whose configurations live on one rank each.
+
+    The master reads the ensemble and scatters the Bloch-transformed
+    configurations; no rank ever holds a replica.  Anything in the
+    construction that performs an MPI collective is run by every rank first,
+    through ``prepare_distributed_construction`` -- see
+    ``QSpaceLanczos.load_distributed_tdscha``.
+    """
+    loader_options = dict(
+        use_symmetries=use_symmetries,
+        n_configs=source.n_configs,
+        final_dyn=source.converged_dyn,
+        final_T=(source.reference_temperature
+                 if source.converged_dyn is not None else None),
+        lo_to_split=options.pop("lo_to_split", None))
+
+    if backend == "qspace":
+        import tdscha.QSpaceLanczos as QL
+        return QL.load_distributed_tdscha(
+            source.data_dir, source.population, source.generating_dyn,
+            source.T, **loader_options, **options)
+    if backend == "atom_fourier":
+        import tdscha.QSpaceAtomFourier as QAF
+        fine_mesh = options.pop("fine_mesh", None)
+        if fine_mesh is None:
+            raise ValueError(
+                "backend='atom_fourier' needs backend_options={'fine_mesh': "
+                "(m1, m2, m3), ...}")
+        return QAF.load_distributed_atom_fourier_tdscha(
+            source.data_dir, source.population, source.generating_dyn,
+            source.T, fine_mesh, **loader_options, **options)
+    raise AssertionError("unreachable backend {!r}".format(backend))
+
+
+def _create_replicated_backend(ensemble, backend, options):
+    """Build an engine from an ensemble already in this process's memory."""
+    if backend == "real":
+        import tdscha.DynamicalLanczos as DL
+        return DL.Lanczos(ensemble, **options)
+    if backend == "qspace":
+        import tdscha.QSpaceLanczos as QL
+        return QL.QSpaceLanczos(ensemble, **options)
+    if backend == "atom_fourier":
+        import tdscha.QSpaceAtomFourier as QAF
+        return QAF.QSpaceAtomFourierLanczos(ensemble, **options)
+    raise AssertionError("unreachable backend {!r}".format(backend))
+
+
+def create_backend(ensemble, backend, options, use_symmetries=True):
+    """Build the Lanczos engine for one spectroscopy calculation.
+
+    ``ensemble`` is either a :class:`~tdscha.Spectroscopy.EnsembleSource` --
+    the production path, where the configurations are read once by the MPI
+    master and scattered -- or a loaded ``sscha.Ensemble.Ensemble``, which
+    is replicated on every rank.
+
+    ``backend="real"`` has no distributed loader: the real-space Lanczos
+    parallelizes by splitting a *replicated* ensemble across ranks, so from
+    a source it loads the ensemble on every rank.  That is correct for the
+    small systems this backend is for, and is why the q-space backends exist
+    for the large ones.
+    """
+    import tdscha.Spectroscopy as SP
+
+    if backend not in ("real", "qspace", "atom_fourier"):
+        raise ValueError("Unsupported spectroscopy backend {!r}".format(
+            backend))
+
     options = dict(options)
     runtime_flags = {}
     for name in ("ignore_v3", "ignore_v4", "ignore_harmonic",
@@ -235,18 +312,21 @@ def create_backend(ensemble, backend, options):
         if name in options:
             runtime_flags[name] = options.pop(name)
 
-    if backend == "real":
-        import tdscha.DynamicalLanczos as DL
-        engine = DL.Lanczos(ensemble, **options)
-    elif backend == "qspace":
-        import tdscha.QSpaceLanczos as QL
-        engine = QL.QSpaceLanczos(ensemble, **options)
-    elif backend == "atom_fourier":
-        import tdscha.QSpaceAtomFourier as QAF
-        engine = QAF.QSpaceAtomFourierLanczos(ensemble, **options)
+    if isinstance(ensemble, SP.EnsembleSource) and backend != "real":
+        engine = _create_distributed_backend(
+            ensemble, backend, options, use_symmetries)
     else:
-        raise ValueError("Unsupported spectroscopy backend {!r}".format(
-            backend))
+        if isinstance(ensemble, SP.EnsembleSource):
+            ensemble = ensemble.load_ensemble()
+        elif backend != "real" and Parallel.GetNProc() > 1:
+            warnings.warn(
+                "Spectroscopy was given an already loaded ensemble, so every "
+                "one of the {} ranks holds a full copy of the "
+                "configurations. Pass an EnsembleSource (or use "
+                "Spectroscopy.from_ensemble_path) to have the master read "
+                "them once and scatter them instead.".format(
+                    Parallel.GetNProc()))
+        engine = _create_replicated_backend(ensemble, backend, options)
 
     for name, value in runtime_flags.items():
         setattr(engine, name, value)
@@ -437,8 +517,7 @@ __all__ = [
     "atomic_save_abc",
     "atomic_save_status", "atomic_write_json", "build_execution_plan",
     "completed_steps", "create_backend", "engine_converged",
-    "ensemble_fingerprint",
     "ensure_directory", "evaluate_green_function", "evaluate_response",
     "json_compatible", "load_abc_result", "load_result", "prepare_engine",
-    "run_engine_chunk", "save_result",
+    "reference_fingerprint", "run_engine_chunk", "save_result",
 ]

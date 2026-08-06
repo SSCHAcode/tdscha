@@ -40,8 +40,8 @@ from cellconstructor.Settings import ParallelPrint as print
 import tdscha.QSpaceLanczos as QL
 import tdscha.JuliaExt as JuliaExt
 from tdscha.QSpaceInterpolation import (
-    generate_fine_mesh, build_q_index_lookup, mesh_key, validate_mesh,
-    interpolate_dyn_fine)
+    build_fine_harmonic, build_q_index_lookup, mesh_key, validate_mesh,
+    FineHarmonicInterpolation)
 
 
 class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
@@ -87,6 +87,16 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
         frequencies are excluded from the one- and two-phonon Hilbert space
         with a warning instead of raising.  The resulting spectrum is
         incomplete and must not be treated as a physical interpolation.
+    harmonic_interpolation : QSpaceInterpolation.FineHarmonicInterpolation
+        An already computed fine-mesh interpolation of the same dynamical
+        matrix, as returned by
+        :meth:`prepare_distributed_construction`.  When given, the harmonic
+        interpolation is not recomputed.  This is what lets the distributed
+        loaders keep the MPI collectives inside the interpolation matched
+        across ranks while only the master reads the ensemble.  Before it is
+        used it is checked against the dynamical matrix, the mesh, and the
+        long-range settings it would have been built from, so it cannot
+        contract the ensemble in a mode basis that does not belong to it.
     """
 
     _INTERPOLATION_ATTRS = (
@@ -111,19 +121,65 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
     _DISTRIBUTED_EXTRA_ATTRS = _INTERPOLATION_ATTRS + (
         'qspace_scale3', 'qspace_scale4', 'qspace_prefiltered')
 
+    @staticmethod
+    def _interpolation_lo_to_split(lo_to_split, ignore_effective_charges):
+        """The nonanalytic direction seen by the *harmonic interpolation*.
+
+        Suppressing the effective charges disables the whole dipolar
+        correction, including its Gamma LO--TO limit, while the caller's
+        dynamical matrix keeps Z* for IR perturbations.
+        """
+        return None if ignore_effective_charges else lo_to_split
+
+    @classmethod
+    def prepare_distributed_construction(cls, dyn, fine_mesh=None,
+                                         use_asr_dyn=True,
+                                         ignore_effective_charges=False,
+                                         lo_to_split=None, **kwargs):
+        """Interpolate the dynamical matrix on every rank -- see the base class.
+
+        The harmonic interpolation is the only collective step of this
+        constructor: it goes through ``ForceTensor.Tensor2.Center`` and
+        ``Apply_ASR``, both of which end with an unconditional
+        ``Settings.broadcast``.  Running it here, identically on every rank,
+        keeps those collectives matched and lets the master build the rest
+        of the object -- the part that reads the configurations -- alone.
+
+        The result is cheap next to the ensemble: it scales with the fine
+        mesh and the number of atoms, not with the number of
+        configurations.  The workers' own copy is discarded when the loader
+        overwrites the interpolation state with the master's, so a
+        degenerate-subspace gauge difference between ranks (were the
+        diagonalization ever not bit-reproducible) cannot leak into the
+        Bloch fields.
+        """
+        if fine_mesh is None:
+            raise ValueError(
+                "QSpaceAtomFourierLanczos requires fine_mesh=(m1, m2, m3)")
+        return {"harmonic_interpolation": build_fine_harmonic(
+            dyn, fine_mesh,
+            use_asr=use_asr_dyn,
+            ignore_effective_charges=ignore_effective_charges,
+            lo_to_split=cls._interpolation_lo_to_split(
+                lo_to_split, ignore_effective_charges))}
+
     def __init__(self, ensemble, fine_mesh=None, use_asr_dyn=True,
                  ignore_effective_charges=False,
                  w_min_guard=1e-8, allow_unstable=False,
-                 lo_to_split=None, **kwargs):
+                 lo_to_split=None, harmonic_interpolation=None, **kwargs):
+        if (harmonic_interpolation is not None
+                and not isinstance(harmonic_interpolation,
+                                   FineHarmonicInterpolation)):
+            raise TypeError(
+                "harmonic_interpolation must be a "
+                "FineHarmonicInterpolation, got {}".format(
+                    type(harmonic_interpolation).__name__))
         # The parent fixes the commensurate (including Gamma) mode basis with
         # the requested nonanalytic direction.  The fine interpolation below
         # uses the same long-range convention and those commensurate points
-        # are pinned back to this exact basis.  Effective-charge suppression
-        # is deliberately scoped to this harmonic backend: it disables both
-        # the analytic dipole tail and its Gamma LO--TO limit, while the
-        # caller's dynamical matrix retains Z* for IR perturbations.
-        interpolation_lo_to_split = (
-            None if ignore_effective_charges else lo_to_split)
+        # are pinned back to this exact basis.
+        interpolation_lo_to_split = self._interpolation_lo_to_split(
+            lo_to_split, ignore_effective_charges)
         super().__init__(
             ensemble, lo_to_split=interpolation_lo_to_split, **kwargs)
 
@@ -188,20 +244,28 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
             for q in self.cq_points]
 
         # == 2. Fine mesh and interpolated dynamical matrix ==
-        q_fine, idx_fine = generate_fine_mesh(self.uci_structure,
-                                              self.fine_mesh)
-        self._fine_idx = idx_fine
-        self._q_lookup = build_q_index_lookup(q_fine, self.uci_structure,
-                                              self.fine_mesh)
         self.ignore_effective_charges = bool(ignore_effective_charges)
         self._interp_used_effective_charges = (
             self.dyn.effective_charges is not None
             and not self.ignore_effective_charges)
-        w_f, pols_f = interpolate_dyn_fine(
-            self.dyn, q_fine, use_asr=use_asr_dyn,
+        if harmonic_interpolation is None:
+            harmonic_interpolation = build_fine_harmonic(
+                self.dyn, self.fine_mesh, use_asr=use_asr_dyn,
+                ignore_effective_charges=self.ignore_effective_charges,
+                lo_to_split=interpolation_lo_to_split)
+        harmonic_interpolation.validate_for(
+            self.dyn, self.fine_mesh, use_asr=use_asr_dyn,
             ignore_effective_charges=self.ignore_effective_charges,
-            reuse_commensurate=True,
             lo_to_split=interpolation_lo_to_split)
+
+        q_fine = harmonic_interpolation.q_points
+        self._fine_idx = harmonic_interpolation.indices
+        self._q_lookup = build_q_index_lookup(q_fine, self.uci_structure,
+                                              self.fine_mesh)
+        # Copies: the pinning below writes the commensurate columns, and the
+        # injected interpolation may be shared with another construction.
+        w_f = np.array(harmonic_interpolation.frequencies)
+        pols_f = np.array(harmonic_interpolation.polarizations)
 
         # Pin the commensurate fine points to the parent's
         # DiagonalizeSupercell output: the R sector and the kernel exchange
@@ -928,14 +992,14 @@ def load_distributed_atom_fourier_tdscha(
     holds only N/n_procs of them instead of a full replica -- but the object
     returned is a :class:`QSpaceAtomFourierLanczos`.
 
-    The interpolation is built redundantly on every rank
-    (``build_on_all_ranks=True``) and only then are the configurations split.
-    That is not an optimisation choice: ``interpolate_dyn_fine`` calls
-    ``ForceTensor.Apply_ASR``, which broadcasts, so a master-only construction
-    deadlocks against the workers waiting in the metadata broadcast.  Building
-    everywhere keeps every collective matched, and the ensemble is replicated
-    only during construction -- the steady state each rank carries into the
-    Lanczos is its own N/n_procs slice of X_q/Y_q.
+    The ensemble is never replicated, not even transiently.  The one part of
+    the interpolated construction that must run on every rank is the harmonic
+    interpolation, because it broadcasts inside CellConstructor's
+    ``ForceTensor``; the loader runs it through
+    :meth:`QSpaceAtomFourierLanczos.prepare_distributed_construction` before
+    the master goes on to read the configurations alone.  That work scales
+    with the fine mesh and the number of atoms, never with the number of
+    configurations.
 
     Parameters
     ----------
@@ -952,5 +1016,5 @@ def load_distributed_atom_fourier_tdscha(
         data_dir, population_id, dyn, T,
         lo_to_split=lo_to_split, use_symmetries=use_symmetries,
         n_configs=n_configs, final_dyn=final_dyn, final_T=final_T,
-        lanczos_class=QSpaceAtomFourierLanczos, build_on_all_ranks=True,
+        lanczos_class=QSpaceAtomFourierLanczos,
         fine_mesh=fine_mesh, **kwargs)

@@ -2,6 +2,14 @@
 
 Usage:  python _distributed_probe.py <mode> <data_dir> <out.npz>
         mode = serial-plain | dist-plain | serial-tri | dist-tri
+               | oracle-tri | guard-tri
+
+``oracle-tri`` is the build-on-every-rank reference: it replicates the
+ensemble during construction, which is exactly what the production loader
+avoids, so it exists only to pin the master-only path against it.
+
+``guard-tri`` reintroduces the historical defect on purpose and must fail
+loudly rather than hang or return a corrupted object.
 
 Separate processes (rather than one job that builds both) because every
 matrix-vector product goes through a collective reduction: a rank that built a
@@ -51,6 +59,24 @@ def build(mode, data_dir):
         lanc = AF.load_distributed_atom_fourier_tdscha(
             data_dir, POP, dyn, T, fine_mesh=FINE,
             use_symmetries=True)
+    elif mode == "guard-tri":
+        # Deliberately leaves the collective interpolation inside the
+        # constructor, i.e. reintroduces the defect the loader guards
+        # against.  The workers must notice that the master's ForceTensor
+        # broadcast, not the loader's metadata, reached them.
+        class Unprepared(AF.QSpaceAtomFourierLanczos):
+            @classmethod
+            def prepare_distributed_construction(cls, dyn, **kwargs):
+                return {}
+
+        lanc = QL.load_distributed_tdscha(
+            data_dir, POP, dyn, T, use_symmetries=True,
+            lanczos_class=Unprepared, fine_mesh=FINE)
+    elif mode == "oracle-tri":
+        lanc = QL.load_distributed_tdscha(
+            data_dir, POP, dyn, T, use_symmetries=True,
+            lanczos_class=AF.QSpaceAtomFourierLanczos,
+            build_on_all_ranks=True, fine_mesh=FINE)
     else:
         raise ValueError("unknown mode %s" % mode)
     return lanc
