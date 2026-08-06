@@ -222,6 +222,49 @@ def test_dielectric_tensor_is_projected_not_scalarized(monkeypatch, tmp_path):
         15.0)
 
 
+def test_dielectric_function_uses_supercell_volume(monkeypatch, tmp_path):
+    """The default IR prefactor must be 4*pi/V_supercell, not 4*pi/V_unit.
+
+    The Lanczos perturbation carries sqrt(n_cell) (prepare_ir), so the Green
+    function already includes the n_cell factor and the volume in
+    epsilon_inf + (4*pi/Omega)*chi_ionic must be the supercell volume.
+    """
+    ensemble = _Ensemble()
+    ensemble.current_dyn.GetSupercell = lambda: np.array([2, 1, 2])
+    monkeypatch.setattr(
+        workflow, "create_backend",
+        lambda ens, backend, options: _FakeEngine(ens.current_T))
+    job = SP.Spectroscopy(
+        ensemble, backend="real", workdir=tmp_path / "supercell_ir")
+    job.add_ir_unpolarized("powder")
+    job.run(2, verbose=False)
+    loaded = SP.Spectroscopy.load(tmp_path / "supercell_ir")
+
+    from cellconstructor.Units import A_TO_BOHR
+    manifest = loaded._manifest_data
+    assert manifest["supercell_volume_angstrom3"] == pytest.approx(
+        manifest["unit_cell_volume_angstrom3"] * 4)
+    assert manifest["unit_cell_volume_angstrom3"] == pytest.approx(125.0)
+
+    frequencies = np.linspace(0.1, 0.2, 3)
+    options = dict(use_terminator=False, smearing=0.01)
+    default = loaded.dielectric_function("powder", frequencies, **options)
+
+    supercell_bohr3 = (
+        manifest["supercell_volume_angstrom3"] * float(A_TO_BOHR)**3)
+    explicit = loaded.dielectric_function(
+        "powder", frequencies,
+        ionic_prefactor=4 * np.pi / supercell_bohr3, **options)
+    np.testing.assert_allclose(default, explicit)
+
+    unit_bohr3 = (
+        manifest["unit_cell_volume_angstrom3"] * float(A_TO_BOHR)**3)
+    wrong = loaded.dielectric_function(
+        "powder", frequencies,
+        ionic_prefactor=4 * np.pi / unit_bohr3, **options)
+    assert not np.allclose(default, wrong)
+
+
 def test_backend_physics_flags_are_public_and_legacy_compatible():
     ensemble = _Ensemble()
     explicit = SP.Spectroscopy(

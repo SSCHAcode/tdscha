@@ -921,12 +921,15 @@ class Spectroscopy:
         plan = self.plan_calculations()
         manifest = self.manifest()
         structure = self.ensemble.current_dyn.structure
+        supercell = np.asarray(self.ensemble.current_dyn.GetSupercell())
+        unit_cell_volume = float(abs(np.linalg.det(structure.unit_cell)))
         manifest.update({
             "ensemble_fingerprint": workflow.ensemble_fingerprint(
                 self.ensemble),
             "temperature": float(self.ensemble.current_T),
-            "unit_cell_volume_angstrom3": float(abs(np.linalg.det(
-                structure.unit_cell))),
+            "unit_cell_volume_angstrom3": unit_cell_volume,
+            "supercell_volume_angstrom3": unit_cell_volume * float(
+                np.prod(supercell)),
             "dielectric_tensor": workflow.json_compatible(
                 getattr(self.ensemble.current_dyn, "dielectric_tensor", None)),
             "target_steps": int(n_steps),
@@ -1196,6 +1199,14 @@ class Spectroscopy:
         The Lanczos Green function uses CellConstructor's Rydberg frequency
         and mass convention.  Converting its displacement response to the
         conventional Hartree atomic units contributes the factor two below.
+
+        The Green function is computed from the gamma perturbation
+        ``Z* . direction * sqrt(n_cell)`` (``prepare_ir`` scales the unit-cell
+        charge vector by ``sqrt(n_cell)``), so it already carries the
+        ``n_cell`` factor.  ``dielectric_function`` therefore divides by the
+        **supercell** volume ``V = n_cell * V_unit_cell``, exactly matching the
+        CellConstructor non-analytic LO-TO term ``8*pi/V`` (the 8 is the
+        Rydberg ``e^2 = 2``).
         """
         request = self._request_manifest(name)
         if not request["observable"].startswith("ir"):
@@ -1207,9 +1218,15 @@ class Spectroscopy:
                             electronic_projection=None, **options):
         """Return projected ``epsilon_inf + (4 pi / Omega) chi_ionic``.
 
-        The default volume is converted from the CellConstructor Angstrom
-        convention to Bohr cubed.  ``ionic_prefactor`` can override the full
-        prefactor when a different electromagnetic/unit convention is needed.
+        The default volume is the **supercell** volume converted from the
+        CellConstructor Angstrom convention to Bohr cubed.  This is required
+        because the Lanczos perturbation carries ``sqrt(n_cell)``
+        (``prepare_ir``), so ``chi_ionic`` already includes the ``n_cell``
+        factor and the volume must cancel it.  Together with the factor of two
+        in ``ir_susceptibility`` (Rydberg ``e^2 = 2``), the total prefactor is
+        ``8*pi / V_supercell``, matching the CellConstructor non-analytic LO-TO
+        term.  ``ionic_prefactor`` can override the full prefactor when a
+        different electromagnetic/unit convention is needed.
         """
         request = self._request_manifest(name)
         if not request["observable"].startswith("ir"):
@@ -1239,9 +1256,17 @@ class Spectroscopy:
                 "An explicit IR vector requires electronic_projection")
         if ionic_prefactor is None:
             from cellconstructor.Units import A_TO_BOHR
-            volume_bohr3 = (
-                self._manifest_data["unit_cell_volume_angstrom3"]
-                * float(A_TO_BOHR)**3)
+            volume_angstrom3 = self._manifest_data.get(
+                "supercell_volume_angstrom3")
+            if volume_angstrom3 is None:
+                # Backward compatibility with manifests written before the
+                # supercell volume was stored.
+                n_cell = float(np.prod(np.asarray(
+                    self.ensemble.current_dyn.GetSupercell())))
+                volume_angstrom3 = (
+                    self._manifest_data["unit_cell_volume_angstrom3"]
+                    * n_cell)
+            volume_bohr3 = volume_angstrom3 * float(A_TO_BOHR)**3
             ionic_prefactor = 4 * np.pi / volume_bohr3
         return (electronic + float(ionic_prefactor)
                 * self.ir_susceptibility(name, frequencies, **options))

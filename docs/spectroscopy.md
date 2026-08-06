@@ -134,11 +134,16 @@ epsilon_powder = loaded.dielectric_function(
 ```
 
 The default projected dielectric result is
-`epsilon_infinity + (4*pi/Omega) * chi_ionic`, with the CellConstructor cell
-volume converted from Angstrom cubed to Bohr cubed. `ir_susceptibility`
+`epsilon_infinity + (4*pi/Omega) * chi_ionic`, with `Omega` the **supercell**
+volume converted from Angstrom cubed to Bohr cubed.  `ir_susceptibility`
 includes the factor of two that converts the raw Rydberg-convention Lanczos
-Green function to Hartree atomic units. `ionic_prefactor=` can override the
-remaining `4*pi/Omega` convention explicitly.
+Green function to Hartree atomic units.  The Lanczos perturbation carries
+`sqrt(n_cell)` (`prepare_ir`), so `chi_ionic` already includes the `n_cell`
+factor and `Omega` must be the supercell volume
+`n_cell * V_unit_cell`; together the total prefactor is `8*pi/V_supercell`,
+matching the CellConstructor non-analytic LO-TO term (the 8 is the Rydberg
+`e^2 = 2`).  `ionic_prefactor=` can override the remaining `4*pi/Omega`
+convention explicitly.
 The full 3x3 `ensemble.current_dyn.dielectric_tensor` is stored in the
 manifest and inferred during both live and load-only analysis. Polarized IR
 uses `e.T @ epsilon_infinity @ e`; an unpolarized request uses
