@@ -34,9 +34,9 @@ if not os.path.isdir(DATA):
     pytest.skip("q-space test ensemble not available", allow_module_level=True)
 
 
-def _run(backend, workdir, n_ranks):
+def _run(launcher, backend, workdir, n_ranks):
     os.makedirs(workdir, exist_ok=True)
-    cmd = ["mpirun", "-np", str(n_ranks), sys.executable, PROBE,
+    cmd = [launcher, "-np", str(n_ranks), sys.executable, PROBE,
            backend, DATA, workdir]
     env = dict(os.environ, OMP_NUM_THREADS="1")
     try:
@@ -57,9 +57,11 @@ def _run(backend, workdir, n_ranks):
 
 @pytest.mark.parametrize("backend", ["qspace", "atom_fourier"])
 def test_spectroscopy_distributes_and_reproduces_the_spectrum(
-        backend, tmp_path):
-    single = _run(backend, str(tmp_path / "single"), 1)[0]
-    ranks = _run(backend, str(tmp_path / "parallel"), 2)
+        backend, tmp_path, multi_rank_mpirun):
+    single = _run(multi_rank_mpirun, backend,
+                  str(tmp_path / "single"), 1)[0]
+    ranks = _run(multi_rank_mpirun, backend,
+                 str(tmp_path / "parallel"), 2)
 
     # The symmetry planner is not affected by the distribution: the three
     # Cartesian directions are one orbit, the mixed vector another.
@@ -102,9 +104,9 @@ def test_spectroscopy_distributes_and_reproduces_the_spectrum(
 
 @pytest.mark.parametrize("backend", ["qspace", "atom_fourier"])
 def test_restarted_analysis_matches_the_run_that_produced_it(
-        backend, tmp_path):
+        backend, tmp_path, multi_rank_mpirun):
     workdir = str(tmp_path / "restart")
-    _run(backend, workdir, 2)
+    _run(multi_rank_mpirun, backend, workdir, 2)
     for rank in range(2):
         produced = np.load(os.path.join(workdir, "rank_%d.npz" % rank))
         restored = np.load(os.path.join(workdir, "restored_%d.npz" % rank))

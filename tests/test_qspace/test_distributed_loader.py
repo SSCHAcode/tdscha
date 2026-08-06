@@ -39,8 +39,9 @@ if not os.path.isdir(DATA):
     pytest.skip("q-space test ensemble not available", allow_module_level=True)
 
 
-def _run(mode, out, n_ranks):
-    cmd = ["mpirun", "-np", str(n_ranks), sys.executable, PROBE, mode, DATA, out]
+def _run(launcher, mode, out, n_ranks):
+    cmd = [launcher, "-np", str(n_ranks), sys.executable, PROBE, mode, DATA,
+           out]
     env = dict(os.environ, OMP_NUM_THREADS="1")
     try:
         proc = subprocess.run(cmd, cwd=REPO, env=env, timeout=TIMEOUT,
@@ -70,9 +71,11 @@ def _assert_same_coeffs(serial, dist, msg):
 
 
 @pytest.mark.parametrize("kind", ["plain", "tri"])
-def test_distributed_matches_replicated(kind, tmp_path):
-    serial = _run("serial-%s" % kind, str(tmp_path / "serial.npz"), 1)
-    dist = _run("dist-%s" % kind, str(tmp_path / "dist.npz"), 2)
+def test_distributed_matches_replicated(kind, tmp_path, multi_rank_mpirun):
+    serial = _run(multi_rank_mpirun, "serial-%s" % kind,
+                  str(tmp_path / "serial.npz"), 1)
+    dist = _run(multi_rank_mpirun, "dist-%s" % kind,
+                str(tmp_path / "dist.npz"), 2)
 
     # The distributed object really did split the configurations ...
     assert bool(dist["distributed"]) is True
@@ -89,7 +92,8 @@ def test_distributed_matches_replicated(kind, tmp_path):
     _assert_same_coeffs(serial, dist, "distributed %s" % kind)
 
 
-def test_interpolated_master_only_matches_build_everywhere(tmp_path):
+def test_interpolated_master_only_matches_build_everywhere(
+        tmp_path, multi_rank_mpirun):
     """The production loader must reproduce the replicating oracle exactly.
 
     ``build_on_all_ranks=True`` rebuilds the whole object identically on every
@@ -99,8 +103,10 @@ def test_interpolated_master_only_matches_build_everywhere(tmp_path):
     polarization vectors, the ensemble Bloch fields would be projected in one
     gauge and contracted in another, and the coefficients would move.
     """
-    oracle = _run("oracle-tri", str(tmp_path / "oracle.npz"), 2)
-    dist = _run("dist-tri", str(tmp_path / "dist.npz"), 2)
+    oracle = _run(multi_rank_mpirun, "oracle-tri",
+                  str(tmp_path / "oracle.npz"), 2)
+    dist = _run(multi_rank_mpirun, "dist-tri",
+                str(tmp_path / "dist.npz"), 2)
 
     assert bool(dist["distributed"]) is True
     assert int(dist["n_global"]) == int(oracle["n_global"])
@@ -108,7 +114,8 @@ def test_interpolated_master_only_matches_build_everywhere(tmp_path):
     _assert_same_coeffs(oracle, dist, "master-only vs build-everywhere")
 
 
-def test_collective_left_in_the_constructor_fails_loudly(tmp_path):
+def test_collective_left_in_the_constructor_fails_loudly(
+        tmp_path, multi_rank_mpirun):
     """The historical defect must not be able to come back silently.
 
     A collective the master runs alone does not raise anywhere: MPI matches
@@ -117,8 +124,8 @@ def test_collective_left_in_the_constructor_fails_loudly(tmp_path):
     hang -- and, when it did not hang, a plausible but wrong spectrum.  The
     loader must now diagnose it and stop the job.
     """
-    cmd = ["mpirun", "-np", "2", sys.executable, PROBE, "guard-tri", DATA,
-           str(tmp_path / "unused.npz")]
+    cmd = [multi_rank_mpirun, "-np", "2", sys.executable, PROBE,
+           "guard-tri", DATA, str(tmp_path / "unused.npz")]
     env = dict(os.environ, OMP_NUM_THREADS="1")
     try:
         proc = subprocess.run(cmd, cwd=REPO, env=env, timeout=TIMEOUT,

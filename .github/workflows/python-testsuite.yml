@@ -58,7 +58,18 @@ jobs:
 
         pip install meson meson-python ninja
         # matplotlib is imported at module level by some collected tests.
-        pip install numpy scipy mpi4py spglib matplotlib juliacall
+        pip install numpy scipy spglib matplotlib juliacall
+
+        # mpi4py MUST be built against the same MPI that owns mpirun.  Its
+        # binary wheel bundles its own runtime, and next to the mpich
+        # installed above that makes every process initialise a singleton
+        # COMM_WORLD: "mpirun -np 2" silently becomes two unrelated serial
+        # jobs, and the MPI tests pass while testing nothing.
+        pip install --no-binary=mpi4py mpi4py
+        mpirun -np 2 python -c "
+        from mpi4py import MPI
+        assert MPI.COMM_WORLD.Get_size() == 2, 'mpirun and mpi4py disagree'
+        "
 
         cd CellConstructor
         pip install --no-build-isolation .
