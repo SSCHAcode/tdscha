@@ -34,6 +34,7 @@ import cellconstructor.Settings as Parallel
 from tdscha.Parallel import pprint as print
 from tdscha.Parallel import *
 import tdscha.Perturbations as perturbations
+import tdscha.Spectroscopy as Spectroscopy
 
 
 # The Julia runtime is booted lazily by JuliaExt at the first actual use
@@ -49,6 +50,18 @@ __JULIA_EXT__ = JuliaExt.available()
 TYPE_DP = np.double
 __EPSILON__ = 1e-12
 N_REP_ORTH = 1
+
+_TWO_PHONON_RAMAN_DISABLED = (
+    "Two-phonon Raman preparation is disabled because the previous "
+    "configuration-dependent implementation is unvalidated and can produce "
+    "incorrect perturbations. Only equilibrium one-phonon Raman is supported."
+)
+
+_CONFIGURATION_DEPENDENT_IR_DISABLED = (
+    "Configuration-dependent and two-phonon IR preparation is disabled "
+    "because the previous implementation is unvalidated. Use prepare_ir "
+    "or the Spectroscopy class for equilibrium one-phonon IR."
+)
 
 try:
     from ase.units import create_units
@@ -228,6 +241,13 @@ class Lanczos(object):
         self.trans_projector = None    # (n_modes, n_modes) matrix P = (1/n_cells) Σ_R T_R^mode
         self.trans_operators = None    # list of (n_modes, n_modes) T_R^mode matrices
         self.trans_cart_perms = None   # list of Cartesian permutation index arrays for fast projection
+
+        # Optional observable-stabilizer reduction configured by the public
+        # Spectroscopy workflow.  Indices are 1-based for the Julia kernels.
+        self._spectroscopy_symmetry_rotations = ()
+        self._spectroscopy_coset_indices = None
+        self._spectroscopy_stabilizer_indices = None
+        self._spectroscopy_characters = None
 
         # Set to True if we want to use the Wigner equations
         self.use_wigner = use_wigner
@@ -486,6 +506,7 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         self.s_norm = []
         self.krilov_basis = [] # The basis of the krilov subspace
         self.arnoldi_matrix = [] # If requested, the upper triangular arnoldi matrix
+        self._clear_spectroscopy_symmetry()
 
 
     def init(self, use_symmetries = True):
@@ -638,6 +659,10 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
         """
 
         self.initialized = True
+        # A reduction is tied to one prepared perturbation and one exact
+        # symmetry basis.  Reinitializing either must never retain stale
+        # coset indices from an earlier calculation.
+        self._clear_spectroscopy_symmetry()
 
         # All the rest is deprecated in the Fast Lanczos implementation
         # As the symmetrization is performed by unwrapping the ensemble
@@ -656,6 +681,16 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             self.N_degeneracy = np.ones(self.n_modes, dtype = np.intc)
             self.degenerate_space = [np.array([i], dtype = np.intc) for i in range(self.n_modes)]
             self.sym_block_id = np.arange(self.n_modes).astype(np.intc)
+            self.n_syms = 1
+            self._spectroscopy_symmetry_rotations = (np.eye(3),)
+            if self.mode == MODE_FAST_JULIA:
+                self.sym_julia = np.ones((self.n_modes, 1, 1, 1),
+                                         dtype=TYPE_DP)
+                self.deg_julia = np.arange(
+                    self.n_modes, dtype=np.int32)[:, None]
+                JuliaExt.get_main().init_sparse_symmetries(
+                    self.sym_julia, self.N_degeneracy, self.deg_julia,
+                    self.sym_block_id)
             return
 
         t1 = time.time()
@@ -717,6 +752,13 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
             # Replace super_symmetries with PG-only for the rest of the function
             super_symmetries = pg_symmetries
 
+        super_lattice = np.asarray(super_structure.unit_cell, dtype=float).T
+        inverse_super_lattice = np.linalg.inv(super_lattice)
+        self._spectroscopy_symmetry_rotations = tuple(
+            super_lattice @ np.asarray(symmetry[:, :3], dtype=float)
+            @ inverse_super_lattice
+            for symmetry in super_symmetries)
+
         # Get the symmetry matrix in the polarization space
         # Translations are needed, as this method needs a complete basis.
         pol_symmetries, basis = CC.symmetries.GetSymmetriesOnModesDeg(super_symmetries, super_structure, self.pols, self.w)
@@ -766,6 +808,69 @@ Error, 'select_modes' should be an array of the same lenght of the number of mod
 
         if verbose:
             print("Time to create the block_id array: {} s".format(t2-t1))
+
+    def configure_spectroscopy_symmetry(
+            self, group_rotations, stabilizer, characters, cosets,
+            tolerance=1e-7):
+        """Configure the stabilizer/coset average for one optical run.
+
+        The public workflow plans symmetries in the unit-cell Cartesian
+        representation.  This method maps those rotations onto the exact
+        ordering used by the backend, so no assumption about spglib ordering
+        leaks into the execution layer.
+        """
+        if self.mode != MODE_FAST_JULIA or len(cosets) >= self.n_syms:
+            self._clear_spectroscopy_symmetry()
+            return
+
+        planned = tuple(np.asarray(item, dtype=float)
+                        for item in group_rotations)
+        actual = tuple(np.asarray(item, dtype=float)
+                       for item in self._spectroscopy_symmetry_rotations)
+
+        def map_index(planned_index):
+            matches = [index for index, rotation in enumerate(actual)
+                       if np.allclose(planned[planned_index], rotation,
+                                      atol=tolerance, rtol=0)]
+            if len(matches) != 1:
+                raise ValueError(
+                    "Spectroscopy symmetry cannot be mapped uniquely onto "
+                    "the Lanczos backend")
+            return matches[0] + 1
+
+        self._spectroscopy_coset_indices = np.asarray(
+            [map_index(coset[0]) for coset in cosets], dtype=np.int32)
+        self._spectroscopy_stabilizer_indices = np.asarray(
+            [map_index(index) for index in stabilizer], dtype=np.int32)
+        self._spectroscopy_characters = np.asarray(
+            characters, dtype=TYPE_DP)
+
+    def _clear_spectroscopy_symmetry(self):
+        """Clear reduction metadata whenever the engine basis is reset."""
+        self._spectroscopy_coset_indices = None
+        self._spectroscopy_stabilizer_indices = None
+        self._spectroscopy_characters = None
+
+    def _spectroscopy_reduction_arguments(self):
+        """Return Julia-ready optional coset/projector arrays."""
+        empty_indices = np.empty(0, dtype=np.int32)
+        empty_characters = np.empty(0, dtype=TYPE_DP)
+        return (
+            self._spectroscopy_coset_indices
+            if self._spectroscopy_coset_indices is not None
+            else empty_indices,
+            self._spectroscopy_stabilizer_indices
+            if self._spectroscopy_stabilizer_indices is not None
+            else empty_indices,
+            self._spectroscopy_characters
+            if self._spectroscopy_characters is not None
+            else empty_characters,
+        )
+
+    def _spectroscopy_symmetry_count(self, full_count):
+        if self._spectroscopy_coset_indices is None:
+            return int(full_count)
+        return len(self._spectroscopy_coset_indices)
 
         # Ns, dumb, dump = np.shape(pol_symmetries)
         
@@ -986,6 +1091,51 @@ File {} not found. S norm not loaded.
 
 
 
+    def _build_raman_vector(self, pol_vec_in = np.array([1,0,0]),
+                            pol_vec_out = np.array([1,0,0]), mixed = False,
+                            pol_in_2 = None, pol_out_2 = None,
+                            unpolarized = None, normalized = True):
+        """Build a unit-cell Raman perturbation vector.
+
+        ``unpolarized=None`` returns the contraction with the supplied light
+        polarizations.  When ``mixed`` is true, the second contraction is
+        added coherently.
+
+        Unpolarized indices 0--6 return, in order, the combinations
+        ``trace``, ``xx-yy``, ``xx-zz``, ``yy-zz``, ``xy``, ``xz``, and
+        ``yz``.  With ``normalized=True`` these are multiplied by ``1/3``,
+        ``1/sqrt(2)`` (indices 1--3), and ``sqrt(3)`` (indices 4--6), as used
+        by :meth:`prepare_raman`.  ``normalized=False`` retains the legacy
+        raw-component convention of :meth:`prepare_unpolarized_raman`.
+        """
+        if self.dyn.raman_tensor is None:
+            raise ValueError(
+                "No Raman tensor found; cannot initialize the Raman response")
+
+        if unpolarized is None:
+            coefficients = Spectroscopy.raman_coefficients_from_polarizations(
+                pol_vec_in, pol_vec_out, symmetric=False)
+            if mixed:
+                if pol_in_2 is None or pol_out_2 is None:
+                    raise ValueError(
+                        "mixed=True requires pol_in_2 and pol_out_2")
+                coefficients += (
+                    Spectroscopy.raman_coefficients_from_polarizations(
+                        pol_in_2, pol_out_2, symmetric=False))
+        else:
+            convention = "normalized" if normalized else "raw"
+            coefficients = Spectroscopy.get_raman_component(
+                unpolarized).coefficients(convention)
+
+        return np.array(Spectroscopy.build_raman_vector(
+            self.dyn.raman_tensor, coefficients), copy=True)
+
+    def _prepare_gamma_cartesian_perturbation(self, vector):
+        """Prepare a unit-cell Cartesian Gamma perturbation in real space."""
+        n_supercell = np.prod(self.dyn.GetSupercell())
+        supercell_vector = np.tile(np.asarray(vector).ravel(), n_supercell)
+        self.prepare_perturbation(supercell_vector, masses_exp=-1)
+
     def prepare_raman(self, pol_vec_in = np.array([1,0,0]), pol_vec_out = np.array([1,0,0]), mixed = False, pol_in_2 = None, pol_out_2 = None, unpolarized: int = None):
         """
         PREPARE LANCZOS FOR RAMAN SPECTRUM
@@ -1001,6 +1151,11 @@ File {} not found. S norm not loaded.
                 The polarization vector of the incoming light
             pol_vec_out : ndarray (size = 3)
                 The polarization vector for the outcoming light
+            mixed : bool
+                If True, coherently add the contraction specified by
+                pol_in_2 and pol_out_2.
+            pol_in_2, pol_out_2 : ndarray (size = 3) or None
+                The second pair of light polarizations when mixed=True.
             unpolarized : int or None
                 The perturbation for unpolarized raman (if different from None, overrides the behaviour
                 of pol_vec_in and pol_vec_out). Indices goes from 0 to 6 (included).
@@ -1016,98 +1171,16 @@ File {} not found. S norm not loaded.
 
                 The total unpolarized raman intensity is 45 alpha^2 + 7 beta^2
         """
-
-        # Check if the raman tensor is present
-        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
-
-        # Get the raman vector (apply the ASR and contract the raman tensor with the polarization vectors)
-        raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
-        
         if mixed:
             print('Prepare Raman')
             print('Adding other component of the Raman tensor')
-            raman_v += self.dyn.GetRamanVector(pol_in_2, pol_out_2)
 
-        # Get the raman vector in the supercelld
-        n_supercell = np.prod(self.dyn.GetSupercell())
+        raman_v = self._build_raman_vector(
+            pol_vec_in=pol_vec_in, pol_vec_out=pol_vec_out, mixed=mixed,
+            pol_in_2=pol_in_2, pol_out_2=pol_out_2,
+            unpolarized=unpolarized, normalized=True)
 
-        if unpolarized is None:
-            # Get the raman vector
-            raman_v = self.dyn.GetRamanVector(pol_vec_in, pol_vec_out)
-
-            # Get the raman vector in the supercelld
-            new_raman_v = np.tile(raman_v.ravel(), n_supercell)
-
-            # Convert in the polarization basis and store the intensity
-            self.prepare_perturbation(new_raman_v, masses_exp=-1)
-        else:
-            px = np.array([1,0,0])
-            py = np.array([0,1,0])
-            pz = np.array([0,0,1])
-
-            if unpolarized == 0:
-                # Alpha
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
-                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
-
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / 3
-                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
-            elif unpolarized == 1:
-                # (xx -yy)^2 / 2
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
-            elif unpolarized == 2:
-                # beta_2 = (xx -zz)^2 / 2
-                raman_v = self.dyn.GetRamanVector(px, px)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
-            elif unpolarized == 3:
-                # beta_2 = (yy -zz)^2 / 2
-                raman_v = self.dyn.GetRamanVector(py, py)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-
-                raman_v = self.dyn.GetRamanVector(pz, pz)
-                new_raman_v = - np.tile(raman_v.ravel(), n_supercell) / np.sqrt(2)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1, add = True)
-            elif unpolarized == 4:
-                # beta_2 = 3 xy^2
-                raman_v = self.dyn.GetRamanVector(px, py)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-            elif unpolarized == 5:
-                # beta_2 = 3 yz^2
-                raman_v = self.dyn.GetRamanVector(py, pz)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-            elif unpolarized == 6:
-                # beta_2 = 3 xz^2
-                raman_v = self.dyn.GetRamanVector(px, pz)
-                new_raman_v = np.tile(raman_v.ravel(), n_supercell) * np.sqrt(3)
-                self.prepare_perturbation(new_raman_v, masses_exp=-1)
-            else:
-                raise ValueError("Error, unpolarized must be between [0, ... ,6] got invalid {}.".format(unpolarized))
-
-
-
-
-        # Convert in the polarization basis and store the intensity
-        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        self._prepare_gamma_cartesian_perturbation(raman_v)
         
     def get_prefactors_unpolarized_raman(self, index):
         """
@@ -1118,22 +1191,11 @@ File {} not found. S norm not loaded.
         
         The prefactors corresponds to the components of the unpolarized raman signal
         """
-        labels = [i for i in range(7)]
-        if not(index in labels):
-            raise ValueError('{} should be in {}'.format(index, labels))
-            
-        dictionary = {'(xx+yy+zz)^2' : 45/9,\
-                      '(xx-yy)^2'    : 7/2,\
-                      '(xx-zz)^2'    : 7/2,\
-                      '(yy-zz)^2'    : 7/2,\
-                      '(xy)^2'       : 7*3,\
-                      '(xz)^2'       : 7*3,\
-                      '(yz)^2'       : 7*3}
-        
-        keys = list(dictionary.keys())
-        
-        
-        return dictionary[keys[index]]
+        return Spectroscopy.get_raman_component(index).weight("raw")
+
+    def get_unpolarized_raman_weights(self, convention="normalized"):
+        """Return the seven weights for a named Raman component convention."""
+        return Spectroscopy.get_unpolarized_raman_weights(convention)
     
     def prepare_unpolarized_raman(self, index = 0, debug = False):
         """
@@ -1150,53 +1212,13 @@ File {} not found. S norm not loaded.
                       + 7/2 [(xx-yy)^2 + (xx-zz)^2 + (yy-zz)^2]
                       + 7 * 3 [(xy)^2 + (yz)^2 + (xz)^2]
         """
-        # Check if the raman tensor is present
-        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
-        
-        labels = [i for i in range(7)]
-        if not(index in labels):
-            raise ValueError('{} should be in {}'.format(index, labels))
-        
-        epols = {'x' : np.array([1,0,0]),\
-                 'y' : np.array([0,1,0]),\
-                 'z' : np.array([0,0,1])}
-        
-        # (xx + yy + zz)^2
-        if index == 0:
-            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v += self.dyn.GetRamanVector(epols['y'], epols['y'])
-            raman_v += self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (xx - yy)^2    
-        elif index == 1:
-            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v -= self.dyn.GetRamanVector(epols['y'], epols['y'])
-        # (xx - zz)^2       
-        elif index == 2:
-            raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (yy - zz)^2   
-        elif index == 3:
-            raman_v  = self.dyn.GetRamanVector(epols['y'], epols['y'])
-            raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-        # (xy)^2
-        elif index == 4:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['y'])
-        # (xz)^2
-        elif index == 5:
-            raman_v = self.dyn.GetRamanVector(epols['x'], epols['z'])
-        # (yz)^2
-        elif index == 6:
-            raman_v = self.dyn.GetRamanVector(epols['y'], epols['z'])
+        raman_v = self._build_raman_vector(
+            unpolarized=index, normalized=False)
             
         if debug:
             np.save('raman_v_{}'.format(index), raman_v)
             
-        # Get the raman vector in the supercelld
-        n_supercell = np.prod(self.dyn.GetSupercell())
-        new_raman_v = np.tile(raman_v.ravel(), n_supercell)
-
-        # Convert in the polarization basis and store the intensity
-        self.prepare_perturbation(new_raman_v, masses_exp=-1)
+        self._prepare_gamma_cartesian_perturbation(raman_v)
         
         if debug:
             print('[NEW] Pertubation modulus with eq Raman tensors = {}'.format(self.perturbation_modulus))
@@ -1205,431 +1227,29 @@ File {} not found. S norm not loaded.
         return
     
     
-    def prepare_unpolarized_raman_FT(self, index = 0, debug = False, eq_raman_tns = None, use_symm = True,\
-                                     ens_av_raman = None, raman_tns_ens = None, add_2ph = True):
-        """
-        PREPARE UNPOLARIZED RAMAN SIGNAL CONSIDERING FLUCTUATIONS OF THE RAMAN TENSOR
-        =============================================================================
-        
-        The raman tensor is read from the dynamical matrix provided by the original ensemble.
-        
-        The perturbations are prepared accordin to the formula (see https://doi.org/10.1021/jp5125266)
-        
-        ..math:
-        
-            I_unpol = 45/9 (xx + yy + zz)^2
-                      + 7/2 [(xx-yy)^2 + (xx-zz)^2 + (yy-zz)^2]
-                      + 7 * 3 [(xy)^2 + (yz)^2 + (xz)^2]
-                      
-        Parameters:
-        -----------
-            -index: the pol component of the unpolarized signal
-            -debug: if true we save the second order Raman tensor
-            -eq_raman_tns: np.array with shape (3, 3, 3 * N_at_uc), the equilibirum raman tensor
-            -use_symm: bool, if True symmetries are enforced
-            -ens_av_raman:  the ensemble on which we compute the averages of the Raman tensors
-            -raman_tns_ens: np.array with shape (N_conf, 3, 3, 3 * N_at_sc), the raman tensors on the displaced configruations
-        """
-        # Check if the raman tensor is present
-        assert not self.dyn.raman_tensor is None, "Error, no Raman tensor found. Cannot initialize the Raman responce"
-        
-        labels = [i for i in range(7)]
-        if not(index in labels):
-            raise ValueError('{} should be in {}'.format(index, labels))
-        
-        epols = {'x' : np.array([1,0,0]),\
-                 'y' : np.array([0,1,0]),\
-                 'z' : np.array([0,0,1])}
-        
-        # (xx + yy + zz)^2
-        if index == 0:
-            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            # raman_v += self.dyn.GetRamanVector(epols['y'], epols['y'])
-            # raman_v += self.dyn.GetRamanVector(epols['z'], epols['z'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   = epols['x'], pol_out   = epols['x'],\
-                                             mixed = True,\
-                                             pol_in_2 = epols['y'], pol_out_2 = epols['y'],\
-                                             pol_in_3 = epols['z'], pol_out_3 = epols['z'],\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_plus_yy_plus_zz')
-        # (xx - yy)^2    
-        elif index == 1:
-            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            # raman_v -= self.dyn.GetRamanVector(epols['y'], epols['y'])
-            # NB we put just one minus sign because the component is (xx - yy)^2
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['x'],  pol_out  =  epols['x'],\
-                                             mixed = True,\
-                                             pol_in_2 = -epols['y'], pol_out_2 =  epols['y'],\
-                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_minus_yy')
-        # (xx - zz)^2       
-        elif index == 2:
-            # raman_v  = self.dyn.GetRamanVector(epols['x'], epols['x'])
-            # raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['x'],  pol_out  =  epols['x'],\
-                                             mixed = True,\
-                                             pol_in_2 = -epols['z'], pol_out_2 =  epols['z'],\
-                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xx_minus_zz')
-        # (yy - zz)^2   
-        elif index == 3:
-            # raman_v  = self.dyn.GetRamanVector(epols['y'], epols['y'])
-            # raman_v -= self.dyn.GetRamanVector(epols['z'], epols['z'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['y'],  pol_out  =  epols['y'],\
-                                             mixed = True,\
-                                             pol_in_2 = -epols['z'], pol_out_2 =  epols['z'],\
-                                             pol_in_3 = np.zeros(3), pol_out_3 = np.zeros(3),\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'yy_minus_zz')
-        # (xy)^2
-        elif index == 4:
-            # raman_v = self.dyn.GetRamanVector(epols['x'], epols['y'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['x'],  pol_out  =  epols['y'],\
-                                             mixed = False,\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xy_square')
-        # (xz)^2
-        elif index == 5:
-            # raman_v = self.dyn.GetRamanVector(epols['x'], epols['z'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['x'],  pol_out  =  epols['z'],\
-                                             mixed = False,\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'xz_square')
-        # (yz)^2
-        elif index == 6:
-            # raman_v = self.dyn.GetRamanVector(epols['y'], epols['z'])
-            self.prepare_anharmonic_raman_FT(raman = raman_tns_ens, raman_eq = eq_raman_tns,\
-                                             pol_in   =  epols['y'],  pol_out  =  epols['z'],\
-                                             mixed = False,\
-                                             add_two_ph = add_2ph, symmetrize = use_symm,\
-                                             ensemble = ens_av_raman,\
-                                             save_raman_tensor2 = debug, file_raman_tensor2 = 'yz_square')
-            
-        return
-       
-   
+    def prepare_unpolarized_raman_FT(
+            self, index=0, debug=False, eq_raman_tns=None, use_symm=True,
+            ens_av_raman=None, raman_tns_ens=None, add_2ph=True):
+        """Disabled compatibility entry point for unvalidated two-phonon Raman."""
+        raise NotImplementedError(_TWO_PHONON_RAMAN_DISABLED)
 
-    def prepare_anharmonic_raman_FT(self, raman = None, raman_eq = None,\
-                                    pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
-                                    mixed = False, pol_in_2 = None, pol_out_2 = None,\
-                                    pol_in_3 = None, pol_out_3 = None,\
-                                    add_two_ph = False, symmetrize = False, ensemble = None,\
-                                    save_raman_tensor2 = False, file_raman_tensor2 = None):
-        r"""
-        PREPARE THE PSI VECTOR FOR ANHARMONIC RAMAN SPECTRUM CALCULATION (NEW VERSION)
-        ===========================================================================
-        
-        This works only with the Wigner representation if we add the two phonons effect. 
-        Prepare the psi vector for RAMAN spectrum considering position-dependent raman tensors.
-        
-        Parameters:
-        -----------
-            -raman: nd.array (N_configs, E_comp, E_comp, 3 * N_at_sc),
-                 the Raman tensor for all configurations.
-                 Indices are: Number of configuration, electric field component,
-                 electric field component, atomic coordinates in sc.
-            rama_eq: nd.array, (E_comp, E_comp, 3 * N_at_uc), the effective charges at equilibrium.
-                 Indices are: electric field component,
-                 electric field component, atomic coordinate in uc.   
-            -pol_in: nd.array, the polarization of in-out light. default is x
-            -pol_out: nd.array, the polarization of in-out light. default is x
-            -mixed: if True we can study the one and two phonon response to 
-                    pol_in \cdto \Xi \cdot pol_in + pol_in_2 \cdto \Xi \cdot pol_in_2 + pol_in_3 \cdto \Xi \cdot pol_in_3
-                    (\Xi is the Raman tensor)
-            -pol_in_2:  nd.array, the polarization of in-out light. default is None
-            -pol_out_2: nd.array, the polarization of in-out light. default is None
-            -pol_in_3:  nd.array, the polarization of in-out light. default is None
-            -pol_out_3: nd.array, the polarization of in-out light. default is None
-            -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symmetrize: bool, if True the first/second order Raman tensors are symmetrized
-            -ensemble: a scha ensemble object for computing the averages
-            -save_raman_tensor2: bool if True we save the second order Raman tensor
-        """
-        if not self.use_wigner and add_two_ph:
-            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
-            
-        if raman is None:
-            raise ValueError('Must specify the raman tensors for all configurations!')
-            
-        if mixed:
-            #Check that we have the other polarization vectors
-            if (pol_in_2 is None) or (pol_out_2 is None):
-                raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
-                
-            if (pol_in_3 is None) or (pol_out_3 is None):
-                raise ValueError('Must specify pol_in_3 pol_out_3 if mixed = True!')
-                
-            if len(pol_in_2) != 3 or len(pol_out_2) != 3:
-                raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
-                
-            if len(pol_in_3) != 3 or len(pol_out_3) != 3:
-                raise ValueError('pol_in_3 pol_out_3 must be array of len 3')
-                
-        
-        print()
-        print('PREPARE THE RAMAN ANHARMONIC SPECTRUM CALCULATION')
-        print('=================================================')
-        print('Are we considering two ph effects? = {}'.format(add_two_ph))
-        print('Are we using Wigner? = {}'.format(self.use_wigner))
-        print('Are we symmetrizing the raman tensor? = {}'.format(symmetrize))
-        print()
-        if ensemble is not None:
-            Nconf = ensemble.N
-        else:
-            Nconf = self.N
-        
-        required = 'N_conf - E_field - E_field - 3 * N_at_sc'
-        assert raman.shape[0] == Nconf, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
-        assert raman.shape[1] == 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
-        assert raman.shape[2] == 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
-        assert raman.shape[3] == self.nat * 3, 'The raman tensor in input have the wrong shape. The required is {}'.format(required)
-        
-        # alpha is the polarizability
-        
-        # Get the average of the raman tensor, np.array with shape = (3, 3, 3 * N_at_sc)
-        d1alpha_dR_av = perturbations.get_d1alpha_dR_av(ensemble, raman, symmetrize = symmetrize)
-        
-        # Get the supercell dyn then set the raman tensor euqal to d1alpha_dR_av
-        sc_dyn = self.dyn.GenerateSupercellDyn(self.dyn.GetSupercell())
-        sc_dyn.raman_tensor = d1alpha_dR_av
-        
-        # Get the Raman vector np.array (3 * N_at_sc)
-        raman_vector_sc = sc_dyn.GetRamanVector(pol_in, pol_out)
-        
-        if mixed:
-            print('ONE PH SECTOR adding compoent pol_in_2 pol_out_2 of the Raman tensor')
-            raman_vector_sc += sc_dyn.GetRamanVector(pol_in_2, pol_out_2)
-            print('ONE PH SECTOR adding compoent pol_in_3 pol_out_3 of the Raman tensor')
-            raman_vector_sc += sc_dyn.GetRamanVector(pol_in_3, pol_out_3)
-            
-        
-        # Now rescale by the mass and go in polarizaiton basis
-        self.prepare_perturbation(raman_vector_sc, masses_exp = -1)
-        print('[NEW] Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
-        print()
-        
-        # NOW PREPARE THE SECOND RAMAN TENSOR
-        if add_two_ph:
-            if raman_eq is not None:
-                print('[NEW] Getting the equilibirum RAMAN tensor...')
-                print()
-                n_supercell = np.prod(self.dyn.GetSupercell())
-                # raman_eq is np.array with shape = (E_field, E_field, N_at_uc * 3)
-                raman_eq_size = np.shape(raman_eq)
-                MSG = """
-                Error, raman tns of the wrong shape: {}
-                """.format(raman_eq_size)
-                assert len(raman_eq_size) == 3, MSG
-                if not self.ignore_small_w:
-                    assert raman_eq_size[2] * n_supercell == self.nat * 3 #self.n_modes + 3
-                assert raman_eq_size[0] == raman_eq_size[1] == 3
+    def prepare_anharmonic_raman_FT(
+            self, raman=None, raman_eq=None,
+            pol_in=None, pol_out=None,
+            mixed=False, pol_in_2=None, pol_out_2=None,
+            pol_in_3=None, pol_out_3=None, add_two_ph=False,
+            symmetrize=False, ensemble=None, save_raman_tensor2=False,
+            file_raman_tensor2=None):
+        """Disabled compatibility entry point for unvalidated two-phonon Raman."""
+        raise NotImplementedError(_TWO_PHONON_RAMAN_DISABLED)
 
-                # Get the raman tensor in the supercell (E_field, E_filed, 3 * N_at_sc)
-                raman_eq_gamma = np.zeros((3, 3, 3 * n_supercell * self.dyn.structure.N_atoms), dtype = type(raman_eq[0,0,0]))
-                raman_eq_gamma = np.tile(raman_eq, n_supercell)
-                
-            print('[NEW] Getting the two phonon contribution in RAMAN...')
+    def prepare_anharmonic_raman_FT_2ph(
+            self, d2alpha_dR=None, pol_in=None, pol_out=None,
+            mixed=False, pol_in_2=None,
+            pol_out_2=None):
+        """Disabled compatibility entry point for unvalidated two-phonon Raman."""
+        raise NotImplementedError(_TWO_PHONON_RAMAN_DISABLED)
 
-            # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
-            if raman_eq is not None:
-                print('[NEW] Subtracting the equilibirum RAMAN tensor...')
-                # raman - raman_eq_gamma, np.array with shape = (N_configs, Efield, Efield, 3 * N_at_sc)
-                # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
-                d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman - raman_eq_gamma, None, symmetrize = symmetrize)
-            else:
-                # THE RESULT HAS shape = (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
-                d2alpha_dR = perturbations.get_d2alpha_dR_av(ensemble, raman, None, symmetrize = symmetrize)
-            
-            print('[NEW] Divide by the masses')
-            # Divide by the masses of the atoms in the supercell shape =  (Efield, Efield, 3 * N_at_sc, 3 * N_at_sc)
-            d2alpha_dR = np.einsum('c, abcd, d -> abcd', np.sqrt(self.m)**-1, d2alpha_dR, np.sqrt(self.m)**-1)
-            
-            if save_raman_tensor2:
-                print('[NEW] Saving the second-order SCHA Raman tensor')
-                np.save('{}'.format(file_raman_tensor2), d2alpha_dR)
-                return
-            
-            print('[NEW] Go in polarization basis')
-            # Now go in polarization basis, np.array with shape = (E_field, E_field, n_modes, n_modes)
-            # d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
-            # -> substitute
-            tmp                = np.einsum('abcd, cm -> abmd', d2alpha_dR, self.pols)
-            d2alpha_dR_muspace = np.einsum('abmd, dn -> abmn', tmp, self.pols)
-
-            # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
-            dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
-            
-            if mixed:
-                print('TWO PH SECTOR adding component pol_in_2 pol_out_2 of the Raman tensor')
-                dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_2, pol_out_2)
-                print('TWO PH SECTOR adding component pol_in_3 pol_out_3 of the Raman tensor')
-                dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_3, pol_out_3)
-            
-            # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
-            dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
-
-            # Get chi_minus and chi_plus tensors, np.array with shape = (n_modes, n_modes)
-            chi_minus = self.get_chi_minus()
-            chi_plus  = self.get_chi_plus()
-
-            # Get the pertubations on a'^(1) b'^(1)
-            pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), dXi_dR_muspace)
-            pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , dXi_dR_muspace)
-
-            # Check if everything is symmetric
-            assert np.all(np.abs(dXi_dR_muspace - dXi_dR_muspace.T) < 1e-10), "Second derivative of the polarizability is not symmetric in pol basis"
-            assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
-            assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
-
-            # Now get the perturbation for a'^(1)
-            current = self.n_modes
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
-                current = current + self.n_modes - i
-
-            # Now get the pertrubation for b'^(1)
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
-                current = current + self.n_modes - i
-
-            # Add the mask dot taking into account symmetric elements
-            mask_dot = self.mask_dot_wigner()
-            # OVERWRITE the pertubation modulus considering the two phonon sector
-            self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
-
-            print('[NEW] Perturbation modulus after adding two ph contributions RAMAN = {}'.format(self.perturbation_modulus))
-            print()
-    
-        return
-    
-    
-    
-    def prepare_anharmonic_raman_FT_2ph(self, d2alpha_dR = None, pol_in = np.array([1.,0.,0.]), pol_out = np.array([1.,0.,0.]),\
-                                    mixed = False, pol_in_2 = None, pol_out_2 = None):
-        r"""
-        PREPARE THE PSI VECTOR FOR RAMAN SPECTRUM CALCULATION (NEW VERSION) DIRECTLY FROM 2nd ORDER RAMAN TENSOR
-        ========================================================================================================
-        
-        This function is useful if we want to interpolate the 2nd Raman tensor on a bigger supercell.
-        
-        This works only with the Wigner representation if we add the two phonons effect. 
-        Prepare the psi vector for RAMAN spectrum considering position-dependent raman tensors.
-        
-        NOTE: we completely neglect the frist order Raman scattering!
-        
-        Parameters:
-        -----------
-            -d2alpha_dR: nd.array (E_comp, E_comp, 3 * N_at_sc, 3 * N_at_sc),
-                 2nd order Raman tensor.
-                 Indices are: Number of configuration, electric field component,
-                 electric field component, atomic coordinates in sc.   
-            -pol_in: nd.array, the polarization of in-out light. default is x
-            -pol_out: nd.array, the polarization of in-out light. default is x
-            -mixed: if True we can study the one and two phonon response to 
-                    pol_in \cdot \Xi \cdot pol_out + pol_in_2 \cdot \Xi \cdot pol_out_2
-                    (\Xi is the Raman tensor)
-            -pol_in_2: nd.array, the polarization of in-out light. default is x
-            -pol_out_2: nd.array, the polarization of in-out light. default is x
-        """
-        if not self.use_wigner:
-            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
-            
-        if d2alpha_dR is None:
-            raise ValueError('Must specify the 2nd order Raman tensor!')
-            
-        exp_shape = (3, 3, self.nat * 3, self.nat * 3)
-        if d2alpha_dR.shape != exp_shape:
-            raise ValueError('The shape of the 2nd order Raman tensor is not correct, expected {}'.format(exp_shape))
-            
-        if mixed:
-            if (pol_in_2 is None) or (pol_out_2 is None):
-                raise ValueError('Must specify pol_in_2 pol_out_2 if mixed = True!')
-                
-            if len(pol_in_2) != 3 or len(pol_out_2) != 3:
-                raise ValueError('pol_in_2 pol_out_2 must be array of len 3')
-                
-        
-        print()
-        print('PREPARE THE RAMAN ANHARMONIC SPECTRUM CALCULATION FROM 2nd ORDER RAMAN TENSOR')
-        print('=============================================================================')
-        # print('Are we considering two ph effects? = {}'.format(add_two_ph))
-        print('Are we using Wigner? = {}'.format(self.use_wigner))
-        # print('Are we symmetrizing the raman tensor? = {}'.format(symmetrize))
-        print()
-            
-        print('TWO PH Going in polarization basis')
-        # Now go in polarization basis, np.array with shape = (E_field, E_field, n_modes, n_modes)
-        # d2alpha_dR_muspace = np.einsum('cm, abcd, dn -> abmn', self.pols, d2alpha_dR, self.pols)
-        # -> substitute
-        tmp                = np.einsum('abcd, cm -> abmd', d2alpha_dR, self.pols)
-        d2alpha_dR_muspace = np.einsum('abmd, dn -> abmn', tmp, self.pols)
-        # print(d2alpha_dR_muspace.shape)
-        
-        print('TWO PH Selecting the polarizations')
-        # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
-        dXi_dR_muspace = np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in, pol_out)
-        # print(dXi_dR_muspace.shape)
-        
-        if mixed:
-            print('TWO PH SECTOR adding component pol_in_2 pol_out_2 of the Raman tensor')
-            dXi_dR_muspace += np.einsum('abmn, a, b -> mn', d2alpha_dR_muspace, pol_in_2, pol_out_2)
-
-        # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
-        dXi_dR_muspace = 0.5 * (dXi_dR_muspace + dXi_dR_muspace.T)
-
-        # Get chi_minus and chi_plus tensors, np.array with shape = (n_modes, n_modes)
-        chi_minus = self.get_chi_minus()
-        chi_plus  = self.get_chi_plus()
-
-        # Get the pertubations on a'^(1) b'^(1)
-        pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), dXi_dR_muspace)
-        pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , dXi_dR_muspace)
-
-        # Check if everything is symmetric
-        assert np.all(np.abs(dXi_dR_muspace - dXi_dR_muspace.T) < 1e-10), "Second derivative of the polarizability is not symmetric in pol basis"
-        assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
-        assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
-        
-        print('[NEW] Perturbation modulus = {}'.format(self.perturbation_modulus))
-        print()
-
-        # Now get the perturbation for a'^(1)
-        current = self.n_modes
-        for i in range(self.n_modes):
-            self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
-            current = current + self.n_modes - i
-
-        # Now get the pertrubation for b'^(1)
-        for i in range(self.n_modes):
-            self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
-            current = current + self.n_modes - i
-
-        # Add the mask dot taking into account symmetric elements
-        mask_dot = self.mask_dot_wigner()
-        # OVERWRITE the pertubation modulus considering the two phonon sector
-        self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
-
-        print('[NEW] Perturbation modulus adding two ph contributions RAMAN = {}'.format(self.perturbation_modulus))
-        print()
-    
-        return
-    
-    
-    
     def prepare_ir(self, effective_charges = None, pol_vec = np.array([1,0,0])):
         """
         PREPARE LANCZOS FOR INFRARED SPECTRUM COMPUTATION
@@ -1652,302 +1272,28 @@ File {} not found. S norm not loaded.
         if not effective_charges is None:
             ec = effective_charges
         
-        n_supercell = np.prod(self.dyn.GetSupercell())
-
-        # Check the effective charges
-        assert not ec is None, "Error, no effective charge found. Cannot initialize IR responce"
-
-        ec_size = np.shape(ec)
-        MSG = """
-        Error, effective charges of the wrong shape: {}
-        Number of modes : {}
-        Dimension of the supercell : {}
-        """.format(ec_size, self.n_modes, n_supercell)
-        assert len(ec_size) == 3, MSG
-        if not self.ignore_small_w:
-            assert ec_size[0] * ec_size[2] * n_supercell == self.n_modes + 3, MSG
-        assert ec_size[1] == ec_size[2] == 3, MSG
-
-        # shape = (N_at_uc, 3)
-        z_eff = np.einsum("abc, b", ec, pol_vec)
-
-        # Get the gamma effective charge
-        new_zeff = np.tile(z_eff.ravel(), n_supercell)
-
-        self.prepare_perturbation(new_zeff, masses_exp = -1)
-    
-    
-    
-    def prepare_anharmonic_ir_FT(self, ec = None, ec_eq = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False, symmetrize = False, ensemble = None):
-        """
-        PREPARE THE PSI VECTOR FOR ANHARMONIC IR SPECTRUM CALCULATION (NEW VERSION)
-        ===========================================================================
-        
-        This works only with the Wigner representation if we add the two phonons effect. 
-        Prepare the psi vector for IR spectrum considering position-dependent effective charges.
-        
-        The one phonon scetor is symmetrized by default
-        
-        Parameters:
-        -----------
-            -effective_charges: nd.array (N_configs, N_atoms_sc, E_comp, cart_comp),
-                 the effective charges for all configurations.
-                 Indices are: Number of configuration, number of atoms in the super cell,
-                 electric field component, atomic coordinate.
-            -effective_charges_eq: nd.array, (N_atoms_uc, E_comp, cart_comp), the effective charges at equilibrium.
-                 Indices are: number of atoms in the unit cell,
-                 electric field component, atomic coordinate.   
-            -pol_vec_light: nd.array, the polarization of in-out light. default is x
-            -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symmetrize: bool, if True the first/second order effective charges are symmetrized
-            -ensemble: a scha ensemble object for computing the averages
-        """
-        if not self.use_wigner and add_two_ph:
-            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
-            
         if ec is None:
-            raise ValueError('Must specify the effective charges for all configurations!')
-            
-         
-        print()
-        print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
-        print('==============================================')
-        print('Are we considering two ph effects? = {}'.format(add_two_ph))
-        print('Are we using Wigner? = {}'.format(self.use_wigner))
-        print('Are we symmetrizing the effective charges? = {}'.format(symmetrize))
-        print()
-        
-        required = 'N_conf N_at_sc E_field cart'
-        assert ec.shape[0] == ensemble.N, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
-        assert ec.shape[1] == self.nat, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
-        assert ec.shape[2] == ec.shape[3] == 3, 'The effective charges in input have the wrong shape. The required is {}'.format(required)
-            
-        # Get the average of the dipole moment, np.array with shape = (3 * N_at_sc, 3)
-        d1M_dR_av = perturbations.get_d1M_dR_av(ensemble, ec, symmetrize = symmetrize)
-        
-        # Project along the direction of light polarization, (3 * N_at_sc)
-        Z = np.einsum("ab, b -> a", d1M_dR_av, pol_vec_light)
-        
-        # Now rescale by the mass and go in polarizaiton basis
-        self.prepare_perturbation(Z.ravel(), masses_exp = -1)
-        print('Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
-        print()
-        
-        # NOW PREPARE THE SECOND ORDER DIPOLE MOMENT
-        if add_two_ph:
-            if ec_eq is not None:
-                print('[NEW] Getting the equilibirum effective charges...')
-                print()
-                n_supercell = np.prod(self.dyn.GetSupercell())
-                # ec_eq is np.array with shape = (N_at_uc, E_field, cart)
-                ec_eq_size = np.shape(ec_eq)
-                MSG = """
-                Error, effective charges of the wrong shape: {}
-                """.format(ec_eq_size)
-                assert len(ec_eq_size) == 3, MSG
-                if not self.ignore_small_w:
-                    assert ec_eq_size[0] * ec_eq_size[2] * n_supercell == self.n_modes + 3
-                assert ec_eq_size[1] == ec_eq_size[2] == 3
+            raise ValueError(
+                "No effective charges found; cannot initialize the IR response")
 
-                # Get the eq effective charges in the supercell (N_at_sc, E_field, 3)
-                ec_eq_gamma = np.zeros((n_supercell * self.dyn.structure.N_atoms, 3, 3), dtype = type(ec_eq[0]))
-                ec_eq_gamma = np.tile(ec_eq, (n_supercell,1,1))
-                
-            print('[NEW] Getting the two phonon contribution...')
-
-            # d2M_dR np.array with shape = (3 * N_atoms, 3 * N_atoms, Efield)
-            if ec_eq is not None:
-                print('[NEW] Subtracting the equilibirum effective charges...')
-                # ec - ec_eq_gamma, np.array with shape = (N_configs, N_at_sc, Efield, cart)
-                d2M_dR = perturbations.get_d2M_dR_av(ensemble, ec - ec_eq_gamma, None, symmetrize = symmetrize)
-            else:
-                d2M_dR = perturbations.get_d2M_dR_av(ensemble, ec, None, symmetrize = symmetrize)
-
-            # Divide by the masses of the atoms in the supercell
-            d2M_dR = np.einsum('a, abc, b -> abc', np.sqrt(self.m)**-1, d2M_dR, np.sqrt(self.m)**-1)
-            
-            # Now go in polarization basis, np.array with shape = (n_modes, n_modes, E_filed)
-            d2M_dR_muspace = np.einsum('am, abc, bn -> mnc', self.pols, d2M_dR, self.pols)
-
-            # Project along the direction of the filed, np.array with shape = (n_modes, n_modes)
-            dZ_dR_muspace = np.einsum('mnc, c -> mn', d2M_dR_muspace, pol_vec_light)
-            
-            # Symmetrize in mu space, np.array with shape = (n_modes, n_modes)
-            dZ_dR_muspace = 0.5 * (dZ_dR_muspace + dZ_dR_muspace.T)
-
-            # Get chi_minus and chi_plus tensors, np.array with shape = (n_modes, n_modes)
-            chi_minus = self.get_chi_minus()
-            chi_plus  = self.get_chi_plus()
-
-            # Get the pertubations on a'^(1) b'^(1)
-            pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), dZ_dR_muspace)
-            pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , dZ_dR_muspace)
-
-            # Check if everything is symmetric
-            assert np.all(np.abs(dZ_dR_muspace - dZ_dR_muspace.T) < 1e-10), "Second derivative of the dipole is not symmetric in pol basis"
-            assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
-            assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
-
-            # Now get the perturbation for a'^(1)
-            current = self.n_modes
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
-                current = current + self.n_modes - i
-
-            # Now get the pertrubation for b'^(1)
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
-                current = current + self.n_modes - i
-
-            # Add the mask dot taking into account symmetric elements
-            mask_dot = self.mask_dot_wigner()
-            # OVERWRITE the pertubation modulus considering the two phonon sector
-            self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
-
-            print('[NEW] Perturbation modulus after adding two ph contributions = {}'.format(self.perturbation_modulus))
-            print()
-    
-        return
+        z_eff = Spectroscopy.build_ir_vector(ec, pol_vec)
+        self._prepare_gamma_cartesian_perturbation(z_eff)
     
     
     
-        
-    def prepare_anharmonic_ir(self, ec = None, ec_eq = None, pol_vec_light = np.array([1.,0.,0.]), add_two_ph = False):
-        """
-        PREPARE THE PSI VECTOR FOR ANHARMONIC IR SPECTRUM CALCULATION
-        =============================================================
-        
-        This works only with the Wigner representation if we add the two phonons effect. 
-        Prepare the psi vector for IR spectrum considering position-dependent effective charges.
-        
-        Parameters:
-        -----------
-            -effective_charges: nd.array (N_configs, N_atoms_sc, E_comp, cart_comp),
-                 the effective charges for all configurations.
-                 Indices are: Number of configuration, number of atoms in the super cell,
-                 electric field component, atomic coordinate.
-            -effective_charges_eq: nd.array, the effective charges at equilibrium.
-                 Indices are: number of atoms in the unit cell,
-                 electric field component, atomic coordinate.   
-            -pol_vec_light: nd.array, the polarization of in-out light. default is x
-            -add_two_ph: bool, if True two phonon processes are included in the calculation
-            -symm_eff_charges: bool, if True the effective charges are symmetrized
-            -ensemble: a scha ensemble object to compute the effective charges
-        """
-        if not self.use_wigner and add_two_ph:
-            raise NotImplementedError('The two phonon processes are implemented only in Wigner')
-            
-        if ec is None:
-            raise ValueError('Must specify the effective charges for all configurations!')
-            
-        print()
-        print('PREPARE THE IR ANHARMONIC SPECTRUM CALCULATION')
-        print('==============================================')
-        print('Are we considering two ph effects? = {}'.format(add_two_ph))
-        print('Are we using Wigner? = {}'.format(self.use_wigner))
-        print()
-    
-        # The effective charges for each configuration (N_configs, N_at_sc, E_field_comp, 3)
-        eff = np.zeros((self.N, self.nat, 3, 3))
+    def prepare_anharmonic_ir_FT(
+            self, ec=None, ec_eq=None,
+            pol_vec_light=np.array([1., 0., 0.]), add_two_ph=False,
+            symmetrize=False, ensemble=None):
+        """Disabled compatibility entry point for unvalidated optical vertices."""
+        raise NotImplementedError(_CONFIGURATION_DEPENDENT_IR_DISABLED)
 
-        assert ec.shape == eff.shape, 'The effective charges in input have the wrong shape. The required is {}'.format(eff.shape)
-        
-        # Get the effective charges
-        eff = ec.copy()
-        
-        # FIRST DERIVATIVE OF THE DIPOLE
-        # Project along the direction of light polarization, (N_configs, N_at_sc, 3)
-        z_eff = np.einsum("iabc, b -> iac", eff, pol_vec_light)
+    def prepare_anharmonic_ir(
+            self, ec=None, ec_eq=None,
+            pol_vec_light=np.array([1., 0., 0.]), add_two_ph=False):
+        """Disabled compatibility entry point for unvalidated optical vertices."""
+        raise NotImplementedError(_CONFIGURATION_DEPENDENT_IR_DISABLED)
 
-        # FIRST DERIVATIVE OF THE DIPOLE
-        # Average of effective charges on the ensemble (N_at_sc, 3)
-        d1_M = np.einsum('i, iab -> ab', self.rho, z_eff) /np.sum(self.rho)
-
-        # Now rescale by the mass and go in polarizaiton basis
-        self.prepare_perturbation(d1_M.ravel(), masses_exp = -1)
-        print('Pertubation modulus with one ph effects only = {}'.format(self.perturbation_modulus))
-        print()
-        
-        # NOW PREPARE THE SECOND ORDER DIPOLE MOMENT
-        if add_two_ph:
-            if ec_eq is not None:
-                print('Subtracting the equilibirum effective charges...')
-                print()
-                n_supercell = np.prod(self.dyn.GetSupercell())
-                ec_eq_size = np.shape(ec_eq)
-                MSG = """
-                Error, effective charges of the wrong shape: {}
-                """.format(ec_eq_size)
-                assert len(ec_eq_size) == 3, MSG
-                if not self.ignore_small_w:
-                    assert ec_eq_size[0] * ec_eq_size[2] * n_supercell == self.n_modes + 3
-                assert ec_eq_size[1] == ec_eq_size[2] == 3
-
-                # Eq effective charges, (N_at_uc, 3)
-                z_eff_eq = np.einsum("abc, b -> ac", ec_eq, pol_vec_light)
-                # Eq effective charges at gamma, (N_at_sc, 3)
-                z_eff_eq_gamma = np.tile(z_eff_eq.ravel(), n_supercell).reshape((self.nat, 3))
-
-                # This should reduce the noise when computing the 2ph vertex
-                z_eff -= z_eff_eq_gamma
-                
-            print('[OLD] Getting the two phonon contribution...')
-            
-            # Polarization vectors over mass, shape = (N_at_sc, n_modes)
-            pols_mass = np.einsum('a, am -> am', np.sqrt(self.m)**-1, self.pols)
-
-            # The mass rescaled projected effective charges in polarization basis, shape = (N_configs, n_modes)
-            z_pols_mass = np.einsum('am, ia -> im ', pols_mass, z_eff.ravel().reshape((self.N, self.nat * 3)))
-
-            # Eigenvalues of Upsilon mass rescaled, shape = (n_modes)
-            xi2_inv = f_ups(self.w, self.T)
-
-            # The mass rescaled displacements in polarization basis divided by xi2, shape = (N_configs, n_modes)
-            u_xi2 = np.einsum('im, m -> im', self.X, xi2_inv)
-
-            # Add the effective charges, shape = (N_configs, n_modes, n_modes)
-            u_xi2_Z = np.einsum('in , im -> inm', u_xi2, z_pols_mass)
-
-            # Get the reweighted average of the second derivative, shape = (n_modes, n_modes)
-            d2_M = np.einsum('i, inm -> nm', self.rho, u_xi2_Z) /np.sum(self.rho)
-            d2_M = 0.5 * (d2_M + d2_M.T)
-
-            # Get chi_minus and chi_plus tensors
-            chi_minus = self.get_chi_minus()
-            chi_plus  = self.get_chi_plus()
-
-            # Get the pertubations on a'^(1) b'^(1)
-            pert_a = -np.einsum('nm, nm -> nm', np.sqrt(-0.5 * chi_minus), d2_M)
-            pert_b = +np.einsum('nm, nm -> nm', np.sqrt(+0.5 * chi_plus) , d2_M)
-
-            # Check if everything is symmetric
-            assert np.all(np.abs(d2_M - d2_M.T) < 1e-10), "Second derivative of the dipole is not symmetric in pol basis"
-            assert np.all(np.abs(pert_a - pert_a.T) < 1e-10), "a'(1) pertubation is not symmetric in pol basis"
-            assert np.all(np.abs(pert_b - pert_b.T) < 1e-10), "b'(1) pertubation is not symmetric in pol basis"
-
-            # Now get the perturbation for a'^(1)
-            current = self.n_modes
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_a[i, i:]
-                current = current + self.n_modes - i
-
-            # Now get the pertrubation for b'^(1)
-            for i in range(self.n_modes):
-                self.psi[current : current + self.n_modes - i] = pert_b[i, i:]
-                current = current + self.n_modes - i
-
-            # Add the mask dot taking into account symmetric elements
-            mask_dot = self.mask_dot_wigner()
-            # OVERWRITE the pertubation modulus considering the two phonon sector
-            self.perturbation_modulus = self.psi.dot(self.psi * mask_dot)
-
-            print('[OLD] Perturbation modulus after adding two ph contributions = {}'.format(self.perturbation_modulus))
-            print()
-            
-        return
-   
-        
-        
     def prepare_perturbation(self, vector, masses_exp = 1, add = False):
         r"""
         This function prepares the calculation for the Green function
@@ -1995,10 +1341,13 @@ File {} not found. S norm not loaded.
 
         # THIS IS OK IN THE WIGNER REPRESENTATION BECAUSE
         # THE PERTUBATION ENTERS ONLY IN THE R SECTOR
-        self.perturbation_modulus = new_v.dot(new_v)
-
         if self.symmetrize:
             self.symmetrize_psi()
+
+        # Account for the full accumulated one-phonon perturbation.  In
+        # particular, add=True must include cross terms with earlier vectors.
+        perturbation = self.psi[:self.n_modes]
+        self.perturbation_modulus = perturbation.dot(perturbation)
 
             
             
@@ -3033,6 +2382,9 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         #print("Entering in get pert...")
         _t_pert_start = time.time()
         n_syms, _, _ = np.shape(self.symmetries[0])
+        coset_indices, stabilizer_indices, characters = (
+            self._spectroscopy_reduction_arguments())
+        n_syms = self._spectroscopy_symmetry_count(n_syms)
         #print("DEG:")
         #print(self.degenerate_space)
         
@@ -3064,11 +2416,12 @@ Error, for the static calculation the vector must be of dimension {}, got {}
                     self.X.T, self.Y.T, self.w, self.rho, R1, Y1,
                     np.float64(self.T), bool(apply_d4),
                     self.sym_julia, self.N_degeneracy, self.deg_julia,
-                    self.sym_block_id, start, end)
+                    self.sym_block_id, start, end,
+                    coset_indices, stabilizer_indices, characters)
                 return np.concatenate([result[0], result[1].ravel()])
 
             # Divide the configurations and symmetries on different processors (Here we get the range of work for each process)
-            n_total = self.n_syms * self.N
+            n_total = n_syms * self.N
             n_processors = Parallel.GetNProc()
             count = n_total // n_processors
             remainer = n_total % n_processors
@@ -3583,6 +2936,9 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         """
         Save only the a, b, and c coefficients from the lanczos.
         In this way the calculation cannot be restarted.
+
+        The perturbation modulus is stored in the first comment line,
+        so that it is preserved when the calculation is reanalyzed.
         """
 
         total_len = len(self.a_coeffs)
@@ -3592,14 +2948,25 @@ Error, for the static calculation the vector must be of dimension {}, got {}
         abc[:len(self.b_coeffs),1] = self.b_coeffs
         abc[:len(self.c_coeffs),2] = self.c_coeffs
 
-        np.savetxt(file, abc, header = "a; b; c")
+        header = "perturbation_modulus = {}\na; b; c".format(
+            format(self.perturbation_modulus, ".16g"))
+        np.savetxt(file, abc, header = header)
 
     def load_abc(self, file):
         """
         Load only the a, b, and c coefficients from the ".abc" file
+
+        The perturbation modulus is read back from the first comment line
+        if it is present. Old .abc files (or files produced by other tools)
+        may not store it: in that case the value is left untouched.
         """
 
-        abc = np.loadtxt(file)
+        with open(file, "r") as fp:
+            first_line = fp.readline()
+            if "perturbation_modulus" in first_line:
+                self.perturbation_modulus = float(first_line.split("=")[1].strip())
+            fp.seek(0)
+            abc = np.atleast_2d(np.loadtxt(fp))
         self.a_coeffs = abc[:,0]
         self.b_coeffs = abc[:,1]
         self.c_coeffs = abc[:,2]
@@ -7360,6 +6727,3 @@ def min_stdes(func, args, x0, step = 1e-2, n_iters = 100):
 
         print("F: {} | G: {}".format( f, np.sqrt(np.sum(grad**2))))
     return x
-
-
-

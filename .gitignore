@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+/build/
+
+# Local interpolation benchmarks and generated reports are intentionally
+# outside the pull-request branch.
+/report/interpolation/
+/FastHessianPaper.pdf
+
+# Runtime output produced by the q-space integration tests.
+/tests/test_julia/julia/
+/tests/test_julia/wigner_nowigner_julia/
+/tests/test_lanczos_fast/julia/
+/tests/test_lanczos_fast/normal/
+/tests/test_lanczos_fast/test_c_code_lanczos/mode10.*

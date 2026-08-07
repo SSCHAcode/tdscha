@@ -132,13 +132,16 @@ py.install_sources(
       'Modules/__init__.py',
       'Modules/DynamicalLanczos.py',
       'Modules/QSpaceLanczos.py',
-      'Modules/QSpaceKPM.py',
       'Modules/QSpaceHessian.py',
+      'Modules/QSpaceInterpolation.py',
+      'Modules/QSpaceAtomFourier.py',
       'Modules/Dynamical.py',
       'Modules/JuliaExt.py',
       'Modules/Parallel.py',
       'Modules/Perturbations.py',
       'Modules/StaticHessian.py',
+      'Modules/Spectroscopy.py',
+      'Modules/_SpectroscopyWorkflow.py',
       'Modules/tdscha_core.jl',
       'Modules/tdscha_qspace.jl',
       'Modules/juliapkg.json',
@@ -146,6 +149,17 @@ py.install_sources(
       'Modules/cli.py'
     ],
     subdir: 'tdscha'
+)
+
+# Test-data helpers used by the doctests in docs/. They are part of the
+# package because scripts/validate_docs.py imports them from the *installed*
+# tdscha, not from the source tree.
+py.install_sources(
+    [
+      'Modules/testing/__init__.py',
+      'Modules/testing/test_data.py'
+    ],
+    subdir: 'tdscha/testing'
 )
 
 install_data(

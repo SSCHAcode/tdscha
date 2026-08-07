@@ -1,0 +1,11 @@
+# Spectroscopy API Reference
+
+::: tdscha.Spectroscopy.Spectroscopy
+
+::: tdscha.Spectroscopy.EnsembleSource
+
+::: tdscha.Spectroscopy.RamanTensorPerturbation
+
+::: tdscha.Spectroscopy.IRPolarizationPerturbation
+
+::: tdscha.Spectroscopy.CartesianPerturbation

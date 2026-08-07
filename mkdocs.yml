@@ -44,13 +44,15 @@ nav:
   - Installation: installation.md
   - Quick Start: quickstart.md
   - In-Depth Usage: usage.md
+  - Raman and IR Spectroscopy: spectroscopy.md
   - StaticHessian: static-hessian.md
   - QSpaceHessian: qspace-hessian.md
-  - Kernel Polynomial Method: kpm.md
   - CLI Tools: cli.md
   - API Reference:
+    - Spectroscopy: api/spectroscopy.md
     - DynamicalLanczos: api/dynamical_lanczos.md
     - QSpaceLanczos: api/qspace_lanczos.md
+    - QSpaceAtomFourier: api/qspace_atom_fourier.md
     - QSpaceHessian: api/qspace_hessian.md
     - StaticHessian: api/static_hessian.md
 

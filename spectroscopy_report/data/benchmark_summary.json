@@ -1,0 +1,162 @@
+{
+  "ir": {
+    "legacy_runs": 3,
+    "legacy_seconds": 14.579686361015774,
+    "new_independent_runs": 1,
+    "new_seconds": 1.477487770956941,
+    "relative_linf_error": 3.045542529229973e-14,
+    "requested_components": 3,
+    "speedup": 9.867889702784332
+  },
+  "kernel_scaling": [
+    {
+      "backend": "real",
+      "configurations": 10,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.0017279270105063915,
+      "reduced_median_seconds": 0.0009242960950359702,
+      "relative_linf_error": 1.6770509138759796e-15,
+      "repeats": 7,
+      "speedup": 1.8694518128837783,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "real",
+      "configurations": 40,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.004928822047077119,
+      "reduced_median_seconds": 0.0012764170533046126,
+      "relative_linf_error": 3.1444704635174573e-15,
+      "repeats": 7,
+      "speedup": 3.861451109820665,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "real",
+      "configurations": 160,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.019442813005298376,
+      "reduced_median_seconds": 0.002200945047661662,
+      "relative_linf_error": 1.5512720953352614e-14,
+      "repeats": 7,
+      "speedup": 8.833847544696718,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "real",
+      "configurations": 640,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.06837712693959475,
+      "reduced_median_seconds": 0.005384374060668051,
+      "relative_linf_error": 8.46910711507296e-14,
+      "repeats": 7,
+      "speedup": 12.699178431728617,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "qspace",
+      "configurations": 10,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.0016310089267790318,
+      "reduced_median_seconds": 0.001033519976772368,
+      "relative_linf_error": 8.446762592530517e-16,
+      "repeats": 7,
+      "speedup": 1.5781106930052695,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "qspace",
+      "configurations": 40,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.003951585968025029,
+      "reduced_median_seconds": 0.0012220609933137894,
+      "relative_linf_error": 3.3555602228412186e-15,
+      "repeats": 7,
+      "speedup": 3.2335423433406136,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "qspace",
+      "configurations": 160,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.014473250019364059,
+      "reduced_median_seconds": 0.002020983025431633,
+      "relative_linf_error": 6.918848075501458e-15,
+      "repeats": 7,
+      "speedup": 7.161490144764043,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "qspace",
+      "configurations": 640,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.05224829004146159,
+      "reduced_median_seconds": 0.004582665977068245,
+      "relative_linf_error": 2.704263947674245e-14,
+      "repeats": 7,
+      "speedup": 11.401287002568614,
+      "stabilizer_order": 16
+    }
+  ],
+  "kernels": [
+    {
+      "backend": "real",
+      "configurations": 640,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.06837712693959475,
+      "reduced_median_seconds": 0.005384374060668051,
+      "relative_linf_error": 8.46910711507296e-14,
+      "repeats": 7,
+      "speedup": 12.699178431728617,
+      "stabilizer_order": 16
+    },
+    {
+      "backend": "qspace",
+      "configurations": 640,
+      "coset_representatives": 3,
+      "full_group_order": 48,
+      "full_median_seconds": 0.05224829004146159,
+      "reduced_median_seconds": 0.004582665977068245,
+      "relative_linf_error": 2.704263947674245e-14,
+      "repeats": 7,
+      "speedup": 11.401287002568614,
+      "stabilizer_order": 16
+    }
+  ],
+  "raman": {
+    "legacy_active_indices": [
+      4,
+      5,
+      6
+    ],
+    "legacy_nonzero_runs": 3,
+    "legacy_seconds": 14.64542654901743,
+    "new_independent_runs": 1,
+    "new_seconds": 1.482069363933988,
+    "relative_linf_error": 3.0425828183172135e-14,
+    "requested_components": 7,
+    "speedup": 9.88174164139172,
+    "zero_components": 4
+  },
+  "system": {
+    "ensemble_configurations": 10,
+    "lanczos_steps": 256,
+    "name": "bundled cubic SnTe ensemble with controlled optical vertices",
+    "smearing_ry": 8e-05,
+    "supercell": [
+      2,
+      2,
+      2
+    ],
+    "temperature_K": 250.0
+  }
+}

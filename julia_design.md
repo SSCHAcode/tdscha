@@ -310,7 +310,6 @@ They would fail identically on the unpatched branch.
 | `test_qspace_anharmonic_invariants.py::TestDiagonalD2vHermitian::test_d4_only_mixed` | same |
 | `test_qspace_anharmonic_invariants.py::TestFlagGating::test_R1_zero_gives_d4_only_off_diagonal` | D3/D4 flag gating inconsistent for off-diagonal pairs |
 | `test_qspace_hessian_1d.py::test_compare_real_vs_qspace_hessian` | real-space vs q-space Hessian mismatch |
-| `test_qspace_kpm.py::test_qspace_kpm_physics_regression` | KPM physics regression value off |
 
 These are physics-invariant checks on `get_perturb_averages_qspace`
 (`tdscha_qspace.jl`) with synthetic inputs: with purely real inputs the
@@ -324,8 +323,7 @@ Evidence that these failures pre-date the migration and are independent of it:
    legacy backend by forcing `SSCHA_JULIA_BACKEND=pyjulia`:
    `TestFpertReality::test_with_off_diagonal` fails with the **bit-identical**
    value `Im = 1.3502495550836942` under both pyjulia and juliacall, and
-   `test_qspace_hessian_1d.py` / `test_qspace_kpm.py` fail identically under
-   pyjulia as well (re-run: `2 failed, 2 passed`, same tests). If the bridge's
+   `test_qspace_hessian_1d.py` fails identically under pyjulia as well. If the bridge's
    argument/return conversion were corrupting data, the two backends — which
    use completely different conversion machinery (PyCall copy vs
    `juliacall.convert` + `np.asarray`) — would not agree to the last bit.
@@ -334,11 +332,10 @@ Evidence that these failures pre-date the migration and are independent of it:
    *"Suspect #3: `f_pert` D3 Contribution from Off-Diagonal Pairs"* — the D3
    accumulation `f_pert += w1 * y_pert; f_pert += w2 * f_Y[:, iq_pert] * x_pert`
    picks up a spurious imaginary part through the off-diagonal pair pathway
-   (and a second pathway via Suspect #1 contaminates the Hessian/KPM results,
-   which is consistent with the `test_qspace_hessian_1d` and `test_qspace_kpm`
-   failures).
+   (and a second pathway via Suspect #1 contaminates the Hessian results,
+   which is consistent with the `test_qspace_hessian_1d` failure).
 3. **The failing test files are themselves part of that debugging effort**:
-   `tests/test_qspace/test_qspace_anharmonic_invariants.py` and the gold/KPM
+   `tests/test_qspace/test_qspace_anharmonic_invariants.py` and the gold
    regression tests are untracked, in-flight files written to pin the bug
    down; they are not part of any previously green CI state.
 

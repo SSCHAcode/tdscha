@@ -9,6 +9,16 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # juliacall (PythonCall.jl) is the backend both python-sscha and tdscha
+  # prefer: it has no libpython coupling, so it works in any interpreter --
+  # including the ones the MPI tests launch through mpirun, which is where
+  # the PyJulia/PyCall backend fails to initialize.  Pin it explicitly so a
+  # transitively installed pyjulia can never silently take over.
+  SSCHA_JULIA_BACKEND: juliacall
+  OMP_NUM_THREADS: 1
+  JULIA_NUM_THREADS: 1
+
 jobs:
   build:
 
@@ -18,26 +28,18 @@ jobs:
       matrix:
         python-version: [3.9]
 
-    services:
-      rabbitmq:
-          image: rabbitmq:latest
-          ports:
-          -   5672:5672
-
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
 
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install flake8 pytest~=6.0 pgtest~=1.3 aiida-core~=2.3 aiida-quantumespresso~=4.3
-
-        aiida-pseudo install
+        pip install flake8 pytest~=6.0
 
     - name: Lint with flake8
       run: |
@@ -55,7 +57,19 @@ jobs:
         git clone https://github.com/SSCHAcode/python-sscha.git
 
         pip install meson meson-python ninja
-        pip install numpy scipy mpi4py spglib julia
+        # matplotlib is imported at module level by some collected tests.
+        pip install numpy scipy spglib matplotlib juliacall
+
+        # mpi4py MUST be built against the same MPI that owns mpirun.  Its
+        # binary wheel bundles its own runtime, and next to the mpich
+        # installed above that makes every process initialise a singleton
+        # COMM_WORLD: "mpirun -np 2" silently becomes two unrelated serial
+        # jobs, and the MPI tests pass while testing nothing.
+        pip install --no-binary=mpi4py mpi4py
+        mpirun -np 2 python -c "
+        from mpi4py import MPI
+        assert MPI.COMM_WORLD.Get_size() == 2, 'mpirun and mpi4py disagree'
+        "
 
         cd CellConstructor
         pip install --no-build-isolation .
@@ -69,18 +83,27 @@ jobs:
         # Install the tdscha package
         pip install --no-build-isolation .
 
-        # Install julia requirements
-        python -c 'import julia; julia.install()'
+    - name: Warm up the Julia environment
+      run: |
+        # Resolve, install and precompile the Julia side ONCE, serially.
+        # Several tests launch interpreters through mpirun; if those were the
+        # first to touch ~/.julia they would race each other on the same
+        # depot, and a corrupted precompile cache then breaks every later
+        # subprocess -- including the single-rank ones.
+        python -c "
+        import sscha.JuliaExt, tdscha.JuliaExt
+        sscha.JuliaExt.get_main()
+        tdscha.JuliaExt.get_main()
+        print('Julia backend ready')
+        "
+
     - name: Test with pytest
-      env:
-        OMP_NUM_THREADS: 1
-        JULIA_NUM_THREADS: 1
       run: |
         cd tests
         rm -rf __pycache__
         # Test excluding very long running tests
         pytest -v -m "not release"
-    
+
     - name: Validate documentation
       run: |
         # Validate code snippets in documentation

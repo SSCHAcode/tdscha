@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import division
 
 import sys, os
+import argparse
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,7 +14,6 @@ import cellconstructor.Phonons
 
 import sscha
 import tdscha, tdscha.DynamicalLanczos as DL
-import tdscha.QSpaceKPM as QKPM
 import sscha.Ensemble
 MSG = """
 TDSCHA  
@@ -54,12 +54,25 @@ Plot the spectrum of a TDSCHA calculation.
 
 Usage: 
 
-tdscha-plot-data file [w_start] [w_end] [smearing]
+tdscha-plot-data file [w_start] [w_end] [smearing] [options]
 
-Pass a .abc, .npz, or .kpm file resulting from a linear response calculation.
-- .abc / .npz : use Lanczos continued fraction
-- .kpm        : use KPM spectral function
-Optionally you can pass a range of frequencies (cm-1) and the smearing.
+Pass a .abc or .npz file resulting from a Lanczos calculation.
+
+The legacy positional arguments [w_start] [w_end] [smearing] (in cm-1) are
+still supported. Use the optional flags below for full control.
+
+Main options:
+  --w-start FLOAT, --w-end FLOAT   Frequency range in cm-1 (default 0, 5000)
+  --n-w INT                        Number of frequency points (default 50000)
+  --smearing FLOAT                 Smearing in cm-1 (default 5)
+  --terminator                     Use the Lanczos terminator
+  --last-average INT               Coefficients averaged for the terminator (default 1)
+  --smooth-ramp INT                Blend the last coefficients toward the terminator mean (default 0)
+  --title TEXT                     Title of the plot
+  --dpi INT                        Figure resolution in dots per inch (default 100)
+  --save PATH                      Save the figure to a file instead of showing it
+  --no-show                        Do not open the plot window (useful with --save)
+  -h, --help                       Show the full help message
 
 """
 
@@ -173,68 +186,95 @@ def plot_hessian_convergence():
  
 
 def plot():
-    print(MSG_PLOT)
-    if len(sys.argv) not in [2, 3, 4, 5]:
-        print("Error, wrong number of arguments.")
-        exit()
-    
-    fname = sys.argv[1]
-    assert os.path.exists(fname), "Error, file {} does not exist".format(fname)
-    
+    parser = argparse.ArgumentParser(
+        prog = "tdscha-plot-data",
+        description = "Plot the spectrum of a TDSCHA calculation.",
+        epilog = MSG_PLOT,
+        formatter_class = argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("file", help = "the .abc or .npz file from a Lanczos calculation")
+    parser.add_argument("w_start_pos", nargs = "?", type = float, default = None,
+                        metavar = "w_start",
+                        help = "[legacy] start frequency in cm-1 (use --w-start instead)")
+    parser.add_argument("w_end_pos", nargs = "?", type = float, default = None,
+                        metavar = "w_end",
+                        help = "[legacy] end frequency in cm-1 (use --w-end instead)")
+    parser.add_argument("smearing_pos", nargs = "?", type = float, default = None,
+                        metavar = "smearing",
+                        help = "[legacy] smearing in cm-1 (use --smearing instead)")
 
-    use_kpm = fname.endswith(".kpm")
+    parser.add_argument("--w-start", dest = "w_start", type = float, default = None,
+                        help = "start frequency in cm-1 (default 0)")
+    parser.add_argument("--w-end", dest = "w_end", type = float, default = None,
+                        help = "end frequency in cm-1 (default 5000)")
+    parser.add_argument("--n-w", dest = "n_w", type = int, default = 50000,
+                        help = "number of frequency points (default 50000)")
+    parser.add_argument("--smearing", dest = "smearing", type = float, default = None,
+                        help = "smearing in cm-1 (default 5)")
+    parser.add_argument("--terminator", action = "store_true",
+                        help = "use the Lanczos terminator to approximate the infinite fraction")
+    parser.add_argument("--last-average", dest = "last_average", type = int, default = 1,
+                        help = "how many a and b coefficients are averaged for the terminator (default 1)")
+    parser.add_argument("--smooth-ramp", dest = "smooth_ramp", type = int, default = 0,
+                        help = "blend the last coefficients towards the terminator mean (default 0)")
+    parser.add_argument("--title", default = None,
+                        help = "title of the plot")
+    parser.add_argument("--dpi", type = int, default = 100,
+                        help = "figure resolution in dots per inch (default 100)")
+    parser.add_argument("--save", default = None,
+                        help = "save the figure to this file (e.g. spectrum.png) instead of showing it")
+    parser.add_argument("--no-show", action = "store_true",
+                        help = "do not open the plot window (useful together with --save)")
 
-    if use_kpm:
-        print("Loading KPM file {}".format(fname))
-        kpm = QKPM.QSpaceKPM(None)
-        kpm.load_kpm(fname)
-        lanc = None
+    args = parser.parse_args()
+
+    fname = args.file
+    if not os.path.exists(fname):
+        parser.error("Error, file {} does not exist".format(fname))
+
+    print("Loading file {}".format(fname))
+    lanc = DL.Lanczos()
+    if fname.endswith(".abc"):
+        lanc.load_abc(fname)
+    elif fname.endswith(".npz"):
+        lanc.load_status(fname)
     else:
-        print("Loading file {}".format(fname))
-        lanc = DL.Lanczos()
-        if fname.endswith(".abc"):
-            lanc.load_abc(fname)
-        elif fname.endswith(".npz"):
-            lanc.load_status(fname)
-        else:
-            print("ERROR, the specified file must be a .abc, .npz, or .kpm file.")
-            exit()
+        print("ERROR, the specified file must be a .abc or .npz file.")
+        exit()
 
-    w_start = 0
-    w_end = 5000
-    n_w = 50000
-    smearing = 5
+    # The explicit flags take precedence over the legacy positional arguments
+    w_start = args.w_start if args.w_start is not None else (0 if args.w_start_pos is None else args.w_start_pos)
+    w_end = args.w_end if args.w_end is not None else (5000 if args.w_end_pos is None else args.w_end_pos)
+    smearing = args.smearing if args.smearing is not None else (5 if args.smearing_pos is None else args.smearing_pos)
+    n_w = args.n_w
 
-    if len(sys.argv) >= 3:
-        w_start = float(sys.argv[2])
-    if len(sys.argv) >= 4:
-        w_end = float(sys.argv[3])
-    if len(sys.argv) == 5:
-        smearing = float(sys.argv[4])
-    
     w = np.linspace(w_start, w_end, n_w)
     w_ry = w / CC.Units.RY_TO_CM
     smearing /= CC.Units.RY_TO_CM
 
-    if use_kpm:
-        # KPM spectral function does not use smearing parameter
-        spectrum = kpm.get_spectral_function_KPM(w_ry, regularization="jackson")
-    else:
-        gf = lanc.get_green_function_continued_fraction(w_ry, smearing = smearing, use_terminator=False)
-        spectrum = - np.imag(gf)
+    gf = lanc.get_green_function_continued_fraction(
+        w_ry, smearing=smearing, use_terminator=args.terminator,
+        last_average=args.last_average, smooth_ramp=args.smooth_ramp)
+    spectrum = -np.imag(gf)
 
     # Print some info about the calculation
     print()
-    if use_kpm:
-        print("Number of KPM moments: {}".format(kpm.kpm_n_moments))
-    else:
-        print("Number of poles: {}".format(len(lanc.a_coeffs)))
-    
+    print("Number of poles: {}".format(len(lanc.a_coeffs)))
+
+    plt.figure(dpi = args.dpi)
     plt.plot(w, spectrum)
     plt.xlabel("Frequency [cm-1]")
     plt.ylabel("Spectrum [a.u.]")
+    if args.title:
+        plt.title(args.title)
     plt.tight_layout()
-    plt.show()
+
+    if args.save:
+        print("Saving the plot to {}".format(args.save))
+        plt.savefig(args.save, dpi = args.dpi)
+
+    if not args.no_show:
+        plt.show()
 
 
 def convert():
@@ -410,4 +450,3 @@ def tdscha_convergence_analysis():
     plt.tight_layout()
 
     plt.show()
-

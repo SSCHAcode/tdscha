@@ -462,6 +462,13 @@ For each (config, sym):
   4. Compute buf_f_weight from buffer_u (shared by f_pert and d2v_v4)
   5. Accumulate f_pert (2 terms)
   6. Accumulate d2v with fused D3 + D4 weights in single inner loop
+
+The vertex renormalization factors scale3 and scale4 multiply the D3-type
+(3-field) and D4-type (4-field) averages respectively. They implement the
+N_c -> N_f mode-space vertex rescaling of the q-mesh interpolation
+(d3 ~ N^-1/2, d4 ~ N^-1, see Interpolation_plan.md §6):
+  scale3 = sqrt(N_coarse / N_fine),  scale4 = N_coarse / N_fine.
+Both default to 1.0 (commensurate/no-interpolation behavior).
 """
 function get_perturb_averages_qspace_fused(
     X_q::Array{ComplexF64,3},
@@ -478,7 +485,9 @@ function get_perturb_averages_qspace_fused(
     n_bands::Int64,
     n_q::Int64,
     start_index::Int64,
-    end_index::Int64
+    end_index::Int64,
+    scale3::Float64=1.0,
+    scale4::Float64=1.0
 )
     n_pairs = size(unique_pairs, 1)
     n_syms = length(symmetries)
@@ -518,13 +527,13 @@ function get_perturb_averages_qspace_fused(
         for nu in 1:n_bands
             weight_R += f_Y[nu, iq_pert] * conj(x_pert[nu]) * R1[nu]
         end
-        weight_R *= rho[i_config] / 3.0
+        weight_R *= rho[i_config] / 3.0 * scale3
 
         weight_Rf = zero(ComplexF64)
         for nu in 1:n_bands
             weight_Rf += R1[nu] * conj(y_pert[nu])
         end
-        weight_Rf *= rho[i_config] / 3.0
+        weight_Rf *= rho[i_config] / 3.0 * scale3
 
         # === Step 3: D4 intermediates (buffer_u, total_sum) ===
         total_sum = zero(ComplexF64)
@@ -577,14 +586,14 @@ function get_perturb_averages_qspace_fused(
         end
 
         # === Step 5: Accumulate f_pert ===
-        # Term 1: (-total_sum/2) * rho/3 * y_rot[q_pert]
-        w1 = -total_sum / 2.0 * rho[i_config] / 3.0
+        # Term 1: (-total_sum/2) * rho/3 * y_rot[q_pert]  (D3-type -> scale3)
+        w1 = -total_sum / 2.0 * rho[i_config] / 3.0 * scale3
         for nu in 1:n_bands
             f_pert[nu] += w1 * y_pert[nu]
         end
 
-        # Term 2: (-buf_f_weight) * rho/3 * f_Y[nu,q_pert] * x_rot[q_pert,nu]
-        w2 = -buf_f_weight * rho[i_config] / 3.0
+        # Term 2: (-buf_f_weight) * rho/3 * f_Y[nu,q_pert] * x_rot[q_pert,nu]  (D3-type -> scale3)
+        w2 = -buf_f_weight * rho[i_config] / 3.0 * scale3
         for nu in 1:n_bands
             f_pert[nu] += w2 * f_Y[nu, iq_pert] * x_pert[nu]
         end
@@ -595,8 +604,8 @@ function get_perturb_averages_qspace_fused(
         total_wD4 = zero(ComplexF64)
         total_wb = zero(ComplexF64)
         if apply_v4
-            total_wD4 = -total_sum * rho[i_config] / 8.0
-            total_wb = -buf_f_weight * rho[i_config] / 4.0
+            total_wD4 = -total_sum * rho[i_config] / 8.0 * scale4
+            total_wb = -buf_f_weight * rho[i_config] / 4.0 * scale4
         end
 
         # Combined weights for fused inner loop
@@ -638,6 +647,57 @@ function get_perturb_averages_qspace_fused(
     return f_pert, d2v_blocks
 end
 
+function project_perturbation_average_qspace(
+    f_pert::Vector{ComplexF64},
+    d2v_blocks::Vector{Matrix{ComplexF64}},
+    symmetries::Vector{SparseMatrixCSC{ComplexF64,Int32}},
+    stabilizer_indices::Vector{Int32},
+    characters::Vector{ComplexF64}, iq_pert::Int64,
+    unique_pairs::Matrix{Int32}, n_bands::Int64, n_q::Int64
+)
+    isempty(stabilizer_indices) && return f_pert, d2v_blocks
+    length(stabilizer_indices) == length(characters) ||
+        error("one stabilizer character is required per symmetry")
+
+    n_total = n_q * n_bands
+    full_f = zeros(ComplexF64, n_total)
+    gamma_range = (iq_pert - 1) * n_bands + 1:iq_pert * n_bands
+    full_f[gamma_range] .= f_pert
+
+    full_d2v = spzeros(ComplexF64, n_total, n_total)
+    for (pair, block) in enumerate(d2v_blocks)
+        iq1 = unique_pairs[pair, 1]
+        iq2 = unique_pairs[pair, 2]
+        range1 = (iq1 - 1) * n_bands + 1:iq1 * n_bands
+        range2 = (iq2 - 1) * n_bands + 1:iq2 * n_bands
+        full_d2v[range1, range2] = block
+        if iq1 != iq2
+            full_d2v[range2, range1] = transpose(block)
+        end
+    end
+
+    projected_f = zeros(ComplexF64, n_total)
+    projected_d2v = spzeros(ComplexF64, n_total, n_total)
+    for (index, character) in zip(stabilizer_indices, characters)
+        symmetry = symmetries[index]
+        projected_f .+= character .* (symmetry * full_f)
+        projected_d2v = projected_d2v + character .* (
+            symmetry * full_d2v * transpose(symmetry))
+    end
+    projected_f ./= length(stabilizer_indices)
+    projected_d2v ./= length(stabilizer_indices)
+
+    projected_blocks = Matrix{ComplexF64}[]
+    for pair in axes(unique_pairs, 1)
+        iq1 = unique_pairs[pair, 1]
+        iq2 = unique_pairs[pair, 2]
+        range1 = (iq1 - 1) * n_bands + 1:iq1 * n_bands
+        range2 = (iq2 - 1) * n_bands + 1:iq2 * n_bands
+        push!(projected_blocks, Matrix(projected_d2v[range1, range2]))
+    end
+    return projected_f[gamma_range], projected_blocks
+end
+
 
 """
     get_perturb_averages_qspace(...)
@@ -661,20 +721,35 @@ function get_perturb_averages_qspace(
     unique_pairs::Matrix{Int32},
     start_index::Int64,
     end_index::Int64,
-    valid_modes_q::Matrix{Bool}  # Mask from Python: false for acoustic/small-w modes
+    valid_modes_q::Matrix{Bool},  # Mask from Python: false for acoustic/small-w modes
+    scale3::Float64=1.0,          # D3 vertex rescaling sqrt(N_c/N_f) for interpolation
+    scale4::Float64=1.0,          # D4 vertex rescaling N_c/N_f for interpolation
+    prefiltered::Bool=false,      # X_q fields already carry f_Y; f_psi folded in alpha1
+    coset_indices::Vector{Int32}=Int32[],
+    stabilizer_indices::Vector{Int32}=Int32[],
+    characters::Vector{ComplexF64}=ComplexF64[]
 )
     n_q = size(X_q, 1)
     n_bands = size(X_q, 3)
     n_pairs = size(unique_pairs, 1)
 
     # Get symmetries
-    symmetries = _cached_qspace_symmetries[]
-    if symmetries === nothing
+    full_symmetries = _cached_qspace_symmetries[]
+    if full_symmetries === nothing
         error("Q-space symmetries not initialized. Call init_sparse_symmetries_qspace first.")
     end
+    symmetries = isempty(coset_indices) ? full_symmetries :
+        full_symmetries[coset_indices]
 
     # Precompute occupation numbers and scaling factors
     # Masked modes (valid_modes_q == false) get f_Y=0, f_psi=0 to avoid NaN/Inf
+    #
+    # In prefiltered mode the X_q fields already carry the f_Y filter
+    # (applied on the COARSE grid, where it exactly strips the phonon
+    # propagator dressing of every displacement leg by the Gaussian
+    # integration-by-parts identity), and the fine-side f_psi factors are
+    # folded into the alpha1 blocks by the Python caller. Both tables then
+    # reduce to the validity mask. See Interpolation_plan.md section 5.6.
     f_Y = zeros(Float64, n_bands, n_q)
     f_psi = zeros(Float64, n_bands, n_q)
 
@@ -683,6 +758,11 @@ function get_perturb_averages_qspace(
             if !valid_modes_q[nu, iq]  # Masked mode -> zero out
                 f_Y[nu, iq] = 0.0
                 f_psi[nu, iq] = 0.0
+                continue
+            end
+            if prefiltered
+                f_Y[nu, iq] = 1.0
+                f_psi[nu, iq] = 1.0
                 continue
             end
             w = w_q[nu, iq]
@@ -708,7 +788,11 @@ function get_perturb_averages_qspace(
     f_pert, d2v = get_perturb_averages_qspace_fused(
         X_q, Y_q, f_Y, f_psi, rho, R1, alpha1_blocks, symmetries,
         apply_v4, iq_pert, unique_pairs, n_bands, n_q,
-        start_index, end_index)
+        start_index, end_index, scale3, scale4)
+
+    f_pert, d2v = project_perturbation_average_qspace(
+        f_pert, d2v, full_symmetries, stabilizer_indices, characters,
+        iq_pert, unique_pairs, n_bands, n_q)
 
     # Pack result: f_pert followed by flattened d2v blocks
     result = zeros(ComplexF64, n_bands + n_pairs * n_bands^2)

@@ -2,6 +2,13 @@
 
 ## Choosing Perturbation Types
 
+!!! tip "Use the Spectroscopy driver for Raman and IR"
+
+    The restartable, symmetry-reduced API for new optical calculations is
+    documented in [Raman and IR spectroscopy](spectroscopy.md). The direct
+    `Lanczos.prepare_raman` and `prepare_ir` calls below are compatibility
+    primitives for existing scripts.
+
 TD-SCHA supports three main perturbation types, each with specific use cases:
 
 ### 1. Single Phonon Mode
@@ -71,6 +78,11 @@ for i in range(7):
     lanczos.save_status(f"raman_unpolarized_{i}.npz")
 ```
 
+!!! warning "Raman data produced before the 1.7 hotfix"
+
+    Saved `prepare_raman(unpolarized=i)` calculations for channels 0–3 used
+    incomplete diagonal combinations and must be recomputed. Channels 4–6
+    were unaffected and can be reused.
 
 Then you can plot the unpolarized Raman spectrum by summing the contributions of the 7 components. This is done in the following way:
 
@@ -86,8 +98,9 @@ w_ry = w/CC.Units.RY_TO_CM # Convert in Ry (the internal unit of tdscha)
 smearing = 2/CC.Units.RY_TO_CM  # Smearing in cm⁻¹
 
 raman_signal = np.zeros_like(w)
+weights = [45, 7, 7, 7, 7, 7, 7]
 
-# Load the 7 unpolarized Raman components and sum them.
+# Load and combine the seven normalized invariant components.
 for i in range(7):
     lanczos = DL.Lanczos()
     lanczos.load_status(f"raman_unpolarized_{i}.npz")
@@ -97,7 +110,7 @@ for i in range(7):
 
     # The response is proportional to the imaginary part of the Green's function. 
     # The '-' sign selects the retarded response, which is the one relevant for Raman scattering.
-    raman_signal += -np.imag(gf)
+    raman_signal += weights[i] * -np.imag(gf)
 
 
 # Then, we can just plot the data
@@ -106,6 +119,14 @@ plt.xlabel("Frequency (cm-1)")
 plt.ylabel("Unpolarized Raman Intensity (arb. units)")
 plt.show()
 ```
+
+`prepare_raman(unpolarized=i)` prepares normalized invariants and therefore
+uses weights `[45, 7, 7, 7, 7, 7, 7]`. The legacy
+`prepare_unpolarized_raman(index=i)` method prepares the corresponding raw
+Cartesian combinations. When using that API, multiply each spectrum by
+`lanczos.get_prefactors_unpolarized_raman(i)`, currently
+`[5, 7/2, 7/2, 7/2, 21, 21, 21]`. The two conventions give the same total
+unpolarized intensity.
 
 ## Parallel Execution Modes
 
@@ -270,6 +291,61 @@ smearing = 5 / CC.Units.RY_TO_CM
 gf = qlanc.get_green_function_continued_fraction(w, smearing=smearing)
 spectral = -np.imag(gf)
 ```
+
+### Atom-Fourier interpolation
+
+Use `QSpaceAtomFourierLanczos` when the ensemble supercell provides a coarse
+q mesh but the internal two-phonon integration needs a finer mesh. The same
+atom-centred Fourier map interpolates both d3 and d4; there is no interpolation
+strategy flag to select.
+
+```python
+import tdscha.QSpaceAtomFourier as AF
+
+qlanc = AF.QSpaceAtomFourierLanczos(
+    ens,
+    fine_mesh=(8, 8, 8),  # integer multiple of dyn.GetSupercell()
+)
+qlanc.init(use_symmetries=True)
+
+# External perturbations must remain on the coarse ensemble mesh.
+iq = qlanc.find_fine_q(dyn.q_tot[0])
+qlanc.prepare_mode_q(iq, band_index=3)
+qlanc.run_FT(100)
+```
+
+The interpolation uses the full cell metric, so odd/even, anisotropic, and
+non-orthogonal meshes follow the same API. It preserves commensurate values,
+minimum-image Nyquist ties, d3/d4 permutation symmetry, and the adjoint
+relation between folding and reconstruction.
+
+By default, Born effective charges and the dielectric tensor participate in
+the harmonic dynamical-matrix interpolation. Set
+`ignore_effective_charges=True` only when the ensemble forces came from a
+strictly short-range potential and those values are inherited metadata. The
+input dynamical matrix is never modified.
+
+For a configuration-distributed MPI calculation:
+
+```python
+lanczos = AF.load_distributed_atom_fourier_tdscha(
+    "ensemble_dir", population_id=1, dyn=dyn, T=300,
+    fine_mesh=(8, 8, 8),
+    final_dyn=final_dyn, final_T=300,
+)
+```
+
+The master reads the ensemble and scatters the configurations, so no rank ever
+holds a replica. The harmonic interpolation is the one part every rank runs
+together — it broadcasts inside CellConstructor's `ForceTensor`, and a
+master-only build would leave the workers in a different collective. It is
+handled by `QSpaceAtomFourierLanczos.prepare_distributed_construction()`, which
+the loader calls before the master/worker split; nothing needs to be passed for
+it.
+
+For Raman and IR the same loading happens automatically through
+`Spectroscopy(EnsembleSource(...), backend="atom_fourier", ...)`; see
+[Raman and IR spectroscopy](spectroscopy.md).
 
 ### Choosing the Perturbation
 

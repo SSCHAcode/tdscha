@@ -61,6 +61,27 @@ function create_sparse_matrix_from_symmetries(sym_info::SymmetriesInfo{T}) where
     return mysym
 end 
 
+function project_perturbation_average(
+    f_average::Vector{T}, d2v_dr2::Matrix{T},
+    symmetries::Vector{SparseMatrixCSC{T,Int32}},
+    stabilizer_indices::Vector{Int32}, characters::Vector{T}
+) where {T<:AbstractFloat}
+    isempty(stabilizer_indices) && return f_average, d2v_dr2
+    length(stabilizer_indices) == length(characters) ||
+        error("one stabilizer character is required per symmetry")
+
+    projected_f = zeros(T, length(f_average))
+    projected_d2v = zeros(T, size(d2v_dr2))
+    for (index, character) in zip(stabilizer_indices, characters)
+        symmetry = symmetries[index]
+        projected_f .+= character .* (symmetry * f_average)
+        projected_d2v .+= character .* (
+            symmetry * d2v_dr2 * transpose(symmetry))
+    end
+    scale = inv(T(length(stabilizer_indices)))
+    return projected_f .* scale, projected_d2v .* scale
+end
+
 function get_d2v_dR2_from_R_pert_sym_fast(ensemble::Ensemble{T}, symmetries::Vector{SparseMatrixCSC{T,Int32}}, temperature::T, R1::Vector{T}, ω_is::Vector{T}, start_index::Int64, end_index::Int64) where {T<: AbstractFloat}
     n_modes = length(ensemble.ω)
     n_configs = size(ensemble.X, 2)
@@ -212,16 +233,21 @@ end
 function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho::Vector{T}, 
         R1::Vector{T}, Y1::Matrix{T}, temperature::T, apply_v4::Bool, symmetries::Array{T, 4}, 
         n_degeneracies::Vector{Int32}, 
-        degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64) where {T<:AbstractFloat}
+        degenerate_space::Matrix{Int32}, blocks::Vector{Int32}, start_index::Int64, end_index::Int64,
+        coset_indices::Vector{Int32}=Int32[],
+        stabilizer_indices::Vector{Int32}=Int32[],
+        characters::Vector{T}=T[]) where {T<:AbstractFloat}
 
 
     # Use cached sparse matrices if available, otherwise build them
     if _cached_symmetries[] !== nothing
-        new_symmetries = _cached_symmetries[]
+        full_symmetries = _cached_symmetries[]
     else
         sym_info = SymmetriesInfo(symmetries, n_degeneracies, degenerate_space, blocks)
-        new_symmetries = create_sparse_matrix_from_symmetries(sym_info)
+        full_symmetries = create_sparse_matrix_from_symmetries(sym_info)
     end
+    new_symmetries = isempty(coset_indices) ? full_symmetries :
+        full_symmetries[coset_indices]
 
     # Create the ensemble
     ensemble = Ensemble(X, Y, ω)
@@ -234,7 +260,9 @@ function get_perturb_averages_sym(X::Matrix{T}, Y::Matrix{T}, ω::Vector{T}, rho
         d2v_dr2 += get_d2v_dR2_from_Y_pert_sym_fast(ensemble, new_symmetries, temperature, Y1, rho, start_index, end_index)
     end
 
-    return f_average, d2v_dr2
+    return project_perturbation_average(
+        f_average, d2v_dr2, full_symmetries,
+        stabilizer_indices, characters)
 end
 
 
