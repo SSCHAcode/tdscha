@@ -798,7 +798,10 @@ class QSpaceLanczos(DL.Lanczos):
         final_psi = np.zeros(self.get_psi_size(), dtype=np.complex128)
 
         # R sector
-        final_psi[:self.n_bands] = f_pert
+        # D3 couples the sectors in both directions. Zeroing R1 above only
+        # suppresses R -> pair; also suppress the pair -> R contraction.
+        if not self.ignore_v3:
+            final_psi[:self.n_bands] = f_pert
 
         # a'/b' sectors
         chi_minus_list = self.get_chi_minus_q()

@@ -744,7 +744,10 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
         d2v_fine = self._interp_d2v_to_fine(d2v_coarse)
 
         final_psi = np.zeros(self.get_psi_size(), dtype=np.complex128)
-        final_psi[:self.n_bands] = f_pert
+        # D3 couples the sectors in both directions. Zeroing R1 above only
+        # suppresses R -> pair; also suppress the pair -> R contraction.
+        if not self.ignore_v3:
+            final_psi[:self.n_bands] = f_pert
 
         chi_minus_list = self.get_chi_minus_q()
         chi_plus_list = self.get_chi_plus_q()
