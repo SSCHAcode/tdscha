@@ -43,3 +43,8 @@ broadening convergence, separately from this operator validation.
 Reproduce with this checkout installed and Julia available:
 
     python -m pytest -q tests/test_atom_fourier tests/test_interpolation tests/test_qspace/test_hessian_v3v4_flags.py
+
+Illustrated report: [LaTeX source](fourth_order_validation.tex) and
+[compiled PDF](../../output/pdf/fourth_order_validation.pdf).
+Regenerate the figures with `python benchmarks/interpolation/make_report_figures.py`;
+the plotted arrays and production-source hashes are saved in `figures/`.

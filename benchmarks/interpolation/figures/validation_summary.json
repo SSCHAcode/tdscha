@@ -1,0 +1,41 @@
+{
+  "production_source_sha256": {
+    "QSpaceAtomFourier.py": "299af994b1f5475b55a4bff5488db4633ca083c907db62b60200ca2d68e830ba",
+    "QSpaceLanczos.py": "7efdf8cb4fb861ed34e60ed66f3d093c4adcc2797adb4b6cad142ddc941f2a3d",
+    "tdscha_qspace.jl": "b745fb46cec5dca9e0fa89c035b2a46dee6abf700056a1135f5109af039063c5"
+  },
+  "mesh_errors": [
+    {
+      "operator": 1.2130485743973634e-15,
+      "D3": 9.621141671754937e-14,
+      "D4": 9.034827075389615e-14,
+      "response": 3.4318491389723494e-15,
+      "self_energy": 1.3613677207692242e-12,
+      "pair_resolvent": 1.7387710914259116e-14
+    },
+    {
+      "operator": 8.87029079472756e-16,
+      "D3": 9.759207723709521e-14,
+      "D4": 9.077984006725655e-14,
+      "response": 3.1107734590372154e-15,
+      "self_energy": 1.2819716681107384e-12,
+      "pair_resolvent": 1.2591366178622245e-14
+    },
+    {
+      "operator": 6.281606242222664e-16,
+      "D3": 9.687841529988272e-14,
+      "D4": 9.263628848632585e-14,
+      "response": 3.288021911921307e-15,
+      "self_energy": 1.247857482874916e-12,
+      "pair_resolvent": 9.29549614998241e-15
+    }
+  ],
+  "negative_controls": {
+    "missing_scale4": 1.000000000000178,
+    "conjugate_kernel": 0.10229483385776637,
+    "underresolved": 1.0532555582823226
+  },
+  "full_self_energy_relative_error": 1.6091426992437565e-13,
+  "quartic_effect_relative_to_bubble": 0.06942916803052482,
+  "pure_quartic_response_error": 1.5750897346015434e-15
+}
