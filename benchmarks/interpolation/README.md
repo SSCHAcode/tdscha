@@ -48,3 +48,7 @@ Illustrated report: [LaTeX source](fourth_order_validation.tex) and
 [compiled PDF](../../output/pdf/fourth_order_validation.pdf).
 Regenerate the figures with `python benchmarks/interpolation/make_report_figures.py`;
 the plotted arrays and production-source hashes are saved in `figures/`.
+
+Undergraduate explanation with explicit equations and no auxiliary shorthand:
+[LaTeX source](fourth_order_validation_explained.tex) and
+[expanded PDF](../../output/pdf/fourth_order_validation_explained.pdf).
