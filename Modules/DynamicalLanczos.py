@@ -1,5 +1,6 @@
 from __future__ import print_function
 from __future__ import division
+from __future__ import annotations
 
 """
 This module performs the Lanczos algorithm in order to compute the responce function
