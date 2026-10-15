@@ -1,5 +1,35 @@
 # Fourth order interpolation validation
 
+## Paper example with a visible spectral effect
+
+Rechecked on 2026-10-15 after merging main at `17a0dd6e`: **62 tests
+passed**, including the stronger-model production checks and four static
+oracle regressions. Eleven existing CellConstructor complex-casting warnings
+were emitted. The analytic oracle now handles exactly zero frequency and
+degenerate pairs, including the thermal Bose derivative in the static limit.
+
+`paper_model.py` retains the same finite-range filters and sets the cubic
+coefficient to 0.5 and quartic coefficients to 0.72 and 0.24. Run:
+
+    OPENBLAS_NUM_THREADS=1 python benchmarks/interpolation/paper_model.py
+
+The generated [spectrum](paper_model_spectrum.png) and
+[measurements](paper_model_results.json) show a 37.7% relative Euclidean-norm
+change in the spectral curve on the stated frequency window at Q=0, T=0,
+Nf=72 and broadening 0.015. Both bubble and RPA interpolation errors are
+below 1e-14. These are finite-mesh results, not converged lifetimes.
+[The paper model derivation](paper_model.tex) states the potential,
+counterterms, support condition, and precise exactness claim.
+
+The current production method refines **internal momenta only**; external Q
+must lie on the coarse mesh. For this three-cell cluster span, Nc > 6 is a
+sufficient centered-Fourier resolution condition. Keep the auxiliary matrix
+and potential coefficients fixed across meshes. This excludes the change in
+the quartic loop with mesh size, rather than removing the reference loop
+renormalization already contained in the auxiliary matrix.
+
+## Original validation
+
 **Validated:** the production atom Fourier operator reproduces an independent
 analytic fourth-order response when the coarse mesh resolves the interaction
 range. All **56 tests pass**, including 16 new deterministic regressions.

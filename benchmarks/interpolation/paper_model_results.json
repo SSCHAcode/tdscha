@@ -1,0 +1,21 @@
+{
+  "coarse_cells": 9,
+  "fine_cells": 72,
+  "Q": 0.0,
+  "eta": 0.015,
+  "cubic": 0.5,
+  "quartic": [
+    0.72,
+    0.24
+  ],
+  "D3_error": 8.096205630732965e-16,
+  "D4_error": 1.0532786535558007e-15,
+  "bubble_interpolation_error": 6.235030215602554e-16,
+  "bubble_peak_frequency": 1.2974999999999999,
+  "RPA_interpolation_error": 4.0801277990295615e-16,
+  "RPA_peak_frequency": 1.3099999999999998,
+  "spectral_relative_change": 0.3767538922952398,
+  "self_energy_relative_change": 0.42681062489248517,
+  "bubble_minimum_sampled_static_curvature": 0.18261936821657437,
+  "RPA_minimum_sampled_static_curvature": 0.18460768901315497
+}

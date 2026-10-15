@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import numpy as np
 
 os.environ.setdefault('JULIA_NUM_THREADS', '1')
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]
@@ -55,3 +56,12 @@ def test_cutoff_must_be_resolved():
 def test_polynomial_force_and_response_first_control():
     report = reference.benchmark()
     assert report['response_first_external_Q_error'] > .01
+
+
+@pytest.mark.parametrize('ignore_v4', [False, True])
+def test_stronger_paper_model(monkeypatch, ignore_v4):
+    monkeypatch.setattr(reference, 'CUBIC', [(0.5, np.array([1., .35]))])
+    monkeypatch.setattr(reference, 'QUARTIC', [
+        (0.72, np.array([1., .37, -.29, .21])),
+        (0.24, np.array([1., -.23]))])
+    production.probe(9, 72, 0., embedded=True, ignore_v4=ignore_v4)

@@ -86,8 +86,17 @@ def response(n, Q, z, v=None, W=None, quartic=True, thermal=0.):
     w1, w2 = frequency(k), frequency(Q-k)
     n1 = np.zeros_like(w1) if thermal == 0 else 1/np.expm1(w1/thermal)
     n2 = np.zeros_like(w2) if thermal == 0 else 1/np.expm1(w2/thermal)
+    delta = w1-w2
+    if z == 0:
+        difference = np.divide(n1-n2, delta, out=np.zeros_like(delta),
+                               where=delta != 0)
+        if thermal != 0:
+            # Static degenerate limit is dn_B/dw, not zero (or 0/0).
+            difference = np.where(delta == 0, -n1*(1+n1)/thermal, difference)
+    else:
+        difference = delta*(n1-n2)/(delta**2-z*z)
     lam = -((w1+w2)*(1+n1+n2)/((w1+w2)**2-z*z)
-            - (w1-w2)*(n1-n2)/((w1-w2)**2-z*z))/(4*w1*w2)
+            - difference)/(4*w1*w2)
     dressed = np.linalg.solve(np.eye(n)-lam[:, None]*W, lam*v) if quartic else lam*v
     sigma = np.vdot(v, dressed)
     return sigma, 1/(z*z-frequency(Q)**2-sigma)
