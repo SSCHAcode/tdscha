@@ -230,12 +230,16 @@ def test_hessian_L_operator_timing():
         "Hessian L-operator took {:.1f}s per call — too slow".format(t_hessian))
 
 
-def test_qspace_hessian_mode_symmetry():
+def test_qspace_hessian_mode_symmetry(capsys):
     """Verify that mode symmetry optimization gives same Hessian eigenvalues.
 
     For each irreducible q-point, computes the Hessian with
     use_mode_symmetry=False (full solves) and use_mode_symmetry=True
     (degenerate block reduction), then compares eigenvalues.
+
+    SnTe has a strongly coupled pair of repeated irreps at iq=5
+    (cross coupling ~0.7 relative), so this test also checks that the
+    adaptive repeated-irrep detection actually triggers there.
     """
     try:
         import tdscha.QSpaceHessian as QH
@@ -269,6 +273,14 @@ def test_qspace_hessian_mode_symmetry():
         assert max_diff < 1e-8, (
             "Mode symmetry optimization changed eigenvalues at iq={}: "
             "max diff = {:.2e}".format(iq_irr, max_diff))
+
+    # The repeated-irrep branch must have been exercised (SnTe iq=5):
+    # without this assert the test cannot distinguish the adaptive fill
+    # from the old scalar shortcut, which was exact here only because
+    # eigh happened to return aligned bases (U = I).
+    captured = capsys.readouterr().out
+    assert "Repeated irreps detected" in captured, (
+        "the repeated-irrep detection was expected to trigger on SnTe")
 
     print("=== Mode symmetry optimization test PASSED ===")
 

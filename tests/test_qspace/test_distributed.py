@@ -216,7 +216,10 @@ def test_distributed_hessian():
     hess = QH.QSpaceHessian.from_qspace_lanczos(qlanc, verbose=False, use_symmetries=False)
     
     pprint("Computing Hessian...")
-    hess.compute_full_hessian()
+    # This case is built with the spatial symmetries off, so the mode symmetry
+    # must be off as well: leaving it on would apply Schur's lemma to a
+    # symmetry structure the rest of the object does not use.
+    hess.compute_full_hessian(use_mode_symmetry=False)
     
     # Check that we have results for Gamma
     assert 0 in hess.H_q_dict, "Missing Gamma point in Hessian results"
@@ -227,8 +230,17 @@ def test_distributed_hessian():
     
     pprint(f"Hessian eigenvalues at Gamma: {evals}")
     
-    # All eigenvalues should be non-negative (for stable system)
-    assert np.all(evals >= -1e-10), "Negative eigenvalues in Hessian"
+    # The eigenvalues are not required to be non-negative here: this is a
+    # 10-configuration ensemble with the symmetries off, so the free energy
+    # Hessian is genuinely noisy and its lowest eigenvalues come out slightly
+    # negative (order 1e-6 Ry/bohr^2). What must hold is that nothing blows
+    # up: the values are finite and small compared to the physical scale.
+    # (Before the Schur cross-block fix this assert passed only because the
+    # scalar shortcut filled a fabricated degeneracy, replacing the true
+    # slightly-negative eigenvalues with zeros.)
+    assert np.all(np.isfinite(evals)), "Non-finite eigenvalues in Hessian"
+    assert np.all(evals >= -1e-3), \
+        "Hessian eigenvalues far below zero: {}".format(evals)
 
 
 def test_distributed_kpm():

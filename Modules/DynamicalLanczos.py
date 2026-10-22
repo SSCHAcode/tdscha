@@ -246,16 +246,24 @@ class Lanczos(object):
 
 
         # ========== END OF VARIABLE DEFINITION (EACH NEW DEFINITION FROM NOW ON RESULTS IN AN ERROR) =======
-        self.dyn = ensemble.current_dyn.Copy() 
+        # Split init: a linear part (geometry/ensemble scalars/masses/structures,
+        # no (3N,3N) allocation) shared with the q-space subclasses, and a
+        # real-space part (diagonalization, pols, X/Y, psi, linops) that the
+        # q-space subclasses override to skip.
+        self._init_linear(ensemble)
+        self._init_realspace(ensemble, unwrap_symmetries, select_modes, lo_to_split)
+
+    def _init_linear(self, ensemble):
+        """Linear-cost part of the initialization: geometry, ensemble scalars,
+        masses and structures. Shared by the real-space Lanczos and the q-space
+        subclasses; never allocates any (3N,3N)-order array."""
+        self.dyn = ensemble.current_dyn.Copy()
         self.uci_structure = ensemble.current_dyn.structure.copy()
         self.super_structure = self.dyn.structure.generate_supercell(self.dyn.GetSupercell())#superdyn.structure
 
         self.T = ensemble.current_T
 
-        ws, pols = self.dyn.DiagonalizeSupercell(lo_to_split = lo_to_split)
-
         self.nat = self.super_structure.N_atoms
-        n_cell = np.prod(self.dyn.GetSupercell())
 
         self.qe_sym = CC.symmetries.QE_Symmetry(self.dyn.structure)
         self.qe_sym.SetupQPoint()
@@ -263,6 +271,30 @@ class Lanczos(object):
         # Get the masses
         m = self.super_structure.get_masses_array()
         self.m = np.tile(m, (3,1)).T.ravel()
+
+        # Ignore v3 or v4. You can set them for testing
+        self.ignore_v3 = False
+        self.ignore_v4 = False
+
+        # The number of configurations and the ensemble weights
+        self.N = ensemble.N
+        self.rho = ensemble.rho.copy()
+        self.N_eff = np.sum(self.rho)
+
+    def _init_realspace(self, ensemble, unwrap_symmetries, select_modes, lo_to_split):
+        """Real-space preprocessing that allocates the (3N,3N)-order arrays:
+        supercell diagonalization, polarization basis, mass-rescaled
+        displacements/forces, X/Y projections, the psi working vector and the
+        L/M linear operators. Only the direct real-space Lanczos runs this; the
+        q-space subclasses override it to a no-op."""
+        order = "C"
+
+        ws, pols = self.dyn.DiagonalizeSupercell(lo_to_split = lo_to_split)
+
+        n_cell = np.prod(self.dyn.GetSupercell())
+
+        # Get the (un-tiled) masses for the translation projector
+        m = self.super_structure.get_masses_array()
 
         # Remove the translations
         if lo_to_split is not None and self.dyn.effective_charges is not None:
