@@ -159,6 +159,12 @@ np.savetxt("raman_unpolarized_total.dat",
 print("Total unpolarized Raman intensity computed")
 ```
 
+This example uses the raw-component
+`prepare_unpolarized_raman(index=i)` convention. Equivalently, call
+`prepare_raman(unpolarized=i)` and replace `prefactors` with
+`[45, 7, 7, 7, 7, 7, 7]`; the resulting weighted channel intensities are
+identical.
+
 ## Example 4: StaticHessian Calculation
 
 Compute free energy Hessian for stability analysis:
