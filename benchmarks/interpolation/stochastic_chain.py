@@ -120,6 +120,22 @@ def make_ensemble(dyn, n_configs, seed=0, couplings=STRONG):
     return ens
 
 
+def load_or_make_ensemble(dyn, n_configs, seed, directory, couplings=STRONG):
+    """Load the ensemble saved by sscha (save_bin) in directory, or make and save it."""
+    from pathlib import Path
+    if (Path(directory) / 'energies_pop1.npy').is_file():
+        ref.CUBIC, ref.QUARTIC = couplings['cubic'], couplings['quartic']
+        ens = sscha.Ensemble.Ensemble(dyn, 0.)
+        ens.ignore_small_w = True
+        ens.load_bin(str(directory), 1)
+        assert ens.N == n_configs, (ens.N, n_configs)
+        return ens
+    ens = make_ensemble(dyn, n_configs, seed, couplings)
+    Path(directory).mkdir(parents=True, exist_ok=True)
+    ens.save_bin(str(directory), 1)
+    return ens
+
+
 def spectral_function(ens, fine, frequencies, smearing, quartic=True, steps=None):
     """-Im G(omega + i eta)/pi of the Gamma chain phonon, in units of omega_0."""
     import tdscha.QSpaceAtomFourier as AF
