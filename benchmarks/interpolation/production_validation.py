@@ -91,7 +91,6 @@ def make_operator(nc=9, nf=18, Q=0., embedded=False, thermal=0.):
     obj.cw_q, obj.cpols_q = modes(nc)
     obj.valid_modes_q = obj.w_q > 1e-8
     obj.cvalid_modes_q = obj.cw_q > 1e-8
-    obj.qspace_scale3, obj.qspace_scale4 = np.sqrt(nc/nf), nc/nf
     obj._distributed = False
     obj.ignore_v3 = obj.ignore_v4 = obj.ignore_harmonic = False
     obj.n_syms_qspace = 1
@@ -134,15 +133,16 @@ def probe(nc=9, nf=18, Q=0., embedded=False, ignore_v3=False,
           ignore_v4=False, thermal=0., check=True, mutation=None, parent=False):
     obj = make_operator(nc, nf, Q, embedded, thermal)
     obj.ignore_v3, obj.ignore_v4 = ignore_v3, ignore_v4
-    if mutation == 'missing_scale4':
-        obj.qspace_scale4 = 1.
+    if mutation == 'missing_fold_scale':
+        # Drop the sqrt(N_c/N_f) of the fold: d3 pair->R and d4 are off.
+        fold = obj._fold
+        obj._fold = lambda blocks: [b*np.sqrt(nf/nc) for b in fold(blocks)]
     elif mutation == 'conjugate_kernel':
         obj._atom_fourier_kernel = obj._atom_fourier_kernel.conj()
     if parent:
         assert nc == nf
         # Exercise the q-space parent's own apply_anharmonic_FT as well.
         obj.__class__ = AF.QL.QSpaceLanczos
-        obj.qspace_prefiltered = False
     indices = [0] + list(obj._block_offsets_a) + list(obj._block_offsets_b)
     matrix = np.empty((len(indices), len(indices)), dtype=complex)
     for j, index in enumerate(indices):

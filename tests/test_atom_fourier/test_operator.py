@@ -94,9 +94,25 @@ def test_commensurate_frequencies_and_normalization(
             interpolated.pols_q[:, :, fine_iq],
             parent.pols_q[:, :, coarse_iq], atol=1e-14)
 
+    # At commensurate pairs the unfold is the identity times sqrt(N_c/N_f).
     ratio = interpolated.cn_q / float(interpolated.n_q)
-    assert interpolated.qspace_scale3 == pytest.approx(np.sqrt(ratio))
-    assert interpolated.qspace_scale4 == pytest.approx(ratio)
+    interpolated.build_q_pair_map(int(interpolated._fine_of_coarse[0]))
+    rng = np.random.default_rng(3)
+    coarse = [_random_vector(rng, (interpolated.n_bands,) * 2)
+              for _ in interpolated.c_unique_pairs]
+    fine = interpolated._unfold(coarse)
+    checked = 0
+    for p, (i1, i2) in enumerate(interpolated.unique_pairs):
+        c1, c2 = (interpolated._coarse_of_fine[i] for i in (i1, i2))
+        if c1 < 0:
+            continue
+        if (c1, c2) in interpolated.c_unique_pairs:
+            expected = coarse[interpolated.c_unique_pairs.index((c1, c2))]
+        else:
+            expected = coarse[interpolated.c_unique_pairs.index((c2, c1))].T
+        assert np.allclose(fine[p], np.sqrt(ratio) * expected, atol=1e-12)
+        checked += 1
+    assert checked > 0
 
 
 def test_off_coarse_perturbation_is_rejected(interpolated):

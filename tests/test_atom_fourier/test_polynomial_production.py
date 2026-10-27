@@ -41,7 +41,7 @@ def test_dense_complex_mode_blocks():
     production.rotated_action()
 
 
-@pytest.mark.parametrize('mutation', ['missing_scale4', 'conjugate_kernel'])
+@pytest.mark.parametrize('mutation', ['missing_fold_scale', 'conjugate_kernel'])
 def test_polynomial_detects_broken_interpolation(mutation):
     _, _, errors = production.probe(9, 18, 1/3, embedded=True, check=False,
                                     mutation=mutation)

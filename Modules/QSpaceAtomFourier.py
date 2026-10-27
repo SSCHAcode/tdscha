@@ -11,13 +11,11 @@ Exact minimum-image (Nyquist) ties are split equally.  This is the same
 centering rule used for real-space force constants and works for arbitrary,
 including non-orthogonal, cells.
 
-The same fold/kernel/adjoint-unfold path interpolates both contributions to
-the anharmonic operator:
-
-* d3 couples the one- and two-phonon sectors and scales as
-  ``sqrt(N_coarse / N_fine)``;
-* d4 acts within the two-phonon sector and scales as
-  ``N_coarse / N_fine``.
+Fold and unfold each carry ``sqrt(N_coarse / N_fine)``, so the coarse
+contraction is the parent's commensurate one, unchanged.  This reproduces
+the mode-space vertex scaling: d3 (one fold or unfold) scales as
+``sqrt(N_coarse / N_fine)`` and d4 (fold and unfold) as
+``N_coarse / N_fine``.
 
 The perturbation momentum must belong to the coarse mesh.  The internal
 two-phonon momentum is evaluated on a fine mesh whose dimensions are integer
@@ -34,11 +32,7 @@ import cellconstructor as CC
 import cellconstructor.Phonons
 import cellconstructor.Methods
 
-import cellconstructor.Settings as Parallel
-from cellconstructor.Settings import ParallelPrint as print
-
 import tdscha.QSpaceLanczos as QL
-import tdscha.JuliaExt as JuliaExt
 from tdscha.QSpaceInterpolation import (
     generate_fine_mesh, build_q_index_lookup, mesh_key, validate_mesh,
     interpolate_dyn_fine)
@@ -101,15 +95,13 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
         '_interp_used_effective_charges',
         '_atom_fourier_kernel')
 
-    # What the distributed loader must carry to the worker ranks: the
-    # interpolation state above, plus the mesh-measure scale factors set on
-    # the parent. These are
-    # broadcast rather than recomputed per rank: interpolate_dyn_fine
-    # diagonalises the fine dynamical matrix, and two diagonalisations of a
-    # degenerate block need not agree on a gauge -- ranks disagreeing on the
-    # polarization vectors would silently corrupt every reduced dot product.
-    _DISTRIBUTED_EXTRA_ATTRS = _INTERPOLATION_ATTRS + (
-        'qspace_scale3', 'qspace_scale4', 'qspace_prefiltered')
+    # What the distributed loader must carry to the worker ranks. The
+    # interpolation state is broadcast rather than recomputed per rank:
+    # interpolate_dyn_fine diagonalises the fine dynamical matrix, and two
+    # diagonalisations of a degenerate block need not agree on a gauge --
+    # ranks disagreeing on the polarization vectors would silently corrupt
+    # every reduced dot product.
+    _DISTRIBUTED_EXTRA_ATTRS = _INTERPOLATION_ATTRS
 
     def __init__(self, ensemble, fine_mesh=None, use_asr_dyn=True,
                  ignore_effective_charges=False,
@@ -258,12 +250,6 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
 
         # == 4. Atom-pair Fourier kernel (fine geometry, Q-independent) ==
         self._build_atom_fourier_kernel()
-
-        # == 5. Hermitian-symmetric mesh measure ==
-        ratio = float(self.cn_q) / float(self.n_q)
-        self.qspace_scale3 = np.sqrt(ratio)
-        self.qspace_scale4 = ratio
-        self.qspace_prefiltered = False
 
         # Reset pair-map state (was initialized on the coarse mesh)
         self.iq_pert = None
@@ -594,300 +580,65 @@ class QSpaceAtomFourierLanczos(QL.QSpaceLanczos):
     # ================================================================
     # Fold / unfold (all cross-q mixing in Cartesian)
     # ================================================================
+    # The ensemble averages are the parent's, taken on the coarse mesh; only
+    # the two-phonon perturbation (fold) and response (unfold) cross meshes.
+    # Both carry sqrt(N_c/N_f), so that the coarse contraction is the plain
+    # commensurate one: the mode-space vertices scale as N^(1 - p/2), i.e.
+    # sqrt(N_c/N_f) for d3 (one fold or unfold) and N_c/N_f for d4 (both).
+    #
     # Basis transforms (E = pols, unitary; from x = u^T conj(E)):
     #   mode -> Cartesian:  M_cart = E1 @ M_mode @ E2.T
     #   Cartesian -> mode:  M_mode = E1.conj().T @ M_cart @ E2.conj()
     # The same pair applies to the alpha kernel (contracted with
     # conjugated fields) and to the d2v dyadics (unconjugated components).
 
-    def _get_alpha1_bare(self):
-        """Fine-pair perturbation blocks with the chi dressing but WITHOUT
-        the w1*w2/X = 2 f_Y(q1) f_Y(q2) vertex filter.
+    def _ensemble_mesh(self):
+        return (self.cw_q, self.cvalid_modes_q, self.c_unique_pairs,
+                self.c_q_pair_map, self.c_iq_pert)
 
-        The filter is the coarse-Upsilon part of the interpolated vertex
-        (w1 w2 / X * conj(x) conj(x) = 2 conj(Upsilon u) conj(Upsilon u)):
-        atom-Fourier interpolation evaluates the Upsilon u legs from COARSE
-        samples, so the filter is applied to the folded kernel
-        (_fold_alpha_to_coarse) with the coarse f_Y tables. Applying
-        it here with the fine tables (as the parent's
-        get_alpha1_beta1_wigner_q does) breaks exact per-configuration
-        Hermiticity: the kernel's output dyadics carry f_Y at the corners,
-        and the fine/coarse mismatch makes the D4 element asymmetric.
-        """
-        chi_minus_list = self.get_chi_minus_q()
-        chi_plus_list = self.get_chi_plus_q()
-        blocks = []
-        for pair_idx in range(len(self.unique_pairs)):
-            a_block = self.get_a1_block(pair_idx)
-            b_block = self.get_b1_block(pair_idx)
-            alpha = 2.0 * (
-                np.sqrt(-0.5 * chi_minus_list[pair_idx]) * a_block
-                - np.sqrt(+0.5 * chi_plus_list[pair_idx]) * b_block)
-            blocks.append(alpha)
-        return blocks
+    def _fold(self, blocks):
+        """Fold fine-pair blocks onto the coarse mesh (coarse mode basis,
+        ordered as c_unique_pairs).
 
-    def _get_fy_coarse(self):
-        """Coarse f_Y = 2w/(1+2n) table (nb, cn_q); masked modes -> 0.
-
-        Same definition as the Julia kernel's internal table.
-        """
-        fy = np.zeros((self.n_bands, self.cn_q), dtype=np.float64)
-        for ik in range(self.cn_q):
-            w = self.cw_q[:, ik]
-            valid = self.cvalid_modes_q[:, ik]
-            n = np.zeros_like(w)
-            if self.T > QL.__EPSILON__:
-                n[valid] = 1.0 / (np.exp(
-                    w[valid] * QL.__RyToK__ / self.T) - 1.0)
-            fy[valid, ik] = 2.0 * w[valid] / (1.0 + 2.0 * n[valid])
-        return fy
-
-    def _fold_alpha_cart(self, alpha1_fine):
-        """Fold the fine-pair (bare) alpha kernel onto the coarse mesh
-        (Cartesian).
-
-        Returns A(cn_q, nb, nb): A[k] is the kernel block whose first leg
-        is at coarse k (pairing with Q - k). Enumerates the full fine BZ,
-        so A(Q - k) = A(k)^T holds exactly.
+        Enumerates the full fine BZ, so the folded block of (Q - k, k) is
+        exactly the transpose of that of (k, Q - k).
         """
         nb = self.n_bands
         nat = nb // 3
-
-        # Build each fine Cartesian block, then contract all blocks with the
-        # atom-resolved cardinal kernel.  The conjugated kernel is the fold;
-        # reconstruction below uses the exact adjoint.
-        blocks = np.empty((self.n_q, nb, nb), dtype=np.complex128)
+        cart = np.empty((self.n_q, nb, nb), dtype=np.complex128)
         for iq in range(self.n_q):
             p, is_transpose = self._fine_pair_of[iq]
-            blk = alpha1_fine[p]
-            if is_transpose:
-                blk = blk.T
-            if2 = int(self.q_pair_map[iq])
-            blocks[iq] = (
-                self.pols_q[:, :, iq] @ blk @ self.pols_q[:, :, if2].T)
-        blocks = blocks.reshape(self.n_q, nat, 3, nat, 3)
+            blk = blocks[p].T if is_transpose else blocks[p]
+            cart[iq] = (self.pols_q[:, :, iq] @ blk
+                        @ self.pols_q[:, :, int(self.q_pair_map[iq])].T)
         folded = np.einsum(
-            'qkab,qaibj->kaibj',
-            np.conj(self._atom_fourier_kernel), blocks, optimize=True)
-        return folded.reshape(self.cn_q, nb, nb)
+            'qkab,qaibj->kaibj', np.conj(self._atom_fourier_kernel),
+            cart.reshape(self.n_q, nat, 3, nat, 3), optimize=True)
+        folded = folded.reshape(self.cn_q, nb, nb) * np.sqrt(self.cn_q / self.n_q)
+        return [self.cpols_q[:, :, ik1].conj().T @ folded[ik1]
+                @ self.cpols_q[:, :, ik2].conj()
+                for ik1, ik2 in self.c_unique_pairs]
 
-    def _fold_alpha_to_coarse(self, alpha1_fine):
-        """Folded alpha blocks in the coarse mode basis, ordered as
-        c_unique_pairs (the Julia kernel input).
-
-        The coarse f_Y filter is applied on both legs AFTER the fold: this is
-        the coarse Upsilon on the interpolated Upsilon-u legs.
-        In the commensurate limit f_Y(k1) f_Y(k2) * bare = (w1 w2 / X) *
-        dressed, i.e. exactly the parent's alpha1.
-        """
-        A = self._fold_alpha_cart(alpha1_fine)
-        fy = self._get_fy_coarse()
-        out = []
-        for ik1, ik2 in self.c_unique_pairs:
-            E1 = self.cpols_q[:, :, ik1]
-            E2 = self.cpols_q[:, :, ik2]
-            A_mode = E1.conj().T @ A[ik1] @ E2.conj()
-            A_mode = (fy[:, ik1][:, None] * A_mode
-                      * fy[:, ik2][None, :])
-            out.append(A_mode)
-        return out
-
-    def _interp_d2v_to_fine(self, d2v_coarse):
-        """Adjoint interpolation of coarse d2v to the fine mode basis."""
+    def _unfold(self, blocks):
+        """Interpolate coarse-pair blocks to the fine pairs (fine mode
+        basis): the adjoint of _fold."""
         nb = self.n_bands
         nat = nb // 3
         coarse = np.zeros((self.cn_q, nb, nb), dtype=np.complex128)
-        for p, (ik1, ik2) in enumerate(self.c_unique_pairs):
-            E1 = self.cpols_q[:, :, ik1]
-            E2 = self.cpols_q[:, :, ik2]
-            block = E1 @ d2v_coarse[p] @ E2.T
-            coarse[ik1] = block
+        for block, (ik1, ik2) in zip(blocks, self.c_unique_pairs):
+            cart = self.cpols_q[:, :, ik1] @ block @ self.cpols_q[:, :, ik2].T
+            coarse[ik1] = cart
             if ik1 != ik2:
                 # Reverse orientation: the kernel's dyadic weights are
                 # pair-symmetric, so the reversed block is the transpose.
-                coarse[ik2] = block.T
-
+                coarse[ik2] = cart.T
         iq1 = np.array([pair[0] for pair in self.unique_pairs])
-        coarse = coarse.reshape(self.cn_q, nat, 3, nat, 3)
-        reconstructed = np.einsum(
-            'pkab,kaibj->paibj',
-            self._atom_fourier_kernel[iq1], coarse, optimize=True)
-        reconstructed = reconstructed.reshape(
-            len(self.unique_pairs), nb, nb)
-
-        fine = []
-        for p, (iq1, iq2) in enumerate(self.unique_pairs):
-            E1 = self.pols_q[:, :, iq1]
-            E2 = self.pols_q[:, :, iq2]
-            fine.append(
-                E1.conj().T @ reconstructed[p] @ E2.conj())
-        return fine
-
-    # ================================================================
-    # Anharmonic application
-    # ================================================================
-    def apply_anharmonic_FT(self, transpose=False, **kwargs):
-        """Fold the fine alpha kernel to the coarse mesh, run the coarse
-        Julia kernel, and interpolate the outputs back to the fine pairs."""
-        if self.ignore_v3 and self.ignore_v4:
-            return np.zeros(self.get_psi_size(), dtype=np.complex128)
-
-        R1 = self.get_R1_q()
-        if self.ignore_v3:
-            R1 = np.zeros_like(R1)
-
-        alpha1_fine = self._get_alpha1_bare()
-        alpha_coarse = self._fold_alpha_to_coarse(alpha1_fine)
-        alpha_flat = self._flatten_blocks(alpha_coarse)
-
-        f_pert, d2v_coarse = self._call_julia_qspace_coarse(R1, alpha_flat)
-        d2v_fine = self._interp_d2v_to_fine(d2v_coarse)
-
-        final_psi = np.zeros(self.get_psi_size(), dtype=np.complex128)
-        # D3 couples the sectors in both directions. Zeroing R1 above only
-        # suppresses R -> pair; also suppress the pair -> R contraction.
-        if not self.ignore_v3:
-            final_psi[:self.n_bands] = f_pert
-
-        chi_minus_list = self.get_chi_minus_q()
-        chi_plus_list = self.get_chi_plus_q()
-        for pair_idx in range(len(self.unique_pairs)):
-            d2v_block = d2v_fine[pair_idx]
-            pert_a = np.sqrt(-0.5 * chi_minus_list[pair_idx]) * d2v_block
-            pert_b = -np.sqrt(+0.5 * chi_plus_list[pair_idx]) * d2v_block
-            self.set_block_in_psi(pair_idx, pert_a, 'a', final_psi)
-            self.set_block_in_psi(pair_idx, pert_b, 'b', final_psi)
-
-        return final_psi
-
-    def _unflatten_blocks_coarse(self, flat):
-        """Column-major unflatten over the coarse unique pairs."""
-        nb = self.n_bands
-        blocks = []
-        offset = 0
-        for _ in self.c_unique_pairs:
-            blocks.append(flat[offset:offset + nb * nb].reshape(
-                nb, nb, order='F'))
-            offset += nb * nb
-        return blocks
-
-    def _call_julia_qspace_coarse(self, R1, alpha1_flat):
-        """Parent's kernel call with the coarse-side arrays.
-
-        R1 is in the mode basis at Q, identical on the fine and coarse
-        sides by the commensurate pinning of the eigenvectors.
-        """
-        if self._distributed:
-            return self._call_julia_qspace_coarse_distributed(R1, alpha1_flat)
-
-        jl = JuliaExt.get_main()
-
-        n_total = self.n_syms_qspace * self.N
-        n_processors = Parallel.GetNProc()
-
-        count = n_total // n_processors
-        remainder = n_total % n_processors
-        indices = []
-        for rank in range(n_processors):
-            if rank < remainder:
-                start = np.int64(rank * (count + 1))
-                stop = np.int64(start + count + 1)
-            else:
-                start = np.int64(rank * count + remainder)
-                stop = np.int64(start + count)
-            indices.append([start + 1, stop])  # 1-indexed for Julia
-
-        unique_pairs_arr = np.array(self.c_unique_pairs,
-                                    dtype=np.int32) + 1
-        valid_modes = np.array(self.cvalid_modes_q, dtype=np.bool_)
-        iq_pert_jl = int(self.c_iq_pert) + 1
-        q_pair_map_jl = np.array(self.c_q_pair_map, dtype=np.int32) + 1
-
-        def get_combined(start_end):
-            return jl.get_perturb_averages_qspace(
-                self.X_q, self.Y_q, self.cw_q, self.rho,
-                R1, alpha1_flat,
-                float(self.T), bool(not self.ignore_v4),
-                iq_pert_jl,
-                q_pair_map_jl,
-                unique_pairs_arr,
-                int(start_end[0]), int(start_end[1]),
-                valid_modes,
-                float(self.qspace_scale3), float(self.qspace_scale4),
-                False)
-
-        combined = Parallel.GoParallel(get_combined, indices, "+")
-        f_pert = combined[:self.n_bands]
-        d2v_blocks = self._unflatten_blocks_coarse(combined[self.n_bands:])
-        return f_pert, d2v_blocks
-
-    def _call_julia_qspace_coarse_distributed(self, R1, alpha1_flat):
-        """Coarse kernel call when the configurations are split across ranks.
-
-        The coarse counterpart of
-        ``QSpaceLanczos._call_julia_qspace_distributed``: instead of every rank
-        walking a slice of the *same* replicated ensemble through
-        ``GoParallel``, each rank owns a disjoint block of configurations and
-        the partial averages are summed with an Allreduce.
-
-        Normalization (identical to the parent, restated because it is the
-        only subtle part): Julia returns ``partial_k / (n_syms * N_eff_k)``,
-        so multiplying by the local ``N_eff_k`` gives ``partial_k / n_syms``;
-        summing those over ranks and dividing by the global ``N_eff`` gives
-        the correctly weighted average.  Rescaling by the *local* weight and
-        dividing by the *global* one is what makes unequal rank loads and
-        unequal weight sums come out right.
-        """
-        jl = JuliaExt.get_main()
-
-        if not QL.__MPI4PY__:
-            raise RuntimeError(
-                "Distributed mode requires MPI (mpi4py). Use "
-                "load_distributed_atom_fourier_tdscha under mpirun, or "
-                "build the Lanczos from an ensemble for a replicated run.")
-
-        comm = QL.mpi4py.MPI.COMM_WORLD
-
-        N_local = self.N
-        N_eff_local = self.N_eff
-        N_eff_global = self._N_eff_global
-
-        n_blocks = len(self.c_unique_pairs) * self.n_bands * self.n_bands
-        if N_local == 0:
-            # A rank with no configurations still has to take part in the
-            # reduction, otherwise the others block forever.
-            combined_local = np.zeros(self.n_bands + n_blocks,
-                                      dtype=np.complex128)
-        else:
-            unique_pairs_arr = np.array(self.c_unique_pairs,
-                                        dtype=np.int32) + 1
-            valid_modes = np.array(self.cvalid_modes_q, dtype=np.bool_)
-            iq_pert_jl = int(self.c_iq_pert) + 1
-            q_pair_map_jl = np.array(self.c_q_pair_map, dtype=np.int32) + 1
-
-            combined_local = jl.get_perturb_averages_qspace(
-                self.X_q, self.Y_q, self.cw_q, self.rho[:N_local],
-                R1, alpha1_flat,
-                float(self.T), bool(not self.ignore_v4),
-                iq_pert_jl,
-                q_pair_map_jl,
-                unique_pairs_arr,
-                1, int(self.n_syms_qspace * N_local),
-                valid_modes,
-                float(self.qspace_scale3), float(self.qspace_scale4),
-                False)
-            if N_eff_local > 0:
-                combined_local = combined_local * N_eff_local
-
-        combined_global = np.zeros_like(combined_local)
-        comm.Allreduce(np.ascontiguousarray(combined_local), combined_global,
-                       op=QL.mpi4py.MPI.SUM)
-        if N_eff_global > 0:
-            combined_global = combined_global / N_eff_global
-
-        f_pert = combined_global[:self.n_bands]
-        d2v_blocks = self._unflatten_blocks_coarse(combined_global[self.n_bands:])
-        return f_pert, d2v_blocks
+        fine = np.einsum(
+            'pkab,kaibj->paibj', self._atom_fourier_kernel[iq1],
+            coarse.reshape(self.cn_q, nat, 3, nat, 3), optimize=True)
+        fine = fine.reshape(len(self.unique_pairs), nb, nb) * np.sqrt(self.cn_q / self.n_q)
+        return [self.pols_q[:, :, i1].conj().T @ fine[p] @ self.pols_q[:, :, i2].conj()
+                for p, (i1, i2) in enumerate(self.unique_pairs)]
 
 
 def load_distributed_atom_fourier_tdscha(

@@ -189,22 +189,10 @@ class QSpaceLanczos(DL.Lanczos):
             'iq_pert', 'q_pair_map', 'unique_pairs',
             '_psi_size', '_block_offsets_a', '_block_offsets_b', '_block_sizes',
             '_qspace_sym_data', '_qspace_sym_q_map', 'n_syms_qspace',
-            # Vertex renormalization for q-mesh interpolation (1.0 = no interp)
-            'qspace_scale3', 'qspace_scale4', 'qspace_prefiltered',
             # Distributed mode attributes
             '_distributed', '_N_global', '_N_eff_global', '_N_local',
         ]
         self.__total_attributes__.extend(qspace_attrs)
-
-        # D3/D4 vertex rescaling factors passed to the Julia kernel.
-        # They stay 1.0 for a standard (commensurate) calculation; the
-        # interpolated subclass sets sqrt(N_c/N_f) and N_c/N_f respectively
-        # (see Interpolation_plan.md, section 6).
-        self.qspace_scale3 = 1.0
-        self.qspace_scale4 = 1.0
-        # True when X_q already carries the f_Y filter and the f_psi factors
-        # are folded into alpha1 (set by the interpolated subclass).
-        self.qspace_prefiltered = False
 
         # If ensemble is None, perform a bare initialization like the parent
         if ensemble is None:
@@ -693,61 +681,57 @@ class QSpaceLanczos(DL.Lanczos):
             chi_list.append(chi)
         return chi_list
 
-    def get_alpha1_beta1_wigner_q(self, get_alpha=True):
-        """Get the perturbation on alpha (Upsilon) from the q-space psi.
+    def _pair_kernel(self):
+        """Two-phonon perturbation blocks Upsilon^(1), one per unique pair.
 
-        Transforms a'/b' blocks back to the alpha1 perturbation that the
-        Julia code needs.
-
-        alpha1[iq1, iq2] = (w1*w2/X) * [sqrt(-0.5*chi_minus)*a' - sqrt(0.5*chi_plus)*b']
-
-        Returns
-        -------
-        list of ndarray(n_bands, n_bands) — one per unique pair
+        alpha[iq1, iq2] = 2 [sqrt(-chi^-/2) a' - sqrt(chi^+/2) b'], in the
+        mode basis of the Lanczos mesh. The Upsilon-u legs of the vertex
+        estimator are applied later, on the ensemble mesh, by the f_Y filter
+        (see apply_anharmonic_FT): with interpolation those legs are coarse
+        samples, and filtering after the fold keeps L exactly Hermitian for
+        every ensemble.
         """
         chi_minus_list = self.get_chi_minus_q()
         chi_plus_list = self.get_chi_plus_q()
-
-        alpha1_blocks = []
-        for pair_idx, (iq1, iq2) in enumerate(self.unique_pairs):
-            w1 = self.w_q[:, iq1]
-            w2 = self.w_q[:, iq2]
-            n1, v1 = self._safe_bose_and_mask(iq1)
-            n2, v2 = self._safe_bose_and_mask(iq2)
-            valid_mask = np.outer(v1, v2)
-
-            w1_mat = np.tile(w1, (self.n_bands, 1)).T
-            w2_mat = np.tile(w2, (self.n_bands, 1))
-            n1_mat = np.tile(n1, (self.n_bands, 1)).T
-            n2_mat = np.tile(n2, (self.n_bands, 1))
-
-            X = (1 + 2 * n1_mat) * (1 + 2 * n2_mat) / 8
-            # Safe division for w2_on_X: when acoustic, X→∞ and w→0, set to 0
-            w2_on_X = np.where(valid_mask,
-                               (w1_mat * w2_mat) / np.where(valid_mask, X, 1.0),
-                               0.0)
-            chi_minus = chi_minus_list[pair_idx]
-            chi_plus = chi_plus_list[pair_idx]
-
+        blocks = []
+        for pair_idx in range(len(self.unique_pairs)):
             a_block = self.get_a1_block(pair_idx)
             b_block = self.get_b1_block(pair_idx)
+            blocks.append(2.0 * (
+                np.sqrt(-0.5 * chi_minus_list[pair_idx]) * a_block
+                - np.sqrt(+0.5 * chi_plus_list[pair_idx]) * b_block))
+        return blocks
 
-            if get_alpha:
-                new_a = w2_on_X * np.sqrt(-0.5 * chi_minus) * a_block
-                new_b = w2_on_X * np.sqrt(+0.5 * chi_plus) * b_block
-                alpha1 = new_a - new_b
-            else:
-                X_safe = np.where(valid_mask, X, 1.0)
-                new_a = np.where(valid_mask,
-                                 (np.sqrt(-0.5 * chi_minus) / X_safe) * a_block,
-                                 0.0)
-                new_b = np.where(valid_mask,
-                                 (np.sqrt(+0.5 * chi_plus) / X_safe) * b_block,
-                                 0.0)
-                alpha1 = new_a + new_b
+    def _f_Y(self, w_q, valid_modes_q):
+        """f_Y = 2 w / (1 + 2 n) per (band, q); zero on masked modes."""
+        f_Y = np.zeros_like(w_q)
+        n = np.zeros_like(w_q)
+        if self.T > __EPSILON__:
+            n[valid_modes_q] = 1.0 / (np.exp(
+                w_q[valid_modes_q] * __RyToK__ / self.T) - 1.0)
+        f_Y[valid_modes_q] = (2.0 * w_q[valid_modes_q]
+                              / (1.0 + 2.0 * n[valid_modes_q]))
+        return f_Y
 
-            alpha1_blocks.append(alpha1)
-        return alpha1_blocks
+    # ------------------------------------------------------------------
+    # Ensemble mesh. The stochastic averages are always taken on the mesh
+    # of the ensemble supercell. For a commensurate calculation it is the
+    # Lanczos mesh itself and the fold/unfold below are the identity; the
+    # interpolated subclass overrides these three methods only.
+    # ------------------------------------------------------------------
+    def _ensemble_mesh(self):
+        """(w_q, valid_modes_q, unique_pairs, q_pair_map, iq_pert) of the
+        mesh on which the ensemble averages are computed."""
+        return (self.w_q, self.valid_modes_q, self.unique_pairs,
+                self.q_pair_map, self.iq_pert)
+
+    def _fold(self, blocks):
+        """Map pair blocks from the Lanczos mesh to the ensemble mesh."""
+        return blocks
+
+    def _unfold(self, blocks):
+        """Map pair blocks from the ensemble mesh back to the Lanczos mesh."""
+        return blocks
 
     def _flatten_blocks(self, blocks):
         """Flatten a list of (n_bands, n_bands) blocks into a contiguous array.
@@ -757,24 +741,17 @@ class QSpaceLanczos(DL.Lanczos):
         return np.concatenate([b.ravel(order='F') for b in blocks])
 
     def _unflatten_blocks(self, flat):
-        """Unflatten a contiguous array back into a list of blocks.
-
-        Uses Fortran (column-major) order to match Julia's column-major storage.
-        """
+        """Inverse of _flatten_blocks (column-major (n_bands, n_bands) blocks)."""
         nb = self.n_bands
-        blocks = []
-        offset = 0
-        for iq1, iq2 in self.unique_pairs:
-            size = nb * nb
-            blocks.append(flat[offset:offset + size].reshape(nb, nb, order='F'))
-            offset += size
-        return blocks
+        return [flat[i:i + nb * nb].reshape(nb, nb, order='F')
+                for i in range(0, len(flat), nb * nb)]
 
     def apply_anharmonic_FT(self, transpose=False, **kwargs):
         """Apply the anharmonic part of L in q-space (Wigner formalism).
 
-        Calls the Julia q-space extension to compute the perturbed averages,
-        then assembles the output psi vector.
+        Fold the pair perturbation onto the ensemble mesh, average the
+        anharmonic forces over the ensemble (Julia), unfold the two-phonon
+        response, and assemble the output psi vector.
 
         Returns
         -------
@@ -788,11 +765,17 @@ class QSpaceLanczos(DL.Lanczos):
         # If D3 is ignored, zero out R1 so that D3 weight is zero
         if self.ignore_v3:
             R1 = np.zeros_like(R1)
-        alpha1_blocks = self.get_alpha1_beta1_wigner_q(get_alpha=True)
-        alpha1_flat = self._flatten_blocks(alpha1_blocks)
 
-        # Call Julia
-        f_pert, d2v_blocks = self._call_julia_qspace(R1, alpha1_flat)
+        # Upsilon-u legs (f_Y filter) on the ensemble mesh
+        w_q, valid_modes_q, pairs, _, _ = self._ensemble_mesh()
+        f_Y = self._f_Y(w_q, valid_modes_q)
+        alpha1_blocks = [f_Y[:, iq1][:, None] * block * f_Y[:, iq2][None, :]
+                         for block, (iq1, iq2)
+                         in zip(self._fold(self._pair_kernel()), pairs)]
+
+        f_pert, d2v_blocks = self._call_julia_qspace(
+            R1, self._flatten_blocks(alpha1_blocks))
+        d2v_blocks = self._unfold(d2v_blocks)
 
         # Build output psi
         final_psi = np.zeros(self.get_psi_size(), dtype=np.complex128)
@@ -807,7 +790,7 @@ class QSpaceLanczos(DL.Lanczos):
         chi_minus_list = self.get_chi_minus_q()
         chi_plus_list = self.get_chi_plus_q()
 
-        for pair_idx, (iq1, iq2) in enumerate(self.unique_pairs):
+        for pair_idx in range(len(self.unique_pairs)):
             d2v_block = d2v_blocks[pair_idx]
             pert_a = np.sqrt(-0.5 * chi_minus_list[pair_idx]) * d2v_block
             pert_b = -np.sqrt(+0.5 * chi_plus_list[pair_idx]) * d2v_block
@@ -817,171 +800,73 @@ class QSpaceLanczos(DL.Lanczos):
         return final_psi
 
     def _call_julia_qspace(self, R1, alpha1_flat):
-        """Call the Julia q-space extension with MPI parallelization.
+        """Ensemble averages of the anharmonic forces on the ensemble mesh.
 
-        Same MPI pattern as DynamicalLanczos.apply_anharmonic_FT.
-
-        In distributed mode, dispatches to _call_julia_qspace_distributed.
+        Replicated ensemble: the (config, sym) pairs are split over the MPI
+        ranks as in DynamicalLanczos.apply_anharmonic_FT. Distributed
+        ensemble: each rank averages its own configurations; Julia returns
+        partial_k / (n_syms * N_eff_k), so multiplying by the local N_eff_k,
+        summing over ranks and dividing by the global N_eff gives the
+        correctly weighted average for unequal loads and weights.
 
         Returns
         -------
         f_pert : ndarray(n_bands,), complex128
         d2v_blocks : list of ndarray(n_bands, n_bands), complex128
+            One block per unique pair of the ensemble mesh.
         """
-        # Dispatch to distributed version if in distributed mode
-        if self._distributed:
-            return self._call_julia_qspace_distributed(R1, alpha1_flat)
-
         jl = JuliaExt.get_main()
+        w_q, valid_modes_q, pairs, q_pair_map, iq_pert = self._ensemble_mesh()
+        pairs_jl = np.array(pairs, dtype=np.int32) + 1  # 1-indexed
+        q_pair_map_jl = np.array(q_pair_map, dtype=np.int32) + 1
+        valid_jl = np.array(valid_modes_q, dtype=np.bool_)
 
-        n_total = self.n_syms_qspace * self.N
-        n_processors = Parallel.GetNProc()
+        def average(rho, start, stop):
+            return jl.get_perturb_averages_qspace(
+                self.X_q, self.Y_q, w_q, rho, R1, alpha1_flat,
+                float(self.T), bool(not self.ignore_v4),
+                int(iq_pert) + 1, q_pair_map_jl, pairs_jl,
+                int(start), int(stop), valid_jl)
 
-        count = n_total // n_processors
-        remainer = n_total % n_processors
-        indices = []
-        for rank in range(n_processors):
-            if rank < remainer:
-                start = np.int64(rank * (count + 1))
-                stop = np.int64(start + count + 1)
+        if not self._distributed:
+            n_total = self.n_syms_qspace * self.N
+            n_processors = Parallel.GetNProc()
+            count = n_total // n_processors
+            remainder = n_total % n_processors
+            indices = []
+            for rank in range(n_processors):
+                if rank < remainder:
+                    start = np.int64(rank * (count + 1))
+                    stop = np.int64(start + count + 1)
+                else:
+                    start = np.int64(rank * count + remainder)
+                    stop = np.int64(start + count)
+                indices.append([start + 1, stop])  # 1-indexed for Julia
+            combined = Parallel.GoParallel(
+                lambda start_end: average(self.rho, *start_end), indices, "+")
+        else:
+            if not __MPI4PY__:
+                raise RuntimeError(
+                    "Distributed mode requires MPI (mpi4py). "
+                    "Use load_distributed_tdscha with MPI or disable distribution."
+                )
+            comm = mpi4py.MPI.COMM_WORLD
+            nb = self.n_bands
+            if self.N == 0:
+                # A rank without configurations still joins the reduction.
+                local = np.zeros(nb + len(pairs) * nb * nb, dtype=np.complex128)
             else:
-                start = np.int64(rank * count + remainer)
-                stop = np.int64(start + count)
-            indices.append([start + 1, stop])  # 1-indexed for Julia
+                local = average(self.rho[:self.N], 1, self.n_syms_qspace * self.N)
+                if self.N_eff > 0:
+                    local = local * self.N_eff
+            combined = np.zeros_like(local)
+            comm.Allreduce(np.ascontiguousarray(local), combined,
+                           op=mpi4py.MPI.SUM)
+            if self._N_eff_global > 0:
+                combined = combined / self._N_eff_global
 
-        unique_pairs_arr = np.array(self.unique_pairs, dtype=np.int32) + 1  # 1-indexed
-        valid_modes = np.array(self.valid_modes_q, dtype=np.bool_)
-        iq_pert_jl = int(self.iq_pert) + 1
-        q_pair_map_jl = np.array(self.q_pair_map, dtype=np.int32) + 1
-
-        def get_combined(start_end):
-            return jl.get_perturb_averages_qspace(
-                self.X_q, self.Y_q, self.w_q, self.rho,
-                R1, alpha1_flat,
-                float(self.T), bool(not self.ignore_v4),
-                iq_pert_jl,
-                q_pair_map_jl,  # 1-indexed
-                unique_pairs_arr,
-                int(start_end[0]), int(start_end[1]),
-                valid_modes,  # Pass mask to Julia
-                float(self.qspace_scale3), float(self.qspace_scale4),
-                bool(self.qspace_prefiltered)
-            )
-
-        combined = Parallel.GoParallel(get_combined, indices, "+")
-        f_pert = combined[:self.n_bands]
-        d2v_flat = combined[self.n_bands:]
-        d2v_blocks = self._unflatten_blocks(d2v_flat)
-        return f_pert, d2v_blocks
-
-    def _call_julia_qspace_distributed(self, R1, alpha1_flat):
-        """Call Julia with distributed configurations across MPI ranks.
-
-        In distributed mode, each process holds only N_local configs.
-        This method:
-        1. Calls Julia with all n_syms * N_local (config, sym) pairs on local data
-        2. Un-normalizes the Julia result by multiplying by N_eff_local
-           (Julia divides by n_syms * sum(rho_local) internally)
-        3. MPI Allreduce(SUM) across all processes
-        4. Divides by N_eff_global to get the correctly normalized average
-
-        Normalization proof:
-        - Julia returns partial_k / (n_syms * N_eff_local_k)
-        - Multiply by N_eff_local_k -> partial_k / n_syms
-        - Allreduce(SUM) -> sum_k(partial_k) / n_syms
-        - Divide by N_eff_global -> total / (n_syms * N_eff_global) ✓
-
-        Returns
-        -------
-        f_pert : ndarray(n_bands,), complex128
-        d2v_blocks : list of ndarray(n_bands, n_bands), complex128
-        """
-        jl = JuliaExt.get_main()
-
-        if not __MPI4PY__:
-            raise RuntimeError(
-                "Distributed mode requires MPI (mpi4py). "
-                "Use load_distributed_tdscha with MPI or disable distribution."
-            )
-
-        comm = mpi4py.MPI.COMM_WORLD
-
-        # Compute local config slice
-        # N_local may differ from original N due to distribution
-        N_local = self.N
-        N_eff_local = self.N_eff
-        N_eff_global = self._N_eff_global
-
-        # Handle edge case: this proc has 0 configs
-        if N_local == 0:
-            # Contribute zero result
-            f_pert = np.zeros(self.n_bands, dtype=np.complex128)
-            d2v_flat = np.zeros(len(self.unique_pairs) * self.n_bands * self.n_bands,
-                               dtype=np.complex128)
-            # Allreduce to get correct shape on all procs (all zeros)
-            f_pert_global = np.zeros_like(f_pert)
-            d2v_flat_global = np.zeros_like(d2v_flat)
-            comm.Allreduce(f_pert, f_pert_global, op=mpi4py.MPI.SUM)
-            comm.Allreduce(d2v_flat, d2v_flat_global, op=mpi4py.MPI.SUM)
-            d2v_blocks = self._unflatten_blocks(d2v_flat_global)
-            return f_pert_global, d2v_blocks
-
-        # Total number of (config, sym) pairs for this proc
-        n_total_local = self.n_syms_qspace * N_local
-
-        # Build indices for this proc (1-indexed for Julia)
-        indices = [[1, n_total_local]]  # Single element list for local range
-
-        unique_pairs_arr = np.array(self.unique_pairs, dtype=np.int32) + 1  # 1-indexed
-
-        def get_combined_local(start_end):
-            # Julia will process self.N configs (which is now N_local)
-            # Use local rho slice
-            rho_local = self.rho[:N_local]
-            # Convert types explicitly for Julia
-            valid_modes = np.array(self.valid_modes_q, dtype=np.bool_)
-            iq_pert_jl = int(self.iq_pert) + 1
-            q_pair_map_jl = np.array(self.q_pair_map, dtype=np.int32) + 1
-            return jl.get_perturb_averages_qspace(
-                self.X_q, self.Y_q, self.w_q, rho_local,
-                R1, alpha1_flat,
-                float(self.T), bool(not self.ignore_v4),
-                iq_pert_jl,
-                q_pair_map_jl,  # 1-indexed
-                unique_pairs_arr,
-                int(start_end[0]), int(start_end[1]),
-                valid_modes,  # Pass mask to Julia
-                float(self.qspace_scale3), float(self.qspace_scale4),
-                bool(self.qspace_prefiltered)
-            )
-
-        # Call Julia (serial call, local configs only)
-        combined_local = get_combined_local(indices[0])
-
-        # Un-normalize: Julia divides by n_syms * sum(rho_local)
-        # We want to divide by n_syms * N_eff_local to get partial / n_syms
-        if N_eff_local > 0:
-            combined_local = combined_local * N_eff_local
-        # If N_eff_local == 0, keep zero (avoid division by zero)
-
-        # Split into f_pert and d2v components
-        f_pert_local = combined_local[:self.n_bands]
-        d2v_flat_local = combined_local[self.n_bands:]
-
-        # Allreduce to sum across all processes
-        f_pert_global = np.zeros_like(f_pert_local)
-        d2v_flat_global = np.zeros_like(d2v_flat_local)
-
-        comm.Allreduce(f_pert_local, f_pert_global, op=mpi4py.MPI.SUM)
-        comm.Allreduce(d2v_flat_local, d2v_flat_global, op=mpi4py.MPI.SUM)
-
-        # Final normalization: divide by N_eff_global
-        if N_eff_global > 0:
-            f_pert_global = f_pert_global / N_eff_global
-            d2v_flat_global = d2v_flat_global / N_eff_global
-
-        d2v_blocks = self._unflatten_blocks(d2v_flat_global)
-        return f_pert_global, d2v_blocks
+        return (combined[:self.n_bands],
+                self._unflatten_blocks(combined[self.n_bands:]))
 
     # ====================================================================
     # Step 5+6: Combined L application (override apply_full_L)
