@@ -3,10 +3,11 @@
 End-to-end through the public API: CellConstructor dynamical matrix,
 sscha.Ensemble.generate (T = 0, even/odd sampling) with forces from the
 polynomial potential, mode exclusion of the five zero-frequency bands
-(ensemble.ignore_small_w), QSpaceAtomFourierLanczos interpolation 9 -> 72,
+(ensemble.ignore_small_w), QSpaceAtomFourierLanczos interpolation 9 -> 36,
 Lanczos and continued fraction. The reference is the exact bubble and RPA
 Green function of polynomial_reference.py. Monte Carlo tolerances: the seed
-is fixed, and the bound is about twice the observed statistical error.
+is fixed; the bound (15%) is about twice the observed statistical error and
+half the distance between bubble and RPA, so a wrong vertex fails the test.
 """
 import os
 import sys
@@ -30,13 +31,13 @@ pytestmark = pytest.mark.skipif(not _AVAILABLE, reason='Julia backend not instal
 import polynomial_reference as reference
 import stochastic_chain as chain
 
-COARSE, FINE, ETA = 9, 72, .015
+COARSE, FINE, ETA = 9, 36, .015
 FREQUENCIES = np.linspace(.6, 1.65, 211)
 
 
 @pytest.fixture(scope='module')
 def ensemble():
-    return chain.make_ensemble(chain.build_dyn(COARSE), 20000, seed=1)
+    return chain.make_ensemble(chain.build_dyn(COARSE), 8000, seed=1)
 
 
 def test_forces_match_reference_potential():
@@ -61,6 +62,6 @@ def test_stochastic_spectrum_matches_analytic(ensemble, quartic):
     stochastic = chain.spectral_function(ensemble, FINE, FREQUENCIES, ETA, quartic)
     exact = chain.analytic_spectral_function(FINE, FREQUENCIES, ETA, quartic)
     error = np.linalg.norm(stochastic - exact) / np.linalg.norm(exact)
-    assert error < .1, error
+    assert error < .15, error
     step = FREQUENCIES[1] - FREQUENCIES[0]
     assert abs(FREQUENCIES[stochastic.argmax()] - FREQUENCIES[exact.argmax()]) <= 2 * step

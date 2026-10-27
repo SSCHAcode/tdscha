@@ -68,6 +68,7 @@ def _assert_same_coeffs(serial, dist, msg):
                                                    diff / scale)
 
 
+@pytest.mark.release
 @pytest.mark.parametrize("kind", ["plain", "tri"])
 def test_distributed_matches_replicated(kind, tmp_path):
     serial = _run("serial-%s" % kind, str(tmp_path / "serial.npz"), 1)

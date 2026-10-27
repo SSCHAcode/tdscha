@@ -102,6 +102,7 @@ def _renorm_freq(obj, wm):
     return np.sign(w2) * np.sqrt(abs(w2)) * CM
 
 
+@pytest.mark.release
 def test_gold_lanczos_gf_most_anharmonic():
     """Lanczos GF on the most anharmonic non-TRI phonon: q-space vs real-space.
 

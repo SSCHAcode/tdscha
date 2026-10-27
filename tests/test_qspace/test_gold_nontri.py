@@ -147,6 +147,7 @@ def test_snte_hessian_gamma_tri_control():
     assert rel < 0.05, "SnTe Gamma-optical Hessian mismatch: {:.2%}".format(rel)
 
 
+@pytest.mark.release
 def test_gold_hessian_nontri():
     """At non-TRI q the q-space Hessian must reproduce the anharmonic shift.
 
